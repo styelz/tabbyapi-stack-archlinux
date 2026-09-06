@@ -90,6 +90,27 @@ tsctl gpu status
 tsctl gpu quiet
 ```
 
+## Backup and restore
+
+Account-menu backups are small per-user zip files for chats, Code files,
+preferences, and gallery images. To back up the model weights themselves, use
+the administrator-only Status actions or `tsctl`:
+
+```bash
+tsctl backup /mnt/usb/tabby-backup --dry-run
+tsctl backup /mnt/usb/tabby-backup
+tsctl backup /mnt/usb/tabby-backup --config --users --chats
+tsctl restore /mnt/usb/tabby-backup
+tsctl restore /mnt/usb/tabby-backup --models --config --users --chats
+```
+
+The destination is a resumable folder copy, not a browser download. It keeps
+`tabbyAPI/models` and `ComfyUI/models` paths, so a fresh install can reuse it
+with `install.sh --cache /mnt/usb/tabby-backup`. Config, user credentials, API
+tokens, and all-account chat data are optional because restoring those sections
+overwrites the corresponding live files. Restart TabbyAPI after restoring
+config.
+
 Chat phrases and mixed page+images: `$HOME/tabbyapi-stack/AGENTS.md`.
 
 ## Update

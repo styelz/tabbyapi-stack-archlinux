@@ -17,6 +17,8 @@ function mountStatus(root) {
             <button class="btn danger" id="restart-btn" hidden>Restart</button>
             <button class="btn" id="update-git" hidden>Update git</button>
             <button class="btn" id="update-all" hidden>Update all</button>
+            <button class="btn" id="stack-backup" hidden>Stack backup…</button>
+            <button class="btn danger" id="stack-restore" hidden>Restore stack…</button>
           </div>
           <p class="muted" id="action-msg"></p>
         </div>
@@ -78,6 +80,178 @@ function mountStatus(root) {
   let lastSeries = [];
   let lastPayload = null;
   let actionBusy = false;
+
+  function stackPlanText(plan, action) {
+    const lines = [];
+    const totals = plan.totals || {};
+    ["models", "config", "users", "chats"].forEach((name) => {
+      if ((plan.groups || []).includes(name) || Number(totals[name] || 0) > 0) {
+        lines.push(`${name[0].toUpperCase()}${name.slice(1)}: ${TabbyUI.formatBytes(Number(totals[name] || 0))}`);
+      }
+    });
+    lines.push(`Files: ${Number(plan.files || 0)}`);
+    lines.push(`To copy: ${TabbyUI.formatBytes(Number(plan.needed_bytes || 0))}`);
+    if (action === "backup") {
+      lines.push(`Free space: ${TabbyUI.formatBytes(Number(plan.free_bytes || 0))}`);
+      lines.push(plan.enough_space ? "Space check: OK" : "Space check: NOT ENOUGH SPACE");
+    }
+    return lines.join("\n");
+  }
+
+  async function runStackOperation(action, payload) {
+    actionBusy = true;
+    const modal = TabbyUI.progressModal({
+      title: action === "backup" ? "Backing up stack" : "Restoring stack",
+      note: "This copies files on the GPU host. Large model files can take a while.",
+    });
+    modal.appendLine(`${action === "backup" ? "Destination" : "Source"}: ${payload.path}`);
+    try {
+      const endpoint = action === "backup" ? "stack-backup" : "stack-backup/restore";
+      const response = await fetch(TabbyUI.path(endpoint), {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/x-ndjson, application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+      if (response.status === 401) {
+        TabbyUI.redirectToLogin();
+        throw new Error("Not authenticated");
+      }
+      let result = null;
+      const type = (response.headers.get("content-type") || "").toLowerCase();
+      if (type.includes("ndjson")) {
+        result = await TabbyUI.readNdjson(response, (event) => {
+          if (event.line) modal.appendLine(event.line);
+          if (event.error) modal.appendLine(event.error);
+        });
+      } else {
+        result = type.includes("json") ? await response.json() : await response.text();
+      }
+      if (!response.ok || !result || result.ok === false || result.error) {
+        throw new Error(
+          (result && (result.error || result.detail)) ||
+          TabbyUI.httpErrorMessage(response, result) ||
+          `${action} failed`
+        );
+      }
+      modal.setBusy(false);
+      modal.setTitle(action === "backup" ? "Stack backup complete" : "Stack restore complete");
+      modal.setNote(
+        action === "restore" && result.restart_recommended
+          ? "Config was restored. Restart the API to apply it."
+          : `${TabbyUI.formatBytes(Number(result.bytes || 0))} checked.`
+      );
+      modal.setActions([
+        { label: "Close", primary: true, run: () => modal.close() },
+      ]);
+      msg.textContent = action === "backup" ? "Stack backup complete." : "Stack restore complete.";
+    } catch (err) {
+      modal.setBusy(false);
+      modal.setTitle(action === "backup" ? "Stack backup failed" : "Stack restore failed");
+      modal.setNote(err.message || `${action} failed`);
+      modal.appendLine(err.message || `${action} failed`);
+      modal.setActions([{ label: "Close", primary: true, run: () => modal.close() }]);
+      msg.textContent = err.message || `${action} failed`;
+    } finally {
+      actionBusy = false;
+    }
+  }
+
+  function openStackOperation(action) {
+    if (actionBusy) return;
+    const backup = action === "backup";
+    const wrap = document.createElement("div");
+    wrap.className = "dialog-modal";
+    wrap.setAttribute("role", "dialog");
+    wrap.setAttribute("aria-modal", "true");
+    wrap.innerHTML = `
+      <div class="dialog-card stack-backup-dialog">
+        <h2>${backup ? "Stack backup" : "Restore stack backup"}</h2>
+        <p class="dialog-text">${backup
+          ? "Copies installed models to a folder on this GPU host. The folder can be passed to install.sh --cache."
+          : "Restores from a stack backup folder on this GPU host. Selected config, users, and chats overwrite live files."}</p>
+        <form class="dialog-form">
+          <label><span>${backup ? "Destination folder" : "Backup source folder"}</span>
+            <input class="dialog-input stack-path" required placeholder="/mnt/usb/tabby-backup" />
+          </label>
+          <fieldset class="stack-backup-options">
+            <legend>Include</legend>
+            <label><input type="checkbox" name="models" checked ${backup ? "disabled" : ""} /> Models</label>
+            <label><input type="checkbox" name="config" /> Config</label>
+            <label><input type="checkbox" name="users" /> Users and API tokens</label>
+            <label><input type="checkbox" name="chats" /> All chats, Code files, and gallery</label>
+          </fieldset>
+          <pre class="dialog-text stack-plan">Choose a host path, then calculate the size.</pre>
+          <div class="dialog-actions">
+            <button type="button" class="btn stack-cancel">Cancel</button>
+            <button type="button" class="btn stack-calculate">Calculate</button>
+            <button type="submit" class="btn ${backup ? "primary" : "danger"} stack-start" disabled>Start</button>
+          </div>
+        </form>
+      </div>`;
+    const form = wrap.querySelector("form");
+    const path = wrap.querySelector(".stack-path");
+    const summary = wrap.querySelector(".stack-plan");
+    const calculate = wrap.querySelector(".stack-calculate");
+    const start = wrap.querySelector(".stack-start");
+    let plannedPayload = null;
+    const close = () => wrap.remove();
+    const payload = () => ({
+      action,
+      path: path.value.trim(),
+      models: wrap.querySelector('[name="models"]').checked,
+      config: wrap.querySelector('[name="config"]').checked,
+      users: wrap.querySelector('[name="users"]').checked,
+      chats: wrap.querySelector('[name="chats"]').checked,
+    });
+    const invalidate = () => {
+      plannedPayload = null;
+      start.disabled = true;
+    };
+    form.addEventListener("input", invalidate);
+    calculate.addEventListener("click", async () => {
+      const body = payload();
+      if (!body.path) {
+        path.focus();
+        return;
+      }
+      calculate.disabled = true;
+      summary.textContent = "Calculating…";
+      try {
+        const plan = await TabbyUI.api("stack-backup/plan", { method: "POST", body });
+        summary.textContent = stackPlanText(plan, action);
+        if (backup && !plan.enough_space) {
+          start.disabled = true;
+          plannedPayload = null;
+        } else {
+          plannedPayload = body;
+          start.disabled = false;
+        }
+      } catch (err) {
+        summary.textContent = err.message || "Could not calculate backup size.";
+        plannedPayload = null;
+        start.disabled = true;
+      } finally {
+        calculate.disabled = false;
+      }
+    });
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (!plannedPayload) return;
+      const body = plannedPayload;
+      close();
+      runStackOperation(action, body);
+    });
+    wrap.querySelector(".stack-cancel").addEventListener("click", close);
+    wrap.addEventListener("click", (event) => {
+      if (event.target === wrap) close();
+    });
+    document.body.appendChild(wrap);
+    path.focus();
+  }
 
   function themeColor(name, fallback) {
     return (TabbyUI.cssVar && TabbyUI.cssVar(name)) || fallback;
@@ -389,7 +563,7 @@ function mountStatus(root) {
   root.querySelector("#switch-comfy").addEventListener("click", () =>
     act(() => TabbyUI.api("gpu", { method: "POST", body: { mode: "comfy" } }))
   );
-  const adminActionIds = ["restart-btn", "update-git", "update-all"];
+  const adminActionIds = ["restart-btn", "update-git", "update-all", "stack-backup", "stack-restore"];
   TabbyUI.api("auth/check")
     .then((data) => {
       if (!data.is_admin) return;
@@ -399,6 +573,8 @@ function mountStatus(root) {
       });
     })
     .catch(() => {});
+  root.querySelector("#stack-backup").addEventListener("click", () => openStackOperation("backup"));
+  root.querySelector("#stack-restore").addEventListener("click", () => openStackOperation("restore"));
   root.querySelector("#restart-btn").addEventListener("click", async () => {
     if (actionBusy) return;
     const yes = await TabbyUI.confirmModal({

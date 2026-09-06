@@ -18,12 +18,14 @@ Treat the API like OpenAI: chat and HTTP. Some editors only accept `https://`; t
 - Browser UI: `/v1/ui` on that same origin. Sign in with the Linux account that runs the stack (admin), or a Tabby-only account that admin created.
   - **Chat** — same Chat Completions pipeline as an editor, without file tools (searchable history, follow-up queue)
   - **Code** — a self-contained IDE on this host. The browser calls Chat Completions, then runs Grep/Glob/Read/Write/Shell against a jailed workspace (Monaco, preview, container terminal, zip). Nested chats under a workspace share the same files. **Agent** can write; **Ask** and **Plan** are read-only (Grep, Glob, Read, List)
-  - **Status** — profile, GPU mode, occupancy, health, graphs, restart, and updates. **Update git** pulls `origin/main` into `$HOME/tabbyapi-stack` (that folder is the running checkout of `main`, not a second source tree). **Update all** also refreshes Python deps and restarts. Do not commit or push on the live install; its git hooks refuse those.
+  - **Status** — profile, GPU mode, occupancy, health, graphs, restart, updates, and administrator-only stack backup/restore. Stack backups copy model weights to a folder on the GPU host; optional config, users, chats, Code files, and gallery data can be included. **Update git** pulls `origin/main` into `$HOME/tabbyapi-stack` (that folder is the running checkout of `main`, not a second source tree). **Update all** also refreshes Python deps and restarts. Do not commit or push on the live install; its git hooks refuse those.
   - **Gallery** — generated images (the administrator can see every account)
   - **Logs** — live TabbyAPI and ComfyUI output
   - **Users** — administrator-only account creation. Extra users get Chat, Code, Status, Gallery, and Logs; they cannot create accounts
   - **Settings** — administrator-only Tabby `config.yml`, system `tabby.env`, screensaver, and GPU fan/power. Same keys from the shell: `tsctl`
   - **Account menu** — Download backup / Restore backup for this signed-in account (chats, Code files, prefs, gallery). After a fresh install, recreate extra Tabby users, then each person restores their own zip.
+
+Host-level model backups are separate from account zip backups. Use Status, or `tsctl backup /mnt/usb/tabby-backup --config --users --chats`. The resulting folder is resumable and can be supplied to a fresh installer as `--cache /mnt/usb/tabby-backup`. Restore with `tsctl restore /mnt/usb/tabby-backup`; optional extra sections overwrite their live files.
 - The GPU is shared. Browser UI and editor `/v1` requests wait in one queue.
 
 Do not SSH into the GPU host just to change models. Send a chat phrase, use Status in `/v1/ui`, or send `restart` to bounce the API.

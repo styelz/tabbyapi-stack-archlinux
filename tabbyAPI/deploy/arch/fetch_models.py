@@ -364,6 +364,7 @@ SKIP_DIR_NAMES = {
     "lost+found",
     "$RECYCLE.BIN",
     "System Volume Information",
+    "extras",
 }
 MAX_SEARCH_DEPTH = 6
 MAX_WALK_DIRS = 4000

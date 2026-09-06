@@ -627,6 +627,137 @@ async def ui_backup_restore(request: Request, _user: str = Depends(require_ui_us
             path.unlink(missing_ok=True)
 
 
+def _stack_backup_options(body: dict[str, Any]) -> dict[str, bool]:
+    return {
+        "include_config": bool(body.get("config")),
+        "include_users": bool(body.get("users")),
+        "include_chats": bool(body.get("chats")),
+    }
+
+
+@router.get("/stack-backup/plan", include_in_schema=False)
+async def ui_stack_backup_plan_get(
+    dest: str,
+    action: str = "backup",
+    models: bool = True,
+    config: bool = False,
+    users: bool = False,
+    chats: bool = False,
+    _admin: str = Depends(require_ui_admin),
+):
+    from ui.stack_backup import StackBackupError, plan_backup, plan_restore, public_plan
+
+    options = {
+        "include_config": config,
+        "include_users": users,
+        "include_chats": chats,
+    }
+    try:
+        if action == "backup":
+            result = await asyncio.to_thread(plan_backup, dest, **options)
+        elif action == "restore":
+            result = await asyncio.to_thread(
+                plan_restore, dest, include_models=models, **options
+            )
+        else:
+            raise HTTPException(400, "Action must be backup or restore")
+    except StackBackupError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return public_plan(result)
+
+
+@router.post("/stack-backup/plan", include_in_schema=False)
+async def ui_stack_backup_plan(
+    request: Request, _admin: str = Depends(require_ui_admin)
+):
+    from ui.stack_backup import StackBackupError, plan_backup, plan_restore, public_plan
+
+    try:
+        body = await request.json()
+    except Exception as exc:
+        raise HTTPException(400, "JSON body required") from exc
+    path = str(body.get("path") or "").strip()
+    if not path:
+        raise HTTPException(400, "Backup path is required")
+    action = str(body.get("action") or "backup").lower()
+    options = _stack_backup_options(body)
+    try:
+        if action == "backup":
+            result = await asyncio.to_thread(plan_backup, path, **options)
+        elif action == "restore":
+            result = await asyncio.to_thread(
+                plan_restore,
+                path,
+                include_models=bool(body.get("models", True)),
+                **options,
+            )
+        else:
+            raise HTTPException(400, "Action must be backup or restore")
+    except StackBackupError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return public_plan(result)
+
+
+@router.post("/stack-backup", include_in_schema=False)
+async def ui_stack_backup_run(
+    request: Request, _admin: str = Depends(require_ui_admin)
+):
+    from ui.stack_backup import StackBackupError, run_backup
+
+    try:
+        body = await request.json()
+    except Exception as exc:
+        raise HTTPException(400, "JSON body required") from exc
+    path = str(body.get("path") or "").strip()
+    if not path:
+        raise HTTPException(400, "Backup path is required")
+    options = _stack_backup_options(body)
+
+    def work(on_progress):
+        return run_backup(path, on_progress=on_progress, **options)
+
+    if _wants_ndjson(request):
+        return _ndjson_progress(work)
+    try:
+        return await asyncio.to_thread(run_backup, path, **options)
+    except StackBackupError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/stack-backup/restore", include_in_schema=False)
+async def ui_stack_backup_restore(
+    request: Request, _admin: str = Depends(require_ui_admin)
+):
+    from ui.stack_backup import StackBackupError, run_restore
+
+    try:
+        body = await request.json()
+    except Exception as exc:
+        raise HTTPException(400, "JSON body required") from exc
+    path = str(body.get("path") or "").strip()
+    if not path:
+        raise HTTPException(400, "Backup path is required")
+    options = _stack_backup_options(body)
+    include_models = bool(body.get("models", True))
+
+    def work(on_progress):
+        return run_restore(
+            path,
+            include_models=include_models,
+            on_progress=on_progress,
+            **options,
+        )
+
+    if _wants_ndjson(request):
+        return _ndjson_progress(work)
+    try:
+        return await asyncio.to_thread(
+            run_restore, path, include_models=include_models, **options
+        )
+    except StackBackupError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 @router.get("/chats", include_in_schema=False)
 async def ui_chats_get(_user: str = Depends(require_ui_user)):
     from ui.chats import load_store

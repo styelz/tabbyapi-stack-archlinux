@@ -4604,6 +4604,26 @@ figure.shot .open { display: block; }
   overflow: auto;
 }
 .dialog-form { margin: 0; }
+.stack-backup-dialog { width: min(640px, 100%); }
+.stack-backup-options {
+  display: grid;
+  gap: 0.6rem;
+  margin: 1rem 0;
+  padding: 0.8rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.stack-backup-options label {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+.stack-plan {
+  min-height: 5.5rem;
+  padding: 0.75rem;
+  border-radius: var(--radius);
+  background: var(--bg);
+}
 .dialog-actions {
   display: flex;
   justify-content: flex-end;

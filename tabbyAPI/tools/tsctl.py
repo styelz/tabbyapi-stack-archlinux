@@ -42,6 +42,8 @@ tsctl — tabbyapi-stack settings
   tsctl gpu power_limit=220     watts; 0 = profile default
   tsctl gpu persistence=on
   tsctl restart                 restart TabbyAPI
+  tsctl backup DEST [--config] [--users] [--chats] [--dry-run]
+  tsctl restore SOURCE [--models] [--config] [--users] [--chats] [--dry-run]
 
 Sections match Settings: network, model, screensaver, gpu, system, …
 """
@@ -203,9 +205,16 @@ def report_save(data: dict[str, Any]) -> int:
 def complete_words(cword: int, words: list[str]) -> list[str]:
     data = load_settings()
     sections = [str(section["name"]) for section in _sections(data)]
-    extra = ["list", "help", "restart", "screensaver", "gpu"]
+    extra = ["list", "help", "restart", "backup", "restore", "screensaver", "gpu"]
     if cword <= 1:
         return sorted(set(sections + extra))
+    if len(words) > 1 and words[1] in ("backup", "restore"):
+        if cword >= 3:
+            flags = ["--config", "--users", "--chats", "--dry-run", "--yes"]
+            if words[1] == "restore":
+                flags.append("--models")
+            return flags
+        return []
     try:
         section = find_section(words[1], data)
     except SettingsError:
@@ -266,7 +275,12 @@ def tui_dialog() -> int:
     while True:
         data = load_settings()
         sections = _sections(data)
-        items: list[str] = []
+        items: list[str] = [
+            "__backup__",
+            "Backup models and stack data",
+            "__restore__",
+            "Restore a stack backup",
+        ]
         for section in sections:
             items.extend([str(section["name"]), str(section.get("label") or section["name"])[:40]])
         code, choice = run_dialog(
@@ -274,6 +288,9 @@ def tui_dialog() -> int:
         )
         if code != 0 or not choice:
             return 0
+        if choice in ("__backup__", "__restore__"):
+            dialog_stack_backup("backup" if choice == "__backup__" else "restore")
+            continue
         section = find_section(choice, data)
         while True:
             fields = list(section.get("fields") or [])
@@ -406,7 +423,11 @@ def repl() -> int:
         buf = readline.get_line_buffer()
         parts = buf.split()
         if len(parts) <= 1:
-            options = [name for name in names + ["list", "help", "quit"] if name.startswith(text)]
+            options = [
+                name
+                for name in names + ["list", "help", "backup", "restore", "quit"]
+                if name.startswith(text)
+            ]
         else:
             try:
                 section = find_section(parts[0], data)
@@ -447,6 +468,193 @@ def repl() -> int:
     return 0
 
 
+def _stack_backup_args(action: str, argv: list[str]) -> tuple[str, dict[str, bool]]:
+    if not argv or argv[0].startswith("-"):
+        raise SettingsError(
+            f"Usage: tsctl {action} PATH "
+            "[--models] [--config] [--users] [--chats] [--dry-run]"
+        )
+    path = argv[0]
+    allowed = {"--models", "--config", "--users", "--chats", "--dry-run", "--yes"}
+    unknown = [token for token in argv[1:] if token not in allowed]
+    if unknown:
+        raise SettingsError(f"Unknown {action} option: {unknown[0]}")
+    selected = set(argv[1:])
+    exact_restore_groups = action == "restore" and bool(
+        selected.intersection({"--models", "--config", "--users", "--chats"})
+    )
+    return path, {
+        "include_models": action == "backup" or not exact_restore_groups or "--models" in selected,
+        "include_config": "--config" in selected,
+        "include_users": "--users" in selected,
+        "include_chats": "--chats" in selected,
+        "dry_run": "--dry-run" in selected,
+        "yes": "--yes" in selected,
+    }
+
+
+def _print_stack_plan(action: str, plan: dict[str, Any]) -> None:
+    from ui.stack_backup import format_bytes
+
+    location = plan.get("destination") if action == "backup" else plan.get("source")
+    print(f"{'Destination' if action == 'backup' else 'Source'}: {location}")
+    print(f"Files: {plan.get('files', 0)}")
+    for group in ("models", "config", "users", "chats"):
+        size = int((plan.get("totals") or {}).get(group) or 0)
+        if size or group in (plan.get("groups") or []):
+            print(f"{group.capitalize()}: {format_bytes(size)}")
+    print(f"To copy: {format_bytes(int(plan.get('needed_bytes') or 0))}")
+    if action == "backup":
+        print(f"Free space: {format_bytes(int(plan.get('free_bytes') or 0))}")
+
+
+def stack_backup_command(action: str, argv: list[str]) -> int:
+    from ui.stack_backup import (
+        StackBackupError,
+        plan_backup,
+        plan_restore,
+        run_backup,
+        run_restore,
+    )
+
+    path, options = _stack_backup_args(action, argv)
+    common = {
+        "include_config": options["include_config"],
+        "include_users": options["include_users"],
+        "include_chats": options["include_chats"],
+    }
+    try:
+        if action == "backup":
+            plan = plan_backup(path, **common)
+        else:
+            plan = plan_restore(path, include_models=options["include_models"], **common)
+    except StackBackupError as exc:
+        raise SettingsError(str(exc)) from exc
+    _print_stack_plan(action, plan)
+    if options["dry_run"]:
+        return 0
+    if action == "backup" and not plan.get("enough_space"):
+        raise SettingsError("Not enough free space for this backup")
+    if sys.stdin.isatty() and not options["yes"]:
+        answer = input(f"{action.capitalize()} now? [y/N] ").strip().lower()
+        if answer not in ("y", "yes"):
+            print("Cancelled.")
+            return 0
+    progress = lambda line: print(line, flush=True)
+    try:
+        if action == "backup":
+            result = run_backup(path, on_progress=progress, **common)
+        else:
+            result = run_restore(
+                path,
+                include_models=options["include_models"],
+                on_progress=progress,
+                **common,
+            )
+    except StackBackupError as exc:
+        raise SettingsError(str(exc)) from exc
+    print(f"{action.capitalize()} complete: {result.get('manifest') or result.get('source')}")
+    if action == "restore" and result.get("restart_recommended"):
+        print("Config was restored. Run: tsctl restart")
+    return 0
+
+
+def dialog_stack_backup(action: str) -> int:
+    code, path = run_dialog(
+        [
+            "--title",
+            f"Stack {action}",
+            "--dselect",
+            str(Path.home()) + "/",
+            "12",
+            "72",
+        ]
+    )
+    if code != 0 or not path:
+        return 0
+    checklist = [
+        "config",
+        "Config and system settings",
+        "off",
+        "users",
+        "UI users and API tokens",
+        "off",
+        "chats",
+        "All chats, Code files and gallery",
+        "off",
+    ]
+    if action == "restore":
+        checklist = ["models", "Model weights", "on", *checklist]
+    code, raw = run_dialog(
+        [
+            "--title",
+            f"Stack {action}",
+            "--checklist",
+            "Select data. Models are always included in backups.",
+            "16",
+            "76",
+            "8",
+            *checklist,
+        ]
+    )
+    if code != 0:
+        return 0
+    selected = set(shlex.split(raw))
+    flags = [f"--{name}" for name in ("models", "config", "users", "chats") if name in selected]
+    if action == "backup":
+        flags = [flag for flag in flags if flag != "--models"]
+    path_value, options = _stack_backup_args(action, [path, *flags])
+    from ui.stack_backup import plan_backup, plan_restore, run_backup, run_restore, summary_lines
+
+    common = {
+        "include_config": options["include_config"],
+        "include_users": options["include_users"],
+        "include_chats": options["include_chats"],
+    }
+    try:
+        plan = (
+            plan_backup(path_value, **common)
+            if action == "backup"
+            else plan_restore(path_value, include_models=options["include_models"], **common)
+        )
+        lines = summary_lines(plan) if action == "backup" else [
+            f"Source: {plan['source']}",
+            f"Files: {plan['files']}",
+            f"To copy: {plan['needed_bytes']} bytes",
+        ]
+        code, _ = run_dialog(
+            [
+                "--title",
+                f"Confirm {action}",
+                "--yesno",
+                "\n".join(lines),
+                "16",
+                "72",
+            ]
+        )
+        if code != 0:
+            return 0
+        progress = lambda line: print(line, flush=True)
+        result = (
+            run_backup(path_value, on_progress=progress, **common)
+            if action == "backup"
+            else run_restore(
+                path_value,
+                include_models=options["include_models"],
+                on_progress=progress,
+                **common,
+            )
+        )
+        note = f"{action.capitalize()} complete."
+        if result.get("restart_recommended"):
+            note += "\nRun tsctl restart to apply restored config."
+        run_dialog(["--title", f"Stack {action}", "--msgbox", note, "9", "64"])
+    except (SettingsError, ValueError) as exc:
+        run_dialog(["--title", f"Stack {action} failed", "--msgbox", str(exc), "10", "70"])
+        return 1
+    return 0
+
+
 def dispatch(argv: list[str]) -> int:
     if not argv:
         return tui()
@@ -464,6 +672,8 @@ def dispatch(argv: list[str]) -> int:
         return 0
     if argv[0] == "restart":
         return restart_api()
+    if argv[0] in ("backup", "restore"):
+        return stack_backup_command(argv[0], argv[1:])
 
     section_name = argv[0]
     rest = argv[1:]

@@ -192,6 +192,12 @@ class FetchModelsTests(unittest.TestCase):
             flux.write_bytes(b"flux")
             self.assertEqual(find_cache(file_item, nested), flux.resolve())
 
+            skipped = root / "backup-with-extras"
+            hidden = skipped / "extras" / "flux1-schnell-fp8.safetensors"
+            hidden.parent.mkdir(parents=True)
+            hidden.write_bytes(b"not-a-model-cache")
+            self.assertIsNone(find_cache(file_item, skipped))
+
     def test_find_cache_hub_snapshot(self):
         item = {
             "kind": "snapshot",

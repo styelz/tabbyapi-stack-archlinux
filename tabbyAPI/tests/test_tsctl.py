@@ -74,3 +74,40 @@ class TsctlTests(unittest.TestCase):
             keys = self.tsctl.complete_words(2, ["tsctl", "screensaver"])
         self.assertIn("timeout", keys)
         self.assertIn("enable", keys)
+
+    def test_backup_dry_run_prints_plan_without_copying(self):
+        from ui import stack_backup
+
+        plan = {
+            "destination": "/mnt/backup",
+            "groups": ["models"],
+            "totals": {"models": 1024},
+            "files": 2,
+            "needed_bytes": 1024,
+            "free_bytes": 2048,
+            "enough_space": True,
+        }
+        with mock.patch.object(stack_backup, "plan_backup", return_value=plan) as inspect:
+            with mock.patch.object(stack_backup, "run_backup") as run:
+                code = self.tsctl.dispatch(["backup", "/mnt/backup", "--dry-run"])
+        self.assertEqual(code, 0)
+        inspect.assert_called_once()
+        run.assert_not_called()
+
+    def test_restore_group_flags_are_exact(self):
+        path, options = self.tsctl._stack_backup_args(
+            "restore", ["/mnt/backup", "--config"]
+        )
+        self.assertEqual(path, "/mnt/backup")
+        self.assertFalse(options["include_models"])
+        self.assertTrue(options["include_config"])
+
+    def test_complete_lists_backup_flags(self):
+        with mock.patch.object(
+            self.tsctl,
+            "load_settings",
+            return_value={"tabby": [], "screensaver": {}, "gpu": {}, "system": {}},
+        ):
+            flags = self.tsctl.complete_words(3, ["tsctl", "backup", "/mnt/backup"])
+        self.assertIn("--config", flags)
+        self.assertIn("--dry-run", flags)
