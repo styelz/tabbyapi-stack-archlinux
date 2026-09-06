@@ -11,7 +11,7 @@ Use it from Cursor, VS Code, Continue, Cline, another OpenAI-compatible client, 
 **Official Arch live USB:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/styelz/tabbyapi-stack-archlinux/main/tsos-installer.sh | bash
+curl https://tiny.ee/tsos-installer.sh | bash
 ```
 
 **Already running Arch** (NVIDIA GPU, internet). Run as your user, not root:
