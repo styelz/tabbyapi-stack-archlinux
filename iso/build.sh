@@ -22,7 +22,7 @@ need() { command -v "$1" >/dev/null || { echo "missing command: $1" >&2; exit 1;
 }
 
 pacman -Sy --noconfirm --needed archiso git rsync xorriso squashfs-tools
-for cmd in mkarchiso git rsync xorriso unsquashfs; do need "$cmd"; done
+for cmd in mkarchiso git rsync xorriso unsquashfs python3; do need "$cmd"; done
 
 rm -rf "$WORK"
 mkdir -p "$PROFILE" "$PAYLOAD"/{bundles,tabbyapi-stack} "$OUT"
@@ -88,7 +88,7 @@ if [[ -z ${TSOS_INSTALLER_STARTED:-} && -t 0 ]]; then
   _tsos_tty=$(tty 2>/dev/null || true)
   if [[ "$_tsos_tty" == /dev/tty1 ]]; then
     export TSOS_INSTALLER_STARTED=1
-    /usr/local/bin/tsos-live-install
+    bash /usr/local/bin/tsos-live-install
   fi
 fi
 EOF
@@ -99,7 +99,7 @@ if [[ -z ${TSOS_INSTALLER_STARTED:-} && -t 0 ]]; then
   _tsos_tty=$(tty 2>/dev/null || true)
   if [[ "$_tsos_tty" == /dev/tty1 ]]; then
     export TSOS_INSTALLER_STARTED=1
-    /usr/local/bin/tsos-live-install
+    bash /usr/local/bin/tsos-live-install
   fi
 fi
 EOF
@@ -110,7 +110,7 @@ if [[ -z ${TSOS_INSTALLER_STARTED:-} && -t 0 ]]; then
   _tsos_tty=$(tty 2>/dev/null || true)
   if [[ "$_tsos_tty" == /dev/tty1 ]]; then
     export TSOS_INSTALLER_STARTED=1
-    /usr/local/bin/tsos-live-install
+    bash /usr/local/bin/tsos-live-install
   fi
 fi
 EOF
@@ -120,7 +120,37 @@ find "$PROFILE/syslinux" "$PROFILE/grub" "$PROFILE/efiboot" \
   xargs -0 -r sed -i \
     -e 's/Arch Linux install medium/TSOS installer/g' \
     -e 's/Arch Linux (x86_64, UEFI)/TSOS installer (UEFI)/g' \
-    -e 's/Boot the Arch Linux install medium/Boot the TSOS installer/g'
+    -e 's/Boot the Arch Linux install medium/Boot the TSOS installer/g' \
+    -e 's/^MENU TITLE .*/MENU TITLE TSOS installer/' \
+    -e 's/^title Arch Linux.*/title TSOS installer/'
+# Hide kernel/systemd noise after the boot menu so the splash stays up.
+find "$PROFILE/syslinux" "$PROFILE/grub" "$PROFILE/efiboot" \
+  \( -name '*.cfg' -o -name '*.conf' \) -type f -print0 2>/dev/null |
+  xargs -0 -r sed -i \
+    -e '/archisobasedir=/ s/[[:space:]]quiet\b//g' \
+    -e '/archisobasedir=/ s/$/ quiet loglevel=3 systemd.show_status=false rd.udev.log_level=3/'
+if [[ -f "$PROFILE/efiboot/loader/loader.conf" ]]; then
+  sed -i -e 's/^timeout .*/timeout 5/' -e 's/^beep on/beep off/' \
+    "$PROFILE/efiboot/loader/loader.conf"
+fi
+if [[ -f "$PROFILE/syslinux/archiso_sys.cfg" ]]; then
+  sed -i 's/^TIMEOUT .*/TIMEOUT 50/' "$PROFILE/syslinux/archiso_sys.cfg"
+fi
+log "Writing boot splash"
+python3 "$ROOT/iso/mk-splash.py" "$PROFILE/syslinux/splash.png"
+[[ -s "$PROFILE/syslinux/splash.png" ]] || {
+  echo "boot splash PNG was not written" >&2
+  exit 1
+}
+# Blank the Arch getty banner. tty1 clears, then tsos-live-install paints.
+: >"$PROFILE/airootfs/etc/motd"
+printf '\n' >"$PROFILE/airootfs/etc/issue"
+mkdir -p "$PROFILE/airootfs/etc/systemd/system/getty@tty1.service.d"
+cat >"$PROFILE/airootfs/etc/systemd/system/getty@tty1.service.d/autologin.conf" <<'EOF'
+[Service]
+ExecStart=
+ExecStart=-/usr/bin/agetty --noreset --clear --noissue --autologin root - ${TERM}
+EOF
 for package in dialog rsync git; do
   grep -qxF "$package" "$PROFILE/packages.x86_64" || echo "$package" >>"$PROFILE/packages.x86_64"
 done
@@ -128,6 +158,21 @@ sed -i \
   -e 's/^iso_name=.*/iso_name="tsos-archlinux"/' \
   -e "s/^iso_label=.*/iso_label=\"TSOS_$(date -u +%Y%m%d)\"/" \
   "$PROFILE/profiledef.sh"
+# mkarchiso copies airootfs with --no-preserve=mode (files become 644).
+# Only paths listed in file_permissions keep the execute bit.
+if grep -q 'file_permissions=(' "$PROFILE/profiledef.sh"; then
+  sed -i '/file_permissions=(/a\
+  ["/usr/local/bin/tsos-live-install"]="0:0:755"\
+  ["/usr/local/bin/tsos-installer.sh"]="0:0:755"
+' "$PROFILE/profiledef.sh"
+else
+  cat >>"$PROFILE/profiledef.sh" <<'EOF'
+file_permissions+=(
+  ["/usr/local/bin/tsos-live-install"]="0:0:755"
+  ["/usr/local/bin/tsos-installer.sh"]="0:0:755"
+)
+EOF
+fi
 
 log "Building ISO"
 disk
@@ -144,8 +189,12 @@ grep -q 'squashfs-root/opt/tsos/tabbyapi-stack/install.sh' "$VERIFY/airootfs.lis
   echo "ISO verification failed: tabbyapi-stack payload is missing" >&2
   exit 1
 }
-grep -q 'squashfs-root/usr/local/bin/tsos-live-install' "$VERIFY/airootfs.list" || {
-  echo "ISO verification failed: live installer launcher is missing" >&2
+grep -qE '^-rwx.*squashfs-root/usr/local/bin/tsos-live-install$' "$VERIFY/airootfs.list" || {
+  echo "ISO verification failed: tsos-live-install is missing or not executable" >&2
+  exit 1
+}
+grep -qE '^-rwx.*squashfs-root/usr/local/bin/tsos-installer.sh$' "$VERIFY/airootfs.list" || {
+  echo "ISO verification failed: tsos-installer.sh is missing or not executable" >&2
   exit 1
 }
 grep -q 'squashfs-root/opt/tsos/bundles/ComfyUI-GGUF.bundle' "$VERIFY/airootfs.list" || {
