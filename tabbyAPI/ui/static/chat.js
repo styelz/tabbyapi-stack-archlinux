@@ -17,6 +17,14 @@ function tabbyIsNetworkDrop(err) {
   return /network\s*error|failed to fetch|load failed|networkerror|err_network|err_internet|err_connection|connection (reset|closed)/i.test(msg);
 }
 
+function tabbyLooksLikeRestart(err, status) {
+  if (status === 502 || status === 503 || status === 504) return true;
+  if (!err || err.name === "AbortError") return false;
+  if (tabbyIsNetworkDrop(err)) return true;
+  const msg = String(err.message || "");
+  return /API unavailable|API unreachable|service may be restarting/i.test(msg);
+}
+
 function tabbyCleanStatusLabel(text) {
   return String(text || "")
     .split(/\r?\n/)
@@ -11547,7 +11555,7 @@ function mountChat(root) {
 
   function loadingHint(kind, name) {
     if (kind === "restart" || name === "restart") {
-      return "Restarting. Chat is paused until the API is ready.";
+      return "The API is restarting. This chat will continue when it is ready.";
     }
     const label = String(name || "").trim();
     const key = label.toLowerCase();
@@ -11775,18 +11783,44 @@ function mountChat(root) {
   }
 
   function ensureModelWait(working, activity) {
+    const act = activity || { kind: "switch" };
+    setLoadingBanner(loadingHint(act.kind, act.target));
+    if (working) {
+      working.setActivity(loadingLabel(act.kind, act.target), {
+        processing: true,
+        note: loadingHint(act.kind, act.target),
+      });
+    }
     if (modelWait) return modelWait;
     modelLoading = true;
     paintCompose();
-    modelWait = waitForModelReady(working, activity || { kind: "switch" }).finally(() => {
+    modelWait = waitForModelReady(working, act).finally(() => {
       modelWait = null;
       modelLoading = false;
       setLoadingBanner("");
       stopLoadingClock();
       paintCompose();
       refreshPlanBuild();
+      const queued = queuedTextFor(store.activeId);
+      if (queued && !inFlight && !loopBusy) {
+        runLoop(takeQueue(store.activeId));
+      }
     });
     return modelWait;
+  }
+
+  async function pauseForRestart(working, activity) {
+    activity.kind = "restart";
+    activity.target = "restart";
+    const ready = await ensureModelWait(working, activity);
+    if (stopKind || (abortController && abortController.signal.aborted)) return false;
+    if (working) {
+      working.setActivity("Thinking", {
+        processing: true,
+        note: "The API is back. Sending again.",
+      });
+    }
+    return Boolean(ready);
   }
 
   async function syncModelGate() {
@@ -11819,7 +11853,12 @@ function mountChat(root) {
     rememberGpu(data);
     paintActiveContext();
     applyStackOccupancy(data);
-    if (modelWait || !statusIsBusy(data) || (data && data.down)) return;
+    if (modelWait) return;
+    if (data && data.down) {
+      ensureModelWait(null, { kind: "restart", target: "restart" });
+      return;
+    }
+    if (!statusIsBusy(data)) return;
     const target = data.switch_target || (comfyIsStarting(data) ? "comfy" : "");
     const kind = data.restarting ? "restart" : "switch";
     ensureModelWait(null, { kind, target });
@@ -12252,6 +12291,7 @@ function mountChat(root) {
     let replyModel = displayModelName();
     let streamResume = resume;
     let networkTries = 0;
+    let restartTries = 0;
     let toolRounds = 0;
     let toolCalls = [];
     let agentEmptyNudges = 0;
@@ -12259,6 +12299,15 @@ function mountChat(root) {
     const mutatedPaths = new Set();
     const seenInspect = new Set();
     await persist({ flush: true });
+    async function retryAfterRestart() {
+      if (stopKind || restartTries >= 4) return false;
+      restartTries += 1;
+      streamResume = false;
+      assembled = "";
+      reasoning = "";
+      if (working.resetLive) working.resetLive({ replay: true });
+      return pauseForRestart(working, activity);
+    }
     agentTurn:
     while (true) {
     toolCalls = [];
@@ -12303,13 +12352,15 @@ function mountChat(root) {
             ? TabbyUI.httpErrorMessage(response, data)
             : (unavailable ? `API unavailable (${response.status})` : "Chat failed");
           if (unavailable) {
-            activity.kind = "restart";
-          } else {
+            if (await retryAfterRestart()) continue;
             throw new Error(msg);
           }
+          throw new Error(msg);
         } else if (type.includes("text/html")) {
-          activity.kind = "restart";
+          if (await retryAfterRestart()) continue;
+          throw new Error("API unavailable — service may be restarting");
         } else if (type.includes("application/json")) {
+          if (activity.kind === "restart") activity.kind = "chat";
           const data = await response.json();
           assembled = data.choices?.[0]?.message?.content || data.message || JSON.stringify(data);
           reasoning = data.choices?.[0]?.message?.reasoning_content || "";
@@ -12335,12 +12386,13 @@ function mountChat(root) {
           const reader = response.body.getReader();
           const decoder = new TextDecoder();
           let buf = "";
+          let htmlRestart = false;
           while (true) {
             const { value, done } = await reader.read();
             if (done) break;
             buf += decoder.decode(value, { stream: true });
             if (TabbyUI.looksLikeHtml && TabbyUI.looksLikeHtml(buf) && !assembled) {
-              activity.kind = "restart";
+              htmlRestart = true;
               break;
             }
             buf = consumeSseBuffer(buf, (event) => {
@@ -12422,6 +12474,11 @@ function mountChat(root) {
               }
             });
           }
+          if (htmlRestart) {
+            if (await retryAfterRestart()) continue;
+            throw new Error("API unavailable — service may be restarting");
+          }
+          if (activity.kind === "restart") activity.kind = "chat";
         }
         break;
       } catch (err) {
@@ -12430,9 +12487,10 @@ function mountChat(root) {
           if (!stopKind) stopKind = "stop";
           break;
         }
-        if (TabbyUI.looksLikeHtml && TabbyUI.looksLikeHtml(err && err.message)) {
-          activity.kind = "restart";
-          break;
+        const restartLike = tabbyLooksLikeRestart(err)
+          || (TabbyUI.looksLikeHtml && TabbyUI.looksLikeHtml(err && err.message));
+        if (restartLike && !tabbyIsNetworkDrop(err) && !stopKind) {
+          if (await retryAfterRestart()) continue;
         }
         if (tabbyIsNetworkDrop(err) && !stopKind && networkTries < 6) {
           networkTries += 1;
@@ -12450,6 +12508,9 @@ function mountChat(root) {
             break;
           }
           continue;
+        }
+        if (restartLike && !stopKind) {
+          if (await retryAfterRestart()) continue;
         }
         assembled = assembled || `Error: ${err.message}`;
         break;
@@ -12695,7 +12756,10 @@ function mountChat(root) {
   }
 
   async function runLoop(firstText, opts) {
-    if (modelLoading && !loopBusy) return;
+    if (modelLoading && !loopBusy) {
+      if (modelWait) await modelWait.catch(() => {});
+      if (modelLoading || loopBusy) return;
+    }
     if (loopBusy) {
       if (modelLoading) return;
       if (firstText && !(opts && opts.replay) && flightIsHere()) queueFollowup(firstText);
@@ -12801,7 +12865,14 @@ function mountChat(root) {
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     stopMic();
-    if (modelLoading) return;
+    if (modelLoading) {
+      const queued = input.value.trim();
+      if (queued) {
+        input.value = "";
+        queueFollowup(queued);
+      }
+      return;
+    }
     if (sessionRestoring) return;
     if (!menu.hidden && menuItems[menuIndex]) {
       if (!applyCommand(menuItems[menuIndex])) return;

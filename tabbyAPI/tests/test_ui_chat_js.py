@@ -44,6 +44,15 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
         self.assertIn('mode: "stop"', self.src)
         self.assertIn("showSteer", self.src)
 
+    def test_chat_waits_out_api_restart_then_resends(self):
+        self.assertIn("function tabbyLooksLikeRestart(err, status)", self.src)
+        self.assertIn("async function pauseForRestart(working, activity)", self.src)
+        self.assertIn("async function retryAfterRestart()", self.src)
+        self.assertIn("The API is restarting. This chat will continue when it is ready.", self.src)
+        self.assertIn("The API is back. Sending again.", self.src)
+        self.assertIn("if (data && data.down)", self.src)
+        self.assertNotIn("Restarting. Chat is paused until the API is ready.", self.src)
+
     def test_send_button_becomes_stop_during_session(self):
         self.assertIn('label: "Stop"', self.src)
         self.assertIn("abortSession(\"stop\")", self.src)
