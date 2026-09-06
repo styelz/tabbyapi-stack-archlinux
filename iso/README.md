@@ -1,84 +1,38 @@
-# TSOS Arch Linux ISO
+# TSOS installer ISO
 
-The ISO workflow builds a bootable Arch live installer named
-`tsos-archlinux.iso`. Boot it and the installer starts on the first console,
-like Debian: it installs Arch Linux and tabbyapi-stack. Arch packages, Python,
-PyTorch, ComfyUI, Docker, and model weights download during that install.
+Boot this USB and it installs Arch Linux plus tabbyapi-stack. You need a network during install (packages, Python, models).
 
-The only frozen 3rd-party source is **ComfyUI-GGUF**, which is small and not
-as durable as Arch, python.org, PyPI, or the official ComfyUI repo.
+## Download
 
-Older **frozen** 9 GiB releases (split `tsos-archlinux.iso.part-*` files)
-remain available. New tags build the small ISO only.
-
-## Build a release
-
-Run **Build TSOS ISO** from the repository's Actions page, or push a tag
-whose name starts with `iso-`:
-
-```bash
-git tag iso-$(date -u +%Y%m%d)
-git push origin --tags
-```
-
-The workflow publishes a GitHub Release with `tsos-archlinux.iso` and
-`SHA256SUMS`.
-
-## Download and verify
+Get `tsos-archlinux.iso` from the latest GitHub Release, then:
 
 ```bash
 sha256sum -c SHA256SUMS --ignore-missing
 ```
 
-If you still have a split frozen Release:
+## Write to USB
 
-```bash
-cat tsos-archlinux.iso.part-* > tsos-archlinux.iso
-sha256sum -c SHA256SUMS --ignore-missing
-```
-
-## Put it on USB
-
-`dd` erases the selected device. Use the whole USB device, not a partition:
+This erases the whole device (`/dev/sdX`, not a partition):
 
 ```bash
 lsblk
 sudo dd if=tsos-archlinux.iso of=/dev/sdX bs=4M status=progress oflag=sync
 ```
 
-Alternatively, copy the ISO to a Ventoy USB.
+Ventoy works too. Disable Secure Boot.
 
-Boot the USB with Secure Boot disabled. The installer starts on tty1.
-Connect Ethernet (or configure Wi-Fi from Alt+F2 with `iwctl`) when asked.
-It installs Arch and tabbyapi-stack, then offers a reboot.
+## Install
 
-If you leave the installer, a root shell remains. Run `tsos-installer.sh`
-to start again.
+The installer starts on the first console. Plug in Ethernet (or set up Wi-Fi from Alt+F2 with `iwctl`). When it finishes, reboot.
 
-## What is on the ISO
+If you quit it, a root shell is left; run `tsos-installer.sh` to start again.
 
-- A current Arch live environment (releng)
-- The tabbyapi-stack tree and a git bundle of this repository
-- `ComfyUI-GGUF` as a git bundle
+## Build (optional)
 
-## Downloaded at install time
-
-- Arch packages (kernel, NVIDIA, Docker, …)
-- pyenv and CPython 3.12 from python.org
-- TabbyAPI / ComfyUI Python packages and CUDA PyTorch
-- Official ComfyUI
-- `debian:bookworm-slim` and the Code sandbox image (`docker build`)
-- Model weights from Hugging Face or a USB cache you select
-
-Omarchy still needs a network. The NVIDIA 580xx AUR driver for pre-Turing
-GPUs is not included.
-
-## Local build
-
-Root on current Arch Linux:
+On Arch, as root, from a tabbyapi-stack checkout:
 
 ```bash
 sudo iso/build.sh
 ```
 
-Output is written to `out/`.
+The image lands in `out/`. Releases are also built from the **Build TSOS ISO** Action.
