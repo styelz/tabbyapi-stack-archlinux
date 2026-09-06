@@ -46,7 +46,13 @@ from common.tabby_config import config
 from common.templating import PromptTemplate, find_prompt_template
 from common.transformers_utils import HFModel
 from common.utils import coalesce, unwrap
-from common.vram_recover import reset_cuda_memory
+from common.vram_recover import (
+    clear_notice,
+    is_vram_error,
+    reset_cuda_memory,
+    reset_recurrent_slots,
+    set_notice,
+)
 from endpoints.OAI.types.chat_completion import ChatCompletionLogprob, ChatCompletionLogprobLeaf
 from endpoints.core.types.model import ModelCard, ModelCardParameters
 from endpoints.OAI.utils.tools import is_supported_format
@@ -148,6 +154,7 @@ class ExllamaV3Container:
         self.load_lock = asyncio.Lock()
         self.load_condition = asyncio.Condition()
         self.autosplit_reserve = [96 / 1024]
+        self._recovering = False
 
     # Required methods
     @classmethod
@@ -781,6 +788,48 @@ class ExllamaV3Container:
             if value:
                 yield value
 
+    async def _close_generator(self) -> None:
+        gen = self.generator
+        self.generator = None
+        if gen is None:
+            return
+        close = getattr(gen, "close", None)
+        if not callable(close):
+            return
+        try:
+            await asyncio.wait_for(close(), timeout=5)
+        except Exception:
+            xlogger.warning("Could not close the generator cleanly.")
+
+    async def recover_after_crash(self, ex: BaseException) -> None:
+        """Unstick GDN cache slots after OOM so the next chat is not dead."""
+        if self._recovering:
+            return
+        self._recovering = True
+        oom = is_vram_error(ex)
+        set_notice(
+            "resetting generator",
+            "GPU ran out of memory. Resetting the generator."
+            if oom
+            else "Resetting the generator after a crash.",
+        )
+        try:
+            await self.create_generator()
+            await HealthManager.clear()
+            xlogger.info("Generator recreated after a fatal generation error.")
+            await asyncio.sleep(4)
+        except Exception as rec_ex:
+            xlogger.error(
+                "Could not recreate the generator. Restart the API.\n",
+                {"exception": str(rec_ex)},
+            )
+            set_notice("restart the api", "Generator reset failed. Restart the API.")
+            await HealthManager.add_unhealthy_event(rec_ex)
+            return
+        finally:
+            self._recovering = False
+        clear_notice()
+
     async def create_generator(self):
         """Create and save a Exllama generator class."""
 
@@ -791,6 +840,10 @@ class ExllamaV3Container:
 
                 # Immediately cancel all jobs
                 await self.wait_for_jobs(skip_wait=True)
+
+            await self._close_generator()
+            reset_recurrent_slots(self.cache)
+            reset_cuda_memory()
 
             # Create new generator
             self.generator = AsyncGenerator(
@@ -1589,18 +1642,24 @@ class ExllamaV3Container:
                         "Recreating the generator.\n",
                         {"request_id": request_id, "exception": str(ex)},
                     )
-                    asyncio.ensure_future(self.create_generator())
+                    asyncio.ensure_future(self.recover_after_crash(ex))
 
         except Exception as ex:
             # Create a new generator since the current state is broken
-            # No need to wait for this to finish
+            # Do not await here: this request is still in active_job_ids.
             xlogger.error(
                 "FATAL ERROR with generation. "
                 "Attempting to recreate the generator. "
                 "If this fails, please restart the server.\n",
                 {"exception": str(ex)},
             )
-            asyncio.ensure_future(self.create_generator())
+            set_notice(
+                "resetting generator",
+                "GPU ran out of memory. Resetting the generator."
+                if is_vram_error(ex)
+                else "Resetting the generator after a crash.",
+            )
+            asyncio.ensure_future(self.recover_after_crash(ex))
 
             await HealthManager.add_unhealthy_event(ex)
 

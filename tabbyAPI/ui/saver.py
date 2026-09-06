@@ -13,7 +13,7 @@ from typing import Any
 from fastapi import HTTPException, Request
 
 SAFE_KINDS = frozenset({"chat", "code", "image", "gpu"})
-SAFE_STAGES = frozenset({"prefill", "decode", "tool", "image", "switch", "idle"})
+SAFE_STAGES = frozenset({"prefill", "decode", "tool", "image", "switch", "recover", "idle"})
 _COMFY_LOCKS = frozenset({"comfy", "flux"})
 _LEAK_KEYS = frozenset(
     {
@@ -153,6 +153,7 @@ def sanitize_status(raw: dict[str, Any]) -> dict[str, Any]:
         "busy": bool(raw.get("busy") or queue.get("busy") or queue.get("live")),
         "switching": bool(raw.get("switching")),
         "restarting": bool(raw.get("restarting")),
+        "recovering": bool(raw.get("recovering")),
         "switch_target": _switch_target(raw.get("switch_target")),
         "kind": _kind(queue.get("kind") if queue.get("kind") is not None else raw.get("kind")),
         "stage": _stage(raw.get("stage")),
@@ -439,6 +440,15 @@ async def saver_state() -> dict[str, Any]:
         queue = dict(queue)
         queue["kind"] = weather["kind"]
     thinking = weather["stage"] in {"prefill", "decode", "tool"}
+    from common.vram_recover import current_notice
+
+    notice = current_notice()
+    recovering = bool(notice.get("phase"))
+    if recovering:
+        weather["stage"] = "recover"
+        detail = str(notice.get("detail") or notice.get("phase") or "").strip()
+        if detail:
+            weather["image_what"] = _safe_image_what(detail)
     typical_s = _typical_switch_s(lock_name, switching, restarting, str(weather.get("stage") or ""))
     elapsed_s = weather["elapsed_s"]
     if typical_s is not None:
@@ -450,9 +460,10 @@ async def saver_state() -> dict[str, Any]:
         {
             "gpu_mode": gpu_mode,
             "profile": profile,
-            "busy": bool(lock_held) or bool(queue.get("busy")) or thinking,
+            "busy": bool(lock_held) or bool(queue.get("busy")) or thinking or recovering,
             "switching": switching,
             "restarting": restarting,
+            "recovering": recovering,
             "switch_target": switch_target,
             "stack_queue": queue,
             "tokens": weather["tokens"],

@@ -623,16 +623,17 @@ def scene_from_state(data: dict[str, Any] | None, connected: bool) -> dict[str, 
     mode = str(data.get("gpu_mode") or "").strip() or "—"
     profile = str(data.get("profile") or "").strip() or "—"
     restarting = bool(data.get("restarting"))
+    recovering = bool(data.get("recovering")) or str(data.get("stage") or "").strip().lower() == "recover"
     switching = bool(data.get("switching") or restarting)
     busy = bool(data.get("busy"))
     stage = str(data.get("stage") or "").strip().lower()
-    working = busy or switching or restarting or stage in {"prefill", "decode", "tool"}
+    working = busy or switching or restarting or recovering or stage in {"prefill", "decode", "tool", "recover"}
     tokens = max(0.0, _num(data.get("tokens")))
     image_n = _num(data.get("image_n")) if data.get("image_n") is not None else 0.0
     image_of = _num(data.get("image_of")) if data.get("image_of") is not None else 0.0
     # GPU % only tints the field. nvidia-smi also moves when this kiosk
     # scanouts on the same card, so it must not rename the HUD to generating.
-    live = working or stage in {"prefill", "decode", "tool"}
+    live = working or stage in {"prefill", "decode", "tool", "recover"}
 
     image_job = kind == "image" or mode == "comfy" or stage == "image"
     down = (not connected) or restarting
@@ -651,6 +652,13 @@ def scene_from_state(data: dict[str, Any] | None, connected: bool) -> dict[str, 
         intensity = 0.30
         speed = 0.20
         heat = 0.42
+    elif recovering:
+        phase, palette = "resetting generator", "switch"
+        note = ""
+        live = True
+        intensity = 0.34
+        speed = 0.28
+        heat = 0.40
     elif stage == "switch" or switching or (working and kind == "gpu"):
         want = str(data.get("switch_target") or "").strip().lower()
         if want == "comfy":

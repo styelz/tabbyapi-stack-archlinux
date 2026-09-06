@@ -31,6 +31,11 @@ class HealthManagerClass:
                 error = f"{error.__class__.__name__}: {str(error)}"
             self.issues.append(UnhealthyEvent(description=error))
 
+    async def clear(self) -> None:
+        """Drop stale faults after a successful generator/model recover."""
+        async with self._lock:
+            self.issues.clear()
+
     async def is_service_healthy(self) -> tuple[bool, list[UnhealthyEvent]]:
         """Check if the service is healthy"""
         async with self._lock:

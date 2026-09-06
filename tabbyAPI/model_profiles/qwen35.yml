@@ -1,12 +1,12 @@
 pretty: Qwen3.5-35B-A3B - coding upgrade, 2.13bpw
 model:
   model_name: Qwen3.5-35B-A3B-exl3-2.13bpw
-  max_seq_len: 196608
-  cache_size: 196608
+  max_seq_len: 131072
+  cache_size: 131072
   cache_mode: Q4
-  chunk_size: 2048
+  chunk_size: 512
   max_batch_size: 1
-  autosplit_reserve: [384]
+  autosplit_reserve: [1536]
   vision: false
   template_vars_default: {}
   template_vars_force:

@@ -18,12 +18,48 @@ VRAM_MARKERS = (
     "out of memory",
     "OutOfMemory",
     "CUDA out of memory",
+    "Allocation on device",
+    "no available slots",
+    "Cannot create new state",
 )
+
+# Short wall-monitor copy. No paths, no usernames.
+_NOTICE: dict[str, str] = {}
 
 
 def is_vram_error(exc: object) -> bool:
     text = str(exc)
     return any(marker in text for marker in VRAM_MARKERS)
+
+
+def needs_generator_rebuild(exc: object) -> bool:
+    """True when the ExLlama generator/cache is unsafe to keep using."""
+    return is_vram_error(exc)
+
+
+def set_notice(phase: str, detail: str = "") -> None:
+    """What the kiosk should show while we unstick the GPU."""
+    _NOTICE.clear()
+    _NOTICE["phase"] = str(phase or "").strip()
+    _NOTICE["detail"] = str(detail or "").strip()
+
+
+def clear_notice() -> None:
+    _NOTICE.clear()
+
+
+def current_notice() -> dict[str, str]:
+    return dict(_NOTICE)
+
+
+def reset_recurrent_slots(cache: object) -> None:
+    """Return every GDN/SWA slot after a crashed job that never released one."""
+    from collections import deque
+
+    n = int(getattr(cache, "num_slots", 0) or 0)
+    if n <= 0 or not hasattr(cache, "free_list"):
+        return
+    cache.free_list = deque(range(n))
 
 
 def reset_cuda_memory() -> None:

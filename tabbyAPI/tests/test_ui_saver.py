@@ -162,6 +162,7 @@ class SaverSanitizeTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(payload["ok"])
         self.assertFalse(payload["busy"])
         self.assertFalse(payload["switching"])
+        self.assertFalse(payload["recovering"])
         self.assertIsNone(payload["kind"])
         self.assertIsNone(payload["gpu"]["vram_pct"])
         self.assertEqual(payload["stage"], "idle")
@@ -189,6 +190,18 @@ class SaverSanitizeTests(unittest.IsolatedAsyncioTestCase):
         payload = saver.sanitize_status({"stage": "secret-thoughts", "tokens": -3})
         self.assertEqual(payload["stage"], "idle")
         self.assertEqual(payload["tokens"], 0)
+
+    def test_recover_stage_is_kept(self):
+        payload = saver.sanitize_status(
+            {
+                "recovering": True,
+                "stage": "recover",
+                "image_what": "GPU ran out of memory. Resetting the generator.",
+            }
+        )
+        self.assertTrue(payload["recovering"])
+        self.assertEqual(payload["stage"], "recover")
+        self.assertIn("GPU ran out of memory", payload["image_what"])
 
     def test_queue_live_without_busy_flag_is_still_busy(self):
         payload = saver.sanitize_status(
@@ -284,6 +297,7 @@ class SaverKioskSceneTests(unittest.TestCase):
         self.assertEqual(cap("settling"), "Settling")
         self.assertEqual(cap("loading llm"), "Loading LLM")
         self.assertEqual(cap("restarting api"), "Restarting API")
+        self.assertEqual(cap("resetting generator"), "Resetting Generator")
 
     def test_overlay_live_file_makes_idle_http_live(self):
         idle = {"gpu_mode": "llm", "profile": "qwen", "busy": False, "stage": "idle"}
@@ -614,6 +628,38 @@ class SaverKioskSceneTests(unittest.TestCase):
         self.assertIn("1-2 min", waiting["note"])
         self.assertIn("reboot", waiting["note"])
         self.assertIn("fresh install", waiting["note"])
+
+    def test_recovering_from_oom_is_live_hud(self):
+        scene = self.kiosk.scene_from_state(
+            {
+                "gpu_mode": "llm",
+                "profile": "qwen35",
+                "recovering": True,
+                "stage": "recover",
+                "image_what": "GPU ran out of memory. Resetting the generator.",
+            },
+            True,
+        )
+        self.assertEqual(scene["phase"], "resetting generator")
+        self.assertEqual(scene["palette"], "switch")
+        self.assertTrue(scene["live"])
+        self.assertEqual(
+            scene["image_what"],
+            "GPU ran out of memory. Resetting the generator.",
+        )
+        self.assertFalse(self.kiosk.idle_hud_quiet(scene))
+        screen = _FakeScreen()
+        scene = dict(scene)
+        scene["clock"] = "02:07:02"
+        scene["connected"] = True
+        scene["has_gpu"] = True
+        scene["vram"] = 96
+        scene["temp"] = 35
+        scene["util"] = 40
+        self.kiosk.draw_hud(screen, _FakeFont(), _FakeFont(), scene)
+        text = " ".join(str(item) for item in screen.blits)
+        self.assertIn("Resetting Generator", text)
+        self.assertIn("GPU ran out of memory", text)
 
     def test_waiting_hud_mentions_reboot_ready_time(self):
         waiting = self.kiosk.scene_from_state(None, False)
