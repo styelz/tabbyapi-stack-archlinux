@@ -25,7 +25,7 @@ SCRIPT_NAME="${0##*/}"
 if [[ "$SCRIPT_NAME" == "bash" || "$SCRIPT_NAME" == "-bash" || "$SCRIPT_NAME" == "sh" || "$SCRIPT_NAME" == "-sh" ]]; then
   SCRIPT_NAME="tsos-installer.sh"
 fi
-SCRIPT_VERSION="1.0.55"
+SCRIPT_VERSION="1.0.57"
 
 # Generic defaults. Do not default TARGET_HOSTNAME from $HOSTNAME — the live
 # ISO sets HOSTNAME=archiso.
@@ -46,6 +46,8 @@ TABBY_MODELS="${TABBY_MODELS:-core}"
 TABBY_NETWORK_HOST="${TABBY_NETWORK_HOST:-0.0.0.0}"
 TABBY_NETWORK_PORT="${TABBY_NETWORK_PORT:-5000}"
 TABBY_CACHE="${TABBY_CACHE:-}"
+TABBY_BACKUP="${TABBY_BACKUP:-}"
+TABBY_BACKUP_GROUPS="${TABBY_BACKUP_GROUPS:-}"
 TABBY_PUBLIC_BASE="${TABBY_PUBLIC_BASE:-}"
 TABBY_SSH_REMOTE="${TABBY_SSH_REMOTE:-}"
 TABBY_SSH_FORWARD="${TABBY_SSH_FORWARD:-}"
@@ -61,13 +63,16 @@ DRY_RUN=0
 CONFIG_PROVIDED=0
 RESUME_TABBY=0
 TSOS_SKIP_SELF_UPDATE="${TSOS_SKIP_SELF_UPDATE:-0}"
-INSTALL_MODE="${INSTALL_MODE:-}" # simple | advanced | empty (ask)
+INSTALL_MODE="${INSTALL_MODE:-}" # simple | advanced | restore | empty (ask)
 ENCRYPT_FROM_CLI=""
 OMARCHY_FROM_CLI=""
 HOST_FROM_CLI=""
+HOSTNAME_FROM_CLI=""
+USER_FROM_CLI=""
 TIMEZONE_FROM_CLI=""
 MODELS_FROM_CLI=""
 CACHE_FROM_CLI=""
+BACKUP_FROM_CLI=""
 DEFAULT_DISK=/dev/sda
 TUI=""
 USE_TUI=0
@@ -113,7 +118,9 @@ USAGE
 With no --config file, the script starts with Simple setup. A review menu
 lists disk, hostname, user, timezone, weights, optional GPU models, and who
 can connect — open a row to change it, then start the install. Choose
-Advanced for encryption, Omarchy, full model control, and SSH tunnels. It
+Advanced for encryption, Omarchy, full model control, and SSH tunnels.
+Restore from backup reuses a Status / tsctl stack backup (models, and any
+saved config, users, and chats) and only asks which disk to wipe. It
 uses the same dialog menus as install.sh when dialog is available
 (installed on the live ISO if needed).
 
@@ -136,6 +143,9 @@ OPTIONS
   --advanced               Review menu for every setting (encryption,
                            Omarchy, cache, models, bind address, public
                            URL, SSH tunnel)
+  --restore-backup PATH    Restore a Status / tsctl stack backup. Prefills
+                           hostname, user, models, listen settings, and
+                           extras from PATH; only asks which disk to wipe
   --encrypt                LUKS on the root partition (Advanced default; Simple
                            is unencrypted unless you pass this)
   --no-encrypt             Unencrypted btrfs root
@@ -167,7 +177,8 @@ ENVIRONMENT
   ENCRYPT                  1 (LUKS) or 0 (plain btrfs)
   PASSWORD                 Used for LUKS + user + root if the split passwords are unset
   LUKS_PASSWORD, USER_PASSWORD, ROOT_PASSWORD
-  INSTALL_MODE             simple | advanced (asked if unset)
+  INSTALL_MODE             simple | advanced | restore (asked if unset)
+  TABBY_BACKUP             Stack backup folder (same as --restore-backup)
   OMARCHY_USER_NAME, OMARCHY_USER_EMAIL, OMARCHY_MODE (now|skip)
   TABBY_REPO, TABBY_LOCAL_SRC, TABBY_MODELS, TABBY_NETWORK_HOST, TABBY_NETWORK_PORT
   TABBY_CACHE, TABBY_PUBLIC_BASE, COMFYUI_URL, HF_TOKEN
@@ -181,7 +192,9 @@ The live ISO's HOSTNAME (usually archiso) is ignored on purpose.
 tabbyapi-stack install.sh runs in the chroot on the live ISO (Python, venvs,
 weights) and must finish before reboot. Simple setup opens a review menu
 (disk, hostname, user, timezone, weights, this PC vs LAN). Advanced adds
-locale, encryption, Omarchy, models, and tunnels. After you confirm the wipe, the install screen stays up with
+locale, encryption, Omarchy, models, and tunnels. Restore from backup
+prefills those from a saved stack backup and only asks for the disk.
+After you confirm the wipe, the install screen stays up with
 the step list, a progress bar, and the live log while Arch
 and tabbyapi-stack install.
 install.sh is non-interactive from here so it does not open a second
@@ -1671,7 +1684,315 @@ EOF
 # Asked when --config is not passed. Defaults come from the script
 # (or from a flag / env var if you already set one).
 valid_install_mode() {
-  [[ "$1" == simple || "$1" == advanced ]]
+  [[ "$1" == simple || "$1" == advanced || "$1" == restore ]]
+}
+
+is_stack_backup() {
+  local path=${1:-}
+  [[ -n "$path" && -d "$path" && -f "$path/manifest.json" ]] || return 1
+  grep -qE '"format"[[:space:]]*:[[:space:]]*"tabbyapi-stack-backup"' "$path/manifest.json"
+}
+
+stack_backup_json_field() {
+  local file=$1 field=$2
+  [[ -f "$file" ]] || return 0
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c '
+import json, sys
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+value = data.get(sys.argv[2], "")
+if isinstance(value, list):
+    print(",".join(str(x) for x in value))
+elif value is None:
+    print("")
+else:
+    print(value)
+' "$file" "$field"
+    return 0
+  fi
+  local raw
+  raw=$(grep -E "\"${field}\"[[:space:]]*:" "$file" | head -n1 || true)
+  raw=${raw#*:}
+  raw=${raw%,}
+  raw=${raw//\"/}
+  raw=${raw//[\[\]]/}
+  raw=${raw#"${raw%%[![:space:]]*}"}
+  raw=${raw%"${raw##*[![:space:]]}"}
+  printf '%s' "$raw"
+}
+
+trim_env_value() {
+  local v=$1
+  v=${v#\"}
+  v=${v%\"}
+  v=${v#\'}
+  v=${v%\'}
+  printf '%s' "$v"
+}
+
+linux_user_from_install_root() {
+  local value=$1
+  if [[ "$value" =~ ^/home/([A-Za-z_][A-Za-z0-9_-]*)(/|$) ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  return 1
+}
+
+list_stack_backups() {
+  local dir candidate
+  (
+    shopt -s nullglob
+    for dir in \
+      /run/media/usb/tabby-backup \
+      /mnt/usb/tabby-backup \
+      /run/media/usb \
+      /mnt/usb \
+      /run/media/* \
+      /run/media/*/* \
+      /media/* \
+      /mnt/*
+    do
+      [[ -d "$dir" ]] || continue
+      if is_stack_backup "$dir"; then
+        printf '%s\n' "$dir"
+      fi
+      for candidate in "$dir/tabby-backup" "$dir/tabbyapi-stack"; do
+        if is_stack_backup "$candidate"; then
+          printf '%s\n' "$candidate"
+        fi
+      done
+    done
+  ) | awk 'NF && !seen[$0]++'
+}
+
+backup_model_ids_from_cache() {
+  local cache=$1 rows id
+  ensure_fetch_tools || return 1
+  command -v python3 >/dev/null 2>&1 || return 1
+  [[ -n "${TSOS_FETCH:-}" && -f "$TSOS_FETCH" && -d "$cache" ]] || return 1
+  rows=$(python3 -u "$TSOS_FETCH" --catalog "$TSOS_CATALOG" --list-picks \
+    --source cache --cache "$cache" --vram-mib 99999 2>/dev/null || true)
+  [[ -n "$rows" ]] || return 1
+  local ids=()
+  while IFS=$'\t' read -r id _rest; do
+    [[ -n "${id:-}" ]] && ids+=("$id")
+  done <<< "$rows"
+  ((${#ids[@]})) || return 1
+  local IFS=,
+  printf '%s' "${ids[*]}"
+}
+
+load_backup_tabby_env() {
+  local envf=$1 line key value user
+  [[ -f "$envf" ]] || return 0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line=${line%$'\r'}
+    [[ "$line" == \#* || -z "$line" ]] && continue
+    [[ "$line" == *=* ]] || continue
+    key=${line%%=*}
+    value=${line#*=}
+    value=$(trim_env_value "$value")
+    case "$key" in
+      TABBY_NETWORK_HOST)
+        [[ -z "${HOST_FROM_CLI:-}" ]] && TABBY_NETWORK_HOST=$value
+        ;;
+      TABBY_NETWORK_PORT) TABBY_NETWORK_PORT=$value ;;
+      TABBY_MODELS)
+        [[ -z "${MODELS_FROM_CLI:-}" ]] && TABBY_MODELS=$value
+        ;;
+      TABBY_PUBLIC_BASE) TABBY_PUBLIC_BASE=$value ;;
+      TABBY_SSH_REMOTE) TABBY_SSH_REMOTE=$value ;;
+      TABBY_SSH_FORWARD) TABBY_SSH_FORWARD=$value ;;
+      TABBY_SSH_KEY) TABBY_SSH_KEY=$value ;;
+      COMFYUI_URL) COMFYUI_URL=$value ;;
+      TABBY_SAVER_ENABLED) TABBY_SAVER_ENABLED=$value ;;
+      TABBY_SAVER_IDLE_S) TABBY_SAVER_IDLE_S=$value ;;
+      TABBY_SAVER_LOGOUT_IDLE_S) TABBY_SAVER_LOGOUT_IDLE_S=$value ;;
+      TABBY_SAVER_HUD_S) TABBY_SAVER_HUD_S=$value ;;
+      TABBY_SAVER_TTY) TABBY_SAVER_TTY=$value ;;
+      TABBY_SAVER_USER_TTY) TABBY_SAVER_USER_TTY=$value ;;
+      TABBY_INSTALL_ROOT)
+        if [[ -z "${USER_FROM_CLI:-}" ]]; then
+          user=$(linux_user_from_install_root "$value" || true)
+          if [[ -n "$user" ]] && valid_username "$user"; then
+            TARGET_USER=$user
+          fi
+        fi
+        ;;
+    esac
+  done < "$envf"
+}
+
+apply_backup_settings() {
+  local path=$1 host detected
+  path=${path%/}
+  is_stack_backup "$path" || return 1
+  TABBY_BACKUP=$path
+  TABBY_CACHE=$path
+  TABBY_BACKUP_GROUPS=$(stack_backup_json_field "$path/manifest.json" groups)
+  host=$(stack_backup_json_field "$path/manifest.json" hostname)
+  if [[ -z "${HOSTNAME_FROM_CLI:-}" && -n "$host" ]] && valid_hostname "$host" \
+    && [[ "$host" != archiso && "$host" != localhost ]]; then
+    TARGET_HOSTNAME=$host
+  fi
+  load_backup_tabby_env "$path/extras/tabbyAPI/deploy/arch/tabby.env"
+  if [[ -z "${MODELS_FROM_CLI:-}" ]]; then
+    detected=$(backup_model_ids_from_cache "$path" || true)
+    if [[ -n "$detected" ]]; then
+      TABBY_MODELS=$detected
+    fi
+  fi
+  return 0
+}
+
+rewrite_restored_tabby_env() {
+  local envf=$1 dest=$2 comfy=$3
+  [[ -f "$envf" ]] || return 0
+  if grep -q '^TABBY_INSTALL_ROOT=' "$envf"; then
+    sed -i "s|^TABBY_INSTALL_ROOT=.*|TABBY_INSTALL_ROOT=${dest}|" "$envf"
+  else
+    printf 'TABBY_INSTALL_ROOT=%s\n' "$dest" >> "$envf"
+  fi
+  if grep -q '^COMFYUI_DIR=' "$envf"; then
+    sed -i "s|^COMFYUI_DIR=.*|COMFYUI_DIR=${comfy}|" "$envf"
+  else
+    printf 'COMFYUI_DIR=%s\n' "$comfy" >> "$envf"
+  fi
+}
+
+restore_backup_extras_into_target() {
+  local src dest stack
+  src="${TABBY_BACKUP:-${TABBY_CACHE:-}}/extras/tabbyAPI"
+  [[ -d "$src" ]] || return 0
+  stack="/home/${TARGET_USER}/tabbyapi-stack"
+  dest="$TARGET$stack/tabbyAPI"
+  [[ -d "$dest" ]] || return 0
+  log "Restoring backup extras (config, users, chats) into the new system"
+  cp -a "$src"/. "$dest"/
+  rewrite_restored_tabby_env "$dest/deploy/arch/tabby.env" "$stack" "$stack/ComfyUI"
+  chown_target_user_tree "$stack/tabbyAPI"
+}
+
+restore_plan_notes() {
+  local groups="${TABBY_BACKUP_GROUPS:-models}"
+  cat <<EOF
+Restore from backup — settings below come from the saved stack.
+Only the destination disk is asked here.
+
+  backup:        ${TABBY_BACKUP:-${TABBY_CACHE:-}}
+  includes:      ${groups}
+  hostname:      ${TARGET_HOSTNAME:-tsos}
+  user:          ${TARGET_USER:-tabby}
+  timezone:      ${TIMEZONE:-UTC}
+  access:        ${TABBY_NETWORK_HOST:-0.0.0.0}:${TABBY_NETWORK_PORT:-5000}
+  models:        ${TABBY_MODELS:-core}
+  public URL:    ${TABBY_PUBLIC_BASE:-'(none)'}
+  SSH tunnel:    ${TABBY_SSH_REMOTE:-'(none)'}
+
+EOF
+}
+
+show_restore_summary() {
+  local text
+  text=$(restore_plan_notes)
+  if ((USE_TUI)); then
+    ui_msg "Restore from backup" "$text" || true
+  else
+    printf '%s\n' "$text" >/dev/tty
+  fi
+}
+
+prompt_backup_source() {
+  local cache_choice found path
+  if [[ -n "${BACKUP_FROM_CLI:-}" && -n "${TABBY_BACKUP:-}" ]]; then
+    apply_backup_settings "$TABBY_BACKUP" && return 0
+    die "Not a stack backup (missing manifest.json): $TABBY_BACKUP"
+  fi
+  if [[ -n "${TABBY_BACKUP:-}" ]] && is_stack_backup "$TABBY_BACKUP"; then
+    apply_backup_settings "$TABBY_BACKUP"
+    return 0
+  fi
+
+  mapfile -t found < <(list_stack_backups)
+  if ((USE_TUI)); then
+    local -a args=()
+    local item
+    for item in "${found[@]}"; do
+      [[ -n "$item" ]] || continue
+      args+=("$item" "Stack backup")
+    done
+    args+=(usb "Use /run/media/usb/tabby-backup")
+    args+=(mnt "Use /mnt/usb/tabby-backup")
+    args+=(custom "Type another path")
+    cache_choice=$(ui_menu "Restore from backup" \
+"Choose a Status / tsctl stack backup. That folder has
+manifest.json plus model weights, and optional extras
+(config, users, chats).
+
+Mount the USB first if you copied the backup there
+(not under /mnt — that becomes the new root)." \
+      "${args[@]}") || return 1
+    case "$cache_choice" in
+      usb) path="/run/media/usb/tabby-backup" ;;
+      mnt) path="/mnt/usb/tabby-backup" ;;
+      custom)
+        path=$(ui_input "Backup path" \
+"Folder created by Status or: tsctl backup PATH --config --users --chats
+
+It must contain manifest.json." \
+          "${TABBY_BACKUP:-/run/media/usb/tabby-backup}") || return 1
+        ;;
+      *) path=$cache_choice ;;
+    esac
+  else
+    if ((${#found[@]})); then
+      printf 'Stack backups found:\n' >/dev/tty
+      local i=0
+      for item in "${found[@]}"; do
+        printf '  %s\n' "$item" >/dev/tty
+        i=$((i + 1))
+      done
+    fi
+    printf '%s\n' >/dev/tty \
+"Backup folder from Status or tsctl (manifest.json + models)."
+    path=$(ask "Backup path" "${TABBY_BACKUP:-${found[0]:-/run/media/usb/tabby-backup}}")
+  fi
+  path=${path%/}
+  if ! is_stack_backup "$path"; then
+    if ((USE_TUI)); then
+      ui_msg "Not a stack backup" \
+"That path is not a tabbyapi-stack backup:
+  ${path}
+
+It needs manifest.json with format tabbyapi-stack-backup." || true
+    else
+      printf 'Not a stack backup: %s\n' "$path" >/dev/tty
+    fi
+    return 2
+  fi
+  apply_backup_settings "$path"
+}
+
+prompt_settings_restore() {
+  local rc
+  INSTALL_MODE=restore
+  while true; do
+    rc=0
+    prompt_backup_source || rc=$?
+    case "$rc" in
+      0) ;;
+      2) continue ;;
+      *) ui_cancel ;;
+    esac
+    show_restore_summary
+    if [[ -n "${DISK:-}" ]]; then
+      break
+    fi
+    if ask_install_disk "Target disk"; then
+      break
+    fi
+  done
 }
 
 apply_simple_defaults() {
@@ -1851,7 +2172,7 @@ No = leave the path (install will download anything missing)." 1; then
 
 pick_install_mode() {
   if [[ -n "${INSTALL_MODE:-}" ]]; then
-    valid_install_mode "$INSTALL_MODE" || die "invalid INSTALL_MODE: $INSTALL_MODE (simple or advanced)"
+    valid_install_mode "$INSTALL_MODE" || die "invalid INSTALL_MODE: $INSTALL_MODE (simple, advanced, or restore)"
     return 0
   fi
   local choice
@@ -1864,15 +2185,21 @@ on your network can connect. Open a row to change it.
 Advanced adds locale, encryption, Omarchy, full model control,
 bind address, public URL, and SSH tunnel.
 
-Omarchy is not installed in Simple." \
+Restore from backup reuses a Status / tsctl stack backup
+(models plus any saved config, users, and chats) and only
+asks which disk to wipe.
+
+Omarchy is not installed in Simple or Restore." \
       simple "Simple — disk, hostname, user, timezone, weights, this PC vs LAN" \
-      advanced "Advanced — every setting")
+      advanced "Advanced — every setting" \
+      restore "Restore from backup — models, config, and saved extras")
   else
     printf '\n' >/dev/tty
     printf '%s\n' "Simple (recommended): disk, hostname, user, timezone, weights, this PC vs LAN." >/dev/tty
     printf '%s\n' "Advanced: encryption, Omarchy, full model control, tunnel." >/dev/tty
-    printf '%s\n' "Omarchy is not installed in Simple." >/dev/tty
-    choice=$(ask_until "Setup type (simple / advanced)" "simple" valid_install_mode)
+    printf '%s\n' "Restore: stack backup (models, config, extras); only asks for the disk." >/dev/tty
+    printf '%s\n' "Omarchy is not installed in Simple or Restore." >/dev/tty
+    choice=$(ask_until "Setup type (simple / advanced / restore)" "simple" valid_install_mode)
   fi
   INSTALL_MODE="${choice:-simple}"
   valid_install_mode "$INSTALL_MODE" || INSTALL_MODE=simple
@@ -1880,6 +2207,13 @@ Omarchy is not installed in Simple." \
 
 prompt_settings() {
   pick_install_mode
+  if [[ "$INSTALL_MODE" == restore ]]; then
+    apply_simple_defaults
+    INSTALL_MODE=restore
+    maybe_detect_timezone
+    prompt_settings_restore
+    return 0
+  fi
   if [[ "$INSTALL_MODE" == simple ]]; then
     apply_simple_defaults
   fi
@@ -2948,6 +3282,86 @@ self_test() {
   check "$TABBY_NETWORK_HOST" "127.0.0.1" "simple --tabby-host kept"
   HOST_FROM_CLI=""
 
+  if valid_install_mode restore && valid_install_mode simple && ! valid_install_mode nope; then
+    printf 'ok   install mode simple/advanced/restore\n'
+  else
+    printf 'FAIL install mode should accept restore\n' >&2
+    failed=1
+  fi
+  check "$(linux_user_from_install_root /home/studio/tabbyapi-stack)" studio \
+    "user from TABBY_INSTALL_ROOT"
+  on=0
+  linux_user_from_install_root /opt/tabbyapi-stack || on=1
+  check "$on" 1 "non-home install root has no linux user"
+  check "$(trim_env_value '"0.0.0.0"')" "0.0.0.0" "trim quoted env value"
+
+  local backup_test envf manf
+  backup_test=$(mktemp -d)
+  manf="$backup_test/manifest.json"
+  envf="$backup_test/extras/tabbyAPI/deploy/arch/tabby.env"
+  mkdir -p "$(dirname "$envf")"
+  printf '%s\n' '{"format":"tabbyapi-stack-backup","version":1,"hostname":"studio","groups":["models","config","users"]}' >"$manf"
+  cat >"$envf" <<'ENV'
+TABBY_NETWORK_HOST=127.0.0.1
+TABBY_NETWORK_PORT=5001
+TABBY_MODELS=qwen,embed
+TABBY_PUBLIC_BASE=https://api.example.com/v1
+TABBY_INSTALL_ROOT=/home/studio/tabbyapi-stack
+COMFYUI_URL=http://127.0.0.1:8188
+ENV
+  on=0
+  is_stack_backup "$backup_test" || on=1
+  check "$on" 0 "detects stack backup"
+  check "$(stack_backup_json_field "$manf" hostname)" studio "manifest hostname"
+  check "$(stack_backup_json_field "$manf" groups)" "models,config,users" "manifest groups"
+  TARGET_USER=tabby
+  TARGET_HOSTNAME=tsos
+  TABBY_NETWORK_HOST=0.0.0.0
+  TABBY_NETWORK_PORT=5000
+  TABBY_MODELS=core
+  TABBY_PUBLIC_BASE=""
+  HOSTNAME_FROM_CLI=""
+  USER_FROM_CLI=""
+  HOST_FROM_CLI=""
+  MODELS_FROM_CLI=""
+  apply_backup_settings "$backup_test"
+  check "$TARGET_HOSTNAME" studio "backup prefills hostname"
+  check "$TARGET_USER" studio "backup prefills linux user"
+  check "$TABBY_NETWORK_HOST" "127.0.0.1" "backup prefills listen host"
+  check "$TABBY_NETWORK_PORT" "5001" "backup prefills listen port"
+  check "$TABBY_MODELS" "qwen,embed" "backup prefills models from env"
+  check "$TABBY_PUBLIC_BASE" "https://api.example.com/v1" "backup prefills public URL"
+  check "$TABBY_BACKUP" "$backup_test" "backup path stored"
+  check "$TABBY_CACHE" "$backup_test" "backup is weights cache"
+  rewrite_restored_tabby_env "$envf" /home/studio/tabbyapi-stack /home/studio/tabbyapi-stack/ComfyUI
+  grep -q '^TABBY_INSTALL_ROOT=/home/studio/tabbyapi-stack$' "$envf" || {
+    printf 'FAIL rewrite TABBY_INSTALL_ROOT\n' >&2
+    failed=1
+  }
+  grep -q '^COMFYUI_DIR=/home/studio/tabbyapi-stack/ComfyUI$' "$envf" && \
+    printf 'ok   rewrite COMFYUI_DIR\n' || {
+      printf 'FAIL rewrite COMFYUI_DIR\n' >&2
+      failed=1
+    }
+  TARGET_HOSTNAME=keepme
+  HOSTNAME_FROM_CLI=1
+  apply_backup_settings "$backup_test"
+  check "$TARGET_HOSTNAME" keepme "backup keeps --hostname"
+  HOSTNAME_FROM_CLI=""
+  printf '%s\n' '{"format":"nope"}' >"$manf"
+  on=0
+  is_stack_backup "$backup_test" || on=1
+  check "$on" 1 "rejects unknown backup format"
+  rm -rf "$backup_test"
+  TARGET_USER=tabby
+  TARGET_HOSTNAME=tsos
+  TABBY_BACKUP=""
+  TABBY_CACHE=""
+  TABBY_PUBLIC_BASE=""
+  TABBY_MODELS=core
+  TABBY_NETWORK_HOST=0.0.0.0
+  TABBY_NETWORK_PORT=5000
+
   if valid_omarchy_mode now && valid_omarchy_mode skip && ! valid_omarchy_mode later; then
     printf 'ok   omarchy now/skip\n'
   else
@@ -3088,10 +3502,12 @@ parse_args() {
         ;;
       --hostname)
         TARGET_HOSTNAME=${2:?}
+        HOSTNAME_FROM_CLI=1
         shift 2
         ;;
       --user)
         TARGET_USER=${2:?}
+        USER_FROM_CLI=1
         shift 2
         ;;
       --timezone)
@@ -3128,6 +3544,14 @@ parse_args() {
       --advanced)
         INSTALL_MODE=advanced
         shift
+        ;;
+      --restore-backup)
+        INSTALL_MODE=restore
+        TABBY_BACKUP=${2:?--restore-backup requires a path}
+        TABBY_CACHE=$TABBY_BACKUP
+        BACKUP_FROM_CLI=1
+        CACHE_FROM_CLI=1
+        shift 2
         ;;
       --with-omarchy)
         OMARCHY_MODE=now
@@ -3475,8 +3899,31 @@ installer_self_path() {
   printf '%s\n' "$script"
 }
 
+# Full-screen wait page from live boot until the first question.
+boot_splash() {
+  local msg=${1:-Starting the installer...}
+  TSOS_SPLASH=1
+  quiet_kernel_console
+  if ! have_console; then
+    return 0
+  fi
+  write_dialogrc
+  if command -v dialog >/dev/null; then
+    dialog --backtitle "$BACKTITLE" --title "TSOS installer" \
+      --infobox "
+
+  ${msg}" 10 56 >/dev/tty || true
+    return 0
+  fi
+  printf '\n  TSOS installer\n\n  %s\n' "$msg" >/dev/tty
+}
+
 self_update_say() {
   log "$*"
+  if [[ "${TSOS_SPLASH:-0}" == 1 ]]; then
+    boot_splash "$*"
+    return 0
+  fi
   if have_console; then
     printf '%s\n' "$*" >/dev/tty
   fi
@@ -3585,7 +4032,9 @@ disable_live_mkinitcpio_hooks() {
 }
 
 print_plan() {
-  if [[ "${INSTALL_MODE:-}" == simple ]]; then
+  if [[ "${INSTALL_MODE:-}" == restore ]]; then
+    restore_plan_notes
+  elif [[ "${INSTALL_MODE:-}" == simple ]]; then
     simple_plan_notes
   fi
   local root_line data_kind
@@ -3616,6 +4065,7 @@ $root_line
   tabby public:  ${TABBY_PUBLIC_BASE:-'(none — local only)'}
   tabby ssh:     ${TABBY_SSH_REMOTE:-'(none — no tunnel)'}
   tabby cache:   ${TABBY_CACHE:-'(none — Hugging Face)'}
+  tabby backup:  ${TABBY_BACKUP:-'(none)'}
   tabby repo:    $TABBY_REPO
   tabby overlay: ${TABBY_LOCAL_SRC:-'(script dir if it contains install.sh)'}
   nvidia:        nvidia-open (Turing / RTX 20-series+; Arch no longer ships nvidia)
@@ -4406,6 +4856,8 @@ write_tabby_bootstrap() {
     printf 'TABBY_NETWORK_HOST=%q\n' "$TABBY_NETWORK_HOST"
     printf 'TABBY_NETWORK_PORT=%q\n' "$TABBY_NETWORK_PORT"
     printf 'TABBY_CACHE=%q\n' "$TABBY_CACHE"
+    printf 'TABBY_BACKUP=%q\n' "$TABBY_BACKUP"
+    printf 'TABBY_BACKUP_GROUPS=%q\n' "$TABBY_BACKUP_GROUPS"
     printf 'TABBY_PUBLIC_BASE=%q\n' "$TABBY_PUBLIC_BASE"
     printf 'TABBY_SSH_REMOTE=%q\n' "$TABBY_SSH_REMOTE"
     printf 'TABBY_SSH_FORWARD=%q\n' "$TABBY_SSH_FORWARD"
@@ -4874,6 +5326,7 @@ run_tabby_install_chroot() {
     TABBY_SKIP_NVIDIA_REBOOT=1
     TABBY_INSTALL_ROOT="$stack_home"
     TABBY_CACHE="${TABBY_CACHE_CHROOT:-}"
+    TABBY_BACKUP="${TABBY_CACHE_CHROOT:-${TABBY_BACKUP:-}}"
     TABBY_NONINTERACTIVE=1
     TABBY_NESTED_UI=1
     TABBY_INSTALL_VERBOSE=1
@@ -4943,6 +5396,7 @@ or:
     bash ${stack_home}/install.sh"
   fi
 
+  restore_backup_extras_into_target
   refresh_tsos_conf_from_tabby_env
   install -d -m 0755 "$TARGET/var/lib/tsos"
   touch "$TARGET/var/lib/tsos/tabby-firstboot.done"
@@ -5250,7 +5704,9 @@ main() {
   # A leftover dialog from a killed run owns tty1 and swallows the first OK.
   pkill -x dialog 2>/dev/null || true
   restore_tty
+  boot_splash "Checking this live system..."
   early_preflight
+  boot_splash "Checking GitHub for a newer installer..."
   maybe_self_update "$@"
   if ((RESUME_TABBY)); then
     log "Resuming tabbyapi-stack in the already-mounted system at $TARGET (no disk wipe)"

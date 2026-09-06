@@ -38,25 +38,29 @@ TUI=""
 USE_TUI=0
 INTERACTIVE=1
 UPDATE_MODE=0
-INSTALL_MODE="${INSTALL_MODE:-}" # simple | advanced | empty (ask)
+INSTALL_MODE="${INSTALL_MODE:-}" # simple | advanced | restore | empty (ask)
+TABBY_BACKUP="${TABBY_BACKUP:-}"
 
 usage_install() {
   cat <<EOF
-Usage: $(basename "$0") [--update] [--simple|--advanced]
+Usage: $(basename "$0") [--update] [--simple|--advanced|--restore-backup PATH]
 
   (no args)     Interactive or env-driven install / re-run.
                 Starts with Simple setup (review menu: this PC vs LAN;
                 minimal models plus optional GPU extras). Choose Advanced for cache,
-                tunnels, screensaver.
+                tunnels, screensaver. Restore from backup reuses a Status / tsctl
+                stack backup and skips the other questions.
   --simple      Review menu: this PC vs LAN. Install root is
                 \$HOME/tabbyapi-stack; weights come from Hugging Face.
   --advanced    Review menu for every setting
+  --restore-backup PATH
+                Prefill models and settings from a stack backup; copy extras
   --update      Apply code and deps after git pull. Prefer: bash update.sh
                 Reuses tabby.env; does not overwrite config.yml or tabby.env.
                 Does not pacman -Syu; only installs missing OS packages.
   -h, --help    This text
 
-  INSTALL_MODE=simple|advanced  Same as --simple / --advanced
+  INSTALL_MODE=simple|advanced|restore  Same as --simple / --advanced / restore
 
   ISO chroot (from tsos-installer, or a resume): dest, cache, model set,
   and API URLs come from tsos (TABBY_NONINTERACTIVE=1). Resume:
@@ -73,6 +77,12 @@ while (($#)); do
     --update) UPDATE_MODE=1; TABBY_NONINTERACTIVE=1; shift ;;
     --simple) INSTALL_MODE=simple; shift ;;
     --advanced) INSTALL_MODE=advanced; shift ;;
+    --restore-backup)
+      INSTALL_MODE=restore
+      TABBY_BACKUP=${2:?--restore-backup requires a path}
+      TABBY_CACHE=$TABBY_BACKUP
+      shift 2
+      ;;
     -h|--help) usage_install; exit 0 ;;
     *)
       echo "Unknown option: $1" >&2
@@ -1970,13 +1980,197 @@ LAN is the default. You can change this later in Settings." \
 }
 
 valid_install_mode() {
-  [[ "$1" == simple || "$1" == advanced ]]
+  [[ "$1" == simple || "$1" == advanced || "$1" == restore ]]
+}
+
+is_stack_backup() {
+  local path=${1:-}
+  [[ -n "$path" && -d "$path" && -f "$path/manifest.json" ]] || return 1
+  grep -qE '"format"[[:space:]]*:[[:space:]]*"tabbyapi-stack-backup"' "$path/manifest.json"
+}
+
+stack_backup_json_field() {
+  local file=$1 field=$2
+  [[ -f "$file" ]] || return 0
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c '
+import json, sys
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+value = data.get(sys.argv[2], "")
+if isinstance(value, list):
+    print(",".join(str(x) for x in value))
+elif value is None:
+    print("")
+else:
+    print(value)
+' "$file" "$field"
+    return 0
+  fi
+  printf '%s' ""
+}
+
+trim_env_value() {
+  local v=$1
+  v=${v#\"}
+  v=${v%\"}
+  v=${v#\'}
+  v=${v%\'}
+  printf '%s' "$v"
+}
+
+load_backup_tabby_env() {
+  local envf=$1 line key value
+  [[ -f "$envf" ]] || return 0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line=${line%$'\r'}
+    [[ "$line" == \#* || -z "$line" ]] && continue
+    [[ "$line" == *=* ]] || continue
+    key=${line%%=*}
+    value=${line#*=}
+    value=$(trim_env_value "$value")
+    case "$key" in
+      TABBY_NETWORK_HOST) TABBY_NETWORK_HOST=$value ;;
+      TABBY_NETWORK_PORT) TABBY_NETWORK_PORT=$value ;;
+      TABBY_MODELS) TABBY_MODELS=$value ;;
+      TABBY_PUBLIC_BASE) TABBY_PUBLIC_BASE=$value ;;
+      TABBY_SSH_REMOTE) TABBY_SSH_REMOTE=$value ;;
+      TABBY_SSH_FORWARD) TABBY_SSH_FORWARD=$value ;;
+      TABBY_SSH_KEY) TABBY_SSH_KEY=$value ;;
+      COMFYUI_URL) COMFYUI_URL=$value ;;
+      TABBY_SAVER_ENABLED) TABBY_SAVER_ENABLED=$value ;;
+      TABBY_SAVER_IDLE_S) TABBY_SAVER_IDLE_S=$value ;;
+      TABBY_SAVER_LOGOUT_IDLE_S) TABBY_SAVER_LOGOUT_IDLE_S=$value ;;
+      TABBY_SAVER_HUD_S) TABBY_SAVER_HUD_S=$value ;;
+      TABBY_SAVER_TTY) TABBY_SAVER_TTY=$value ;;
+      TABBY_SAVER_USER_TTY) TABBY_SAVER_USER_TTY=$value ;;
+    esac
+  done < "$envf"
+}
+
+rewrite_restored_tabby_env() {
+  local envf=$1
+  [[ -f "$envf" ]] || return 0
+  if grep -q '^TABBY_INSTALL_ROOT=' "$envf"; then
+    sed -i "s|^TABBY_INSTALL_ROOT=.*|TABBY_INSTALL_ROOT=${DEST}|" "$envf"
+  else
+    printf 'TABBY_INSTALL_ROOT=%s\n' "$DEST" >> "$envf"
+  fi
+  if grep -q '^COMFYUI_DIR=' "$envf"; then
+    sed -i "s|^COMFYUI_DIR=.*|COMFYUI_DIR=${DEST_COMFY}|" "$envf"
+  else
+    printf 'COMFYUI_DIR=%s\n' "$DEST_COMFY" >> "$envf"
+  fi
+}
+
+restore_stack_backup_extras() {
+  local cache="${WIN_ROOT:-${TABBY_CACHE:-${TABBY_BACKUP:-}}}"
+  local src dest
+  [[ -n "$cache" && -d "$cache/extras/tabbyAPI" ]] || return 0
+  is_stack_backup "$cache" || return 0
+  src="$cache/extras/tabbyAPI"
+  dest="$DEST_TABBY"
+  [[ -d "$dest" ]] || return 0
+  echo "==> Restoring stack backup extras from $src" | tee -a "$INSTALL_LOG"
+  cp -a "$src"/. "$dest"/
+  rewrite_restored_tabby_env "$dest/deploy/arch/tabby.env"
+  load_tabby_env_file "$dest/deploy/arch/tabby.env"
+}
+
+list_stack_backups() {
+  local dir candidate
+  (
+    shopt -s nullglob
+    for dir in \
+      /run/media/usb/tabby-backup \
+      /mnt/usb/tabby-backup \
+      /run/media/usb \
+      /mnt/usb \
+      /run/media/* \
+      /run/media/*/* \
+      /media/* \
+      /mnt/*
+    do
+      [[ -d "$dir" ]] || continue
+      if is_stack_backup "$dir"; then
+        printf '%s\n' "$dir"
+      fi
+      for candidate in "$dir/tabby-backup" "$dir/tabbyapi-stack"; do
+        if is_stack_backup "$candidate"; then
+          printf '%s\n' "$candidate"
+        fi
+      done
+    done
+  ) | awk 'NF && !seen[$0]++'
+}
+
+apply_backup_install_settings() {
+  local path=$1 detected
+  path=${path%/}
+  is_stack_backup "$path" || return 1
+  TABBY_BACKUP=$path
+  TABBY_CACHE=$path
+  WIN_ROOT=$path
+  load_backup_tabby_env "$path/extras/tabbyAPI/deploy/arch/tabby.env"
+  if command -v python3 >/dev/null 2>&1 && [[ -f "${FETCH_MODELS:-}" ]]; then
+    detected=$(python3 -u "$FETCH_MODELS" --catalog "$CATALOG" --list-picks \
+      --source cache --cache "$path" --vram-mib 99999 2>/dev/null | awk -F'\t' 'NF{print $1}' | paste -sd, - || true)
+    if [[ -n "$detected" ]]; then
+      TABBY_MODELS=$detected
+    fi
+  fi
+  MODEL_SET="${TABBY_MODELS:-core}"
+  return 0
+}
+
+prompt_backup_source() {
+  local cache_choice path
+  local -a found=()
+  if [[ -n "${TABBY_BACKUP:-}" ]] && is_stack_backup "$TABBY_BACKUP"; then
+    apply_backup_install_settings "$TABBY_BACKUP"
+    return 0
+  fi
+  mapfile -t found < <(list_stack_backups)
+  local -a args=()
+  local item
+  for item in "${found[@]}"; do
+    [[ -n "$item" ]] || continue
+    args+=("$item" "Stack backup")
+  done
+  args+=(usb "Use /mnt/usb/tabby-backup")
+  args+=(custom "Type another path")
+  cache_choice=$(ui_menu "Restore from backup" \
+"Choose a Status / tsctl stack backup (manifest.json plus
+model weights, and any saved config, users, and chats).
+
+Mount the USB first if you copied the backup there." \
+    "${args[@]}") || return 1
+  case "$cache_choice" in
+    usb) path="/mnt/usb/tabby-backup" ;;
+    custom)
+      path=$(ui_input "Backup path" \
+"Folder created by Status or: tsctl backup PATH --config --users --chats
+
+It must contain manifest.json." \
+        "${TABBY_BACKUP:-/mnt/usb/tabby-backup}") || return 1
+      ;;
+    *) path=$cache_choice ;;
+  esac
+  path=${path%/}
+  if ! is_stack_backup "$path"; then
+    ui_msg "Not a stack backup" \
+"That path is not a tabbyapi-stack backup:
+  ${path}
+
+It needs manifest.json with format tabbyapi-stack-backup." || true
+    return 2
+  fi
+  apply_backup_install_settings "$path"
 }
 
 pick_install_mode() {
   if [[ -n "${INSTALL_MODE:-}" ]]; then
     valid_install_mode "$INSTALL_MODE" || {
-      echo "invalid INSTALL_MODE: $INSTALL_MODE (simple or advanced)" >&2
+      echo "invalid INSTALL_MODE: $INSTALL_MODE (simple, advanced, or restore)" >&2
       exit 1
     }
     return 0
@@ -1991,11 +2185,45 @@ Advanced lists every setting as a row you can open: install
 root, weights cache, models, bind address, public URL, SSH
 tunnel, and screensaver.
 
+Restore from backup reuses a Status / tsctl stack backup
+(models plus any saved config, users, and chats) and skips
+the other questions.
+
 You can re-run later and pick Advanced to change those." \
     simple "Simple — this PC vs LAN, minimal models + extras" \
-    advanced "Advanced — every setting")"
+    advanced "Advanced — every setting" \
+    restore "Restore from backup — models, config, and saved extras")"
   INSTALL_MODE="${choice:-simple}"
   valid_install_mode "$INSTALL_MODE" || INSTALL_MODE=simple
+}
+
+prompt_restore_install() {
+  local rc
+  DEST="${TABBY_INSTALL_ROOT:-$DEFAULT_DEST}"
+  DEST="${DEST:-$DEFAULT_DEST}"
+  while true; do
+    rc=0
+    prompt_backup_source || rc=$?
+    case "$rc" in
+      0) ;;
+      2) continue ;;
+      *) ui_cancel ;;
+    esac
+    apply_choices
+    apply_network_defaults
+    apply_saver_defaults
+    ui_msg "Restore from backup" \
+"Using backup:
+  ${TABBY_BACKUP}
+
+Install root: ${DEST}
+Models:       ${MODEL_SET:-core}
+Listen:       ${TABBY_NETWORK_HOST:-0.0.0.0}:${TABBY_NETWORK_PORT:-5000}
+
+Config, users, and chats from the backup are copied after
+the models. Only this summary is shown — no other questions." || true
+    break
+  done
 }
 
 prompt_simple_install() {
@@ -2853,6 +3081,11 @@ if [[ "$INTERACTIVE" -eq 0 ]]; then
   else
     WIN_ROOT="$DEFAULT_CACHE"
   fi
+  if [[ -n "${TABBY_BACKUP:-}" ]] && is_stack_backup "$TABBY_BACKUP"; then
+    apply_backup_install_settings "$TABBY_BACKUP"
+  elif [[ -n "${WIN_ROOT:-}" ]] && is_stack_backup "$WIN_ROOT"; then
+    apply_backup_install_settings "$WIN_ROOT"
+  fi
   MODEL_SET="${TABBY_MODELS:-core}"
   apply_choices
   apply_network_defaults
@@ -2884,7 +3117,9 @@ if [[ "$INTERACTIVE" -eq 0 ]]; then
   fi
 else
   pick_install_mode
-  if [[ "$INSTALL_MODE" == simple ]]; then
+  if [[ "$INSTALL_MODE" == restore ]]; then
+    prompt_restore_install
+  elif [[ "$INSTALL_MODE" == simple ]]; then
     prompt_simple_install
   else
     prompt_advanced_install
@@ -3506,6 +3741,9 @@ else
 fi
 if [[ "$UPDATE_MODE" -eq 0 || ! -f "$DEST_TABBY/deploy/arch/tabby.env" ]]; then
   write_tabby_env "$DEST_TABBY/deploy/arch/tabby.env"
+fi
+if [[ "$UPDATE_MODE" -eq 0 ]]; then
+  restore_stack_backup_extras
 fi
 
 UNIT_SRC="$DEST_TABBY/deploy/arch/tabbyapi.service"

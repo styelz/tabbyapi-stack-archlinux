@@ -29,7 +29,7 @@ Clone into `$HOME/tabbyapi-stack` so that folder is the git checkout.
 
 **Simple** (default): disk, hostname, username, timezone, weights source, LAN access (this PC is optional). No Omarchy, no disk encryption unless you pass `--encrypt`.
 
-**Simple** includes minimal coding/image models and a GPU-filtered optional-model checklist with disk estimates. **Advanced** adds locale, encryption, Omarchy, full model control, bind address, public URL, and SSH tunnel. Flags: `--simple` / `--advanced`, or `INSTALL_MODE=simple|advanced`.
+**Simple** includes minimal coding/image models and a GPU-filtered optional-model checklist with disk estimates. **Advanced** adds locale, encryption, Omarchy, full model control, bind address, public URL, and SSH tunnel. **Restore from backup** (first menu, or `--restore-backup PATH`) reuses a Status / `tsctl` stack backup: models plus any saved config, users, and chats. The ISO installer then only asks which disk to wipe. Flags: `--simple` / `--advanced` / `--restore-backup PATH`, or `INSTALL_MODE=simple|advanced|restore`.
 
 Non-interactive:
 
@@ -106,10 +106,11 @@ tsctl restore /mnt/usb/tabby-backup --models --config --users --chats
 
 The destination is a resumable folder copy, not a browser download. It keeps
 `tabbyAPI/models` and `ComfyUI/models` paths, so a fresh install can reuse it
-with `install.sh --cache /mnt/usb/tabby-backup`. Config, user credentials, API
-tokens, and all-account chat data are optional because restoring those sections
-overwrites the corresponding live files. Restart TabbyAPI after restoring
-config.
+from the first-menu **Restore from backup** option, `tsos-installer.sh
+--restore-backup /mnt/usb/tabby-backup`, or `install.sh --restore-backup
+/mnt/usb/tabby-backup`. Config, user credentials, API tokens, and all-account
+chat data are copied when they were included in the backup. Restart TabbyAPI
+after restoring config onto a running stack (`tsctl restore`).
 
 Chat phrases and mixed page+images: `$HOME/tabbyapi-stack/AGENTS.md`.
 

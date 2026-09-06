@@ -25,7 +25,7 @@ Treat the API like OpenAI: chat and HTTP. Some editors only accept `https://`; t
   - **Settings** — administrator-only Tabby `config.yml`, system `tabby.env`, screensaver, and GPU fan/power. Same keys from the shell: `tsctl`
   - **Account menu** — Download backup / Restore backup for this signed-in account (chats, Code files, prefs, gallery). After a fresh install, recreate extra Tabby users, then each person restores their own zip.
 
-Host-level model backups are separate from account zip backups. Use Status, or `tsctl backup /mnt/usb/tabby-backup --config --users --chats`. The resulting folder is resumable and can be supplied to a fresh installer as `--cache /mnt/usb/tabby-backup`. Restore with `tsctl restore /mnt/usb/tabby-backup`; optional extra sections overwrite their live files.
+Host-level model backups are separate from account zip backups. Use Status, or `tsctl backup /mnt/usb/tabby-backup --config --users --chats`. The resulting folder is resumable. On a fresh machine, the installer first menu has **Restore from backup**: it prefills hostname, user, models, and listen settings from that folder and only asks which disk to wipe. Same thing from the shell: `tsos-installer.sh --restore-backup /mnt/usb/tabby-backup`. On an already-installed Arch box, `install.sh --restore-backup /mnt/usb/tabby-backup`. Restore onto a running stack with `tsctl restore /mnt/usb/tabby-backup`; optional extra sections overwrite their live files.
 - The GPU is shared. Browser UI and editor `/v1` requests wait in one queue.
 
 Do not SSH into the GPU host just to change models. Send a chat phrase, use Status in `/v1/ui`, or send `restart` to bounce the API.
