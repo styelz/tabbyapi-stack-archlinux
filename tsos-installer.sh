@@ -23,7 +23,7 @@ SCRIPT_NAME="${0##*/}"
 if [[ "$SCRIPT_NAME" == "bash" || "$SCRIPT_NAME" == "-bash" || "$SCRIPT_NAME" == "sh" || "$SCRIPT_NAME" == "-sh" ]]; then
   SCRIPT_NAME="tsos-installer.sh"
 fi
-SCRIPT_VERSION="1.0.53"
+SCRIPT_VERSION="1.0.54"
 
 # Generic defaults. Do not default TARGET_HOSTNAME from $HOSTNAME — the live
 # ISO sets HOSTNAME=archiso.
@@ -591,8 +591,8 @@ P_DK=$'\033[0;30;47m'       # border2_color: shaded edge
 P_TITLE=$'\033[1;34;47m'    # title_color
 P_SHADOW=$'\033[0;30;40m'   # shadow_color
 P_DONE=$'\033[0;32;47m'     # finished chips (uarrow green)
-P_CUR=$'\033[1;37;44m'      # current chip (item_selected)
-P_CUR_ALT=$'\033[1;34;47m'  # current chip, off pulse
+P_SPIN=$'\033[1;36;47m'     # spinner, even tick
+P_SPIN_ALT=$'\033[1;34;47m' # spinner, odd tick
 P_HEAD=$'\033[1;34;47m'     # step heading
 P_DIM=$'\033[0;34;47m'      # times, spinner
 P_KEY=$'\033[0;31;47m'      # hotkey red (Ctrl+C)
@@ -694,14 +694,14 @@ page_inner() {
 }
 
 # page_chips iw heading pct ticks spin -> PAGE_P (coded), PAGE_V (cells).
-# Finished steps green, the current one highlighted like a selected menu
-# item and pulsing, the rest plain.
+# Finished steps green, the current spinner coloured, the rest plain.
 page_chips() {
   local iw=$1 heading=$2 pct=$3 ticks=$4 spin=$5
-  local cur i=0 piece mark short minpct match
+  local cur i=0 piece mark short minpct match sc=$P_SPIN_ALT
   PAGE_P=""
   PAGE_V=0
   cur=$(gauge_step_index "$heading" "$pct")
+  ((ticks % 2 == 0)) && sc=$P_SPIN
   while IFS='|' read -r minpct short match; do
     [[ -n "$short" ]] || continue
     if ((i < cur)); then
@@ -722,11 +722,7 @@ page_chips() {
     if ((i < cur)); then
       PAGE_P+="$P_DONE$piece"
     elif ((i == cur)); then
-      if ((ticks % 2 == 0)); then
-        PAGE_P+="$P_CUR$piece"
-      else
-        PAGE_P+="$P_CUR_ALT$piece"
-      fi
+      PAGE_P+="$P_DLG[$sc$spin$P_DLG] $short"
     else
       PAGE_P+="$P_DLG$piece"
     fi
@@ -780,7 +776,7 @@ page_close() {
 page_frame() {
   local heading=$1 pct=$2 step_el=$3 total_el=$4 spin=$5 ticks=$6
   local info1=$7 info2=$8 logtext=${9:-}
-  local iw=$((PAGE_W - 4)) t a b s right room i line r bw pos filled
+  local iw=$((PAGE_W - 4)) t a b s right room i line r bw pos filled sc
   PAGE_BUF=""
 
   # Top edge with the title: lit corner and rule, shaded far corner.
@@ -814,7 +810,9 @@ page_frame() {
   room=$((iw - ${#right} - 1))
   ((room < 10)) && room=10
   page_pad "$heading" "$room"
-  page_inner 4 "$P_HEAD$PAGE_P $P_DIM$right"
+  sc=$P_SPIN_ALT
+  ((ticks % 2 == 0)) && sc=$P_SPIN
+  page_inner 4 "$P_HEAD$PAGE_P $P_DIM$step_el  $sc$spin$P_DLG"
 
   # Sunken well: shaded top/left, lit bottom/right (dialog's menubox).
   page_glyph tl
@@ -922,7 +920,7 @@ watch_installer_ui() {
       "$ch" "$ticks" "$info1" "$info2" \
       "$(tsos_log_snippet "$PAGE_LOG_N" "$((PAGE_W - 8))")"
     printf '%s' "$PAGE_BUF" || break
-    sleep 0.5
+    sleep 0.12
   done
 }
 
@@ -2978,7 +2976,7 @@ self_test() {
   page_layout 24 80
   page_chips 70 "Installing Arch packages" 22 3 '|'
   case "$PAGE_P" in
-    *"$P_DONE"'[x] Disk'*"$P_CUR_ALT"'[|] Arch'*"$P_DLG"'[ ] App'*) printf 'ok   page chips\n' ;;
+    *"$P_DONE"'[x] Disk'*"$P_DLG"'['"$P_SPIN_ALT"'|'"$P_DLG"'] Arch'*"$P_DLG"'[ ] App'*) printf 'ok   page chips\n' ;;
     *) printf 'FAIL page chips: %q\n' "$PAGE_P" >&2; failed=1 ;;
   esac
   if ((PAGE_V > 40 && PAGE_V <= 70)); then
@@ -2989,8 +2987,8 @@ self_test() {
   fi
   page_chips 70 "Installing Arch packages" 22 4 '|'
   case "$PAGE_P" in
-    *"$P_CUR"'[|] Arch'*) printf 'ok   page chips pulse\n' ;;
-    *) printf 'FAIL page chips pulse: %q\n' "$PAGE_P" >&2; failed=1 ;;
+    *"$P_DLG"'['"$P_SPIN"'|'"$P_DLG"'] Arch'*) printf 'ok   page chips spinner\n' ;;
+    *) printf 'FAIL page chips spinner: %q\n' "$PAGE_P" >&2; failed=1 ;;
   esac
   PAGE_UTF8=1
   page_frame "Installing Arch packages" 22 "5s" "1m 30s" '|' 1 \
@@ -3000,7 +2998,7 @@ self_test() {
   moves=$(printf '%s' "$PAGE_BUF" | grep -o $'\033\\[[0-9]*;[0-9]*H' | wc -l)
   check "$moves" "$PAGE_H" "page frame paints every box row"
   case "$PAGE_BUF" in
-    *' Installing '*'/dev/sda as studio.'*"$P_KEY"'Ctrl+C'*'[|] Arch'*"$P_HEAD"'Installing Arch packages'*'│'*' hello '*'│'*' world '*"$P_BAR_ON"*' 22%'*'┘') printf 'ok   page frame content\n' ;;
+    *' Installing '*'/dev/sda as studio.'*"$P_KEY"'Ctrl+C'*'['"$P_SPIN_ALT"'|'"$P_DLG"'] Arch'*"$P_HEAD"'Installing Arch packages'*'│'*' hello '*'│'*' world '*"$P_BAR_ON"*' 22%'*'┘') printf 'ok   page frame content\n' ;;
     *) printf 'FAIL page frame content: %q\n' "$PAGE_BUF" >&2; failed=1 ;;
   esac
   PAGE_UTF8=0

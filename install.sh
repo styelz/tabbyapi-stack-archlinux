@@ -680,8 +680,8 @@ P_DK=$'\033[0;30;47m'       # border2_color: shaded edge
 P_TITLE=$'\033[1;34;47m'    # title_color
 P_SHADOW=$'\033[0;30;40m'   # shadow_color
 P_DONE=$'\033[0;32;47m'     # finished chips (uarrow green)
-P_CUR=$'\033[1;37;44m'      # current chip (item_selected)
-P_CUR_ALT=$'\033[1;34;47m'  # current chip, off pulse
+P_SPIN=$'\033[1;36;47m'     # spinner, even tick
+P_SPIN_ALT=$'\033[1;34;47m' # spinner, odd tick
 P_HEAD=$'\033[1;34;47m'     # step heading
 P_DIM=$'\033[0;34;47m'      # times, spinner
 P_KEY=$'\033[0;31;47m'      # hotkey red (Ctrl+C)
@@ -783,14 +783,14 @@ page_inner() {
 }
 
 # page_chips iw heading pct ticks spin -> PAGE_P (coded), PAGE_V (cells).
-# Finished steps green, the current one highlighted like a selected menu
-# item and pulsing, the rest plain.
+# Finished steps green, the current spinner coloured, the rest plain.
 page_chips() {
   local iw=$1 heading=$2 pct=$3 ticks=$4 spin=$5
-  local cur i=0 piece mark short minpct match
+  local cur i=0 piece mark short minpct match sc=$P_SPIN_ALT
   PAGE_P=""
   PAGE_V=0
   cur=$(gauge_step_index "$heading" "$pct")
+  ((ticks % 2 == 0)) && sc=$P_SPIN
   while IFS='|' read -r minpct short match; do
     [[ -n "$short" ]] || continue
     if ((i < cur)); then
@@ -811,11 +811,7 @@ page_chips() {
     if ((i < cur)); then
       PAGE_P+="$P_DONE$piece"
     elif ((i == cur)); then
-      if ((ticks % 2 == 0)); then
-        PAGE_P+="$P_CUR$piece"
-      else
-        PAGE_P+="$P_CUR_ALT$piece"
-      fi
+      PAGE_P+="$P_DLG[$sc$spin$P_DLG] $short"
     else
       PAGE_P+="$P_DLG$piece"
     fi
@@ -869,7 +865,7 @@ page_close() {
 page_frame() {
   local heading=$1 pct=$2 step_el=$3 total_el=$4 spin=$5 ticks=$6
   local info1=$7 info2=$8 logtext=${9:-}
-  local iw=$((PAGE_W - 4)) t a b s right room i line r bw pos filled
+  local iw=$((PAGE_W - 4)) t a b s right room i line r bw pos filled sc
   PAGE_BUF=""
 
   # Top edge with the title: lit corner and rule, shaded far corner.
@@ -903,7 +899,9 @@ page_frame() {
   room=$((iw - ${#right} - 1))
   ((room < 10)) && room=10
   page_pad "$heading" "$room"
-  page_inner 4 "$P_HEAD$PAGE_P $P_DIM$right"
+  sc=$P_SPIN_ALT
+  ((ticks % 2 == 0)) && sc=$P_SPIN
+  page_inner 4 "$P_HEAD$PAGE_P $P_DIM$step_el  $sc$spin$P_DLG"
 
   # Sunken well: shaded top/left, lit bottom/right (dialog's menubox).
   page_glyph tl
@@ -1004,7 +1002,7 @@ watch_progress_ui() {
       "$ch" "$ticks" "$info1" "$info2" \
       "$(install_log_snippet "$PAGE_LOG_N" "$((PAGE_W - 8))")"
     printf '%s' "$PAGE_BUF" >/dev/tty 2>/dev/null || break
-    sleep 0.5
+    sleep 0.12
   done
 }
 
