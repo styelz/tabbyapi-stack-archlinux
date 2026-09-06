@@ -4,6 +4,8 @@
 # Install Arch Linux from the official live ISO or the TSOS installer ISO,
 # then install tabbyapi-stack in the chroot (venvs, weights) so first boot
 # only starts the API (linger). The TSOS ISO autologins tty1 into this script.
+# After the network is up, this script fetches a newer copy of itself from
+# GitHub when SCRIPT_VERSION on main is higher.
 #
 # Run as root from the Arch Linux live ISO. The target disk is wiped
 # unless you pass --resume-tabby (finish install.sh on an already-mounted /mnt).
@@ -23,7 +25,7 @@ SCRIPT_NAME="${0##*/}"
 if [[ "$SCRIPT_NAME" == "bash" || "$SCRIPT_NAME" == "-bash" || "$SCRIPT_NAME" == "sh" || "$SCRIPT_NAME" == "-sh" ]]; then
   SCRIPT_NAME="tsos-installer.sh"
 fi
-SCRIPT_VERSION="1.0.54"
+SCRIPT_VERSION="1.0.55"
 
 # Generic defaults. Do not default TARGET_HOSTNAME from $HOSTNAME — the live
 # ISO sets HOSTNAME=archiso.
@@ -58,6 +60,7 @@ ROOT_PASSWORD="${ROOT_PASSWORD:-}"
 DRY_RUN=0
 CONFIG_PROVIDED=0
 RESUME_TABBY=0
+TSOS_SKIP_SELF_UPDATE="${TSOS_SKIP_SELF_UPDATE:-0}"
 INSTALL_MODE="${INSTALL_MODE:-}" # simple | advanced | empty (ask)
 ENCRYPT_FROM_CLI=""
 OMARCHY_FROM_CLI=""
@@ -154,6 +157,7 @@ OPTIONS
   --password-env           Read PASSWORD / LUKS_PASSWORD / USER_PASSWORD / ROOT_PASSWORD
                            from the environment instead of prompting
   --dry-run                Print the plan and exit (does not write the disk)
+  --skip-self-update       Do not replace this script from GitHub (ISO testing)
   --self-test              Run built-in helper tests
   --self-test-gauge        Draw the install page for 2s (needs a tty)
   -h, --help               Show this help
@@ -167,6 +171,7 @@ ENVIRONMENT
   OMARCHY_USER_NAME, OMARCHY_USER_EMAIL, OMARCHY_MODE (now|skip)
   TABBY_REPO, TABBY_LOCAL_SRC, TABBY_MODELS, TABBY_NETWORK_HOST, TABBY_NETWORK_PORT
   TABBY_CACHE, TABBY_PUBLIC_BASE, COMFYUI_URL, HF_TOKEN
+  TSOS_SKIP_SELF_UPDATE    1 to keep the ISO copy of this script
 
 One password is used for the user, root, and disk encryption (when enabled)
 unless you set the split password variables.
@@ -2818,6 +2823,28 @@ self_test() {
       printf 'ok   %s\n' "$label"
     fi
   }
+  check "$(version_rel 1.0.55 1.0.54)" gt "version_rel newer patch"
+  check "$(version_rel 1.0.54 1.0.54)" eq "version_rel equal"
+  check "$(version_rel 1.0.10 1.0.9)" gt "version_rel numeric patch"
+  check "$(version_rel 1.0.54 1.0.55)" lt "version_rel older"
+  check "$(version_rel 2.0.0 1.9.99)" gt "version_rel major"
+  check "$(script_version_of_file "${BASH_SOURCE[0]}")" "$SCRIPT_VERSION" "script_version_of_file"
+  TSOS_SKIP_SELF_UPDATE=1
+  if maybe_self_update; then
+    printf 'ok   maybe_self_update respects skip\n'
+  else
+    printf 'FAIL maybe_self_update skip\n' >&2
+    failed=1
+  fi
+  TSOS_SKIP_SELF_UPDATE=0
+  TSOS_SELF_UPDATED=1
+  if maybe_self_update; then
+    printf 'ok   maybe_self_update respects already-updated\n'
+  else
+    printf 'FAIL maybe_self_update already-updated\n' >&2
+    failed=1
+  fi
+  TSOS_SELF_UPDATED=0
   check "$(part_dev /dev/sda 1)" /dev/sda1 "sda p1"
   check "$(part_dev /dev/sda 2)" /dev/sda2 "sda p2"
   check "$(part_dev /dev/vda 1)" /dev/vda1 "vda p1"
@@ -3169,6 +3196,10 @@ parse_args() {
         DRY_RUN=1
         shift
         ;;
+      --skip-self-update)
+        TSOS_SKIP_SELF_UPDATE=1
+        shift
+        ;;
       --self-test)
         self_test
         exit 0
@@ -3388,6 +3419,119 @@ secure_boot_enabled() {
     status=$(bootctl status 2>/dev/null || true)
   fi
   grep -q 'Secure Boot: enabled' <<<"$status"
+}
+
+# Dotted versions: prints gt, eq, or lt (1.0.10 > 1.0.9).
+version_rel() {
+  local IFS=.
+  local -a a=() b=()
+  local i n ai bi
+  a=($1)
+  b=($2)
+  n=${#a[@]}
+  ((${#b[@]} > n)) && n=${#b[@]}
+  for ((i = 0; i < n; i++)); do
+    ai=${a[i]:-0}
+    bi=${b[i]:-0}
+    ai=${ai//[^0-9]/}
+    bi=${bi//[^0-9]/}
+    [[ -n "$ai" ]] || ai=0
+    [[ -n "$bi" ]] || bi=0
+    if ((10#$ai > 10#$bi)); then
+      printf 'gt\n'
+      return 0
+    fi
+    if ((10#$ai < 10#$bi)); then
+      printf 'lt\n'
+      return 0
+    fi
+  done
+  printf 'eq\n'
+}
+
+script_version_of_file() {
+  local line=""
+  line=$(grep -m1 -E '^SCRIPT_VERSION="[^"]+"' "$1" 2>/dev/null || true)
+  [[ "$line" =~ SCRIPT_VERSION=\"([^\"]+)\" ]] || return 1
+  printf '%s\n' "${BASH_REMATCH[1]}"
+}
+
+file_digest() {
+  if command -v sha256sum >/dev/null; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    cksum "$1" | awk '{print $1" "$2}'
+  fi
+}
+
+# Real file path of this script. Empty when curl | bash put it on stdin.
+installer_self_path() {
+  local script="${BASH_SOURCE[0]:-}"
+  case "$script" in
+    "" | /dev/fd/* | /proc/self/fd/* | -) return 1 ;;
+  esac
+  [[ "$script" == /* ]] || script="$PWD/$script"
+  [[ -f "$script" && -r "$script" ]] || return 1
+  printf '%s\n' "$script"
+}
+
+self_update_say() {
+  log "$*"
+  if have_console; then
+    printf '%s\n' "$*" >/dev/tty
+  fi
+}
+
+# After the live network is up, replace this ISO copy with a newer
+# tsos-installer.sh from GitHub (SCRIPT_VERSION greater). curl | bash,
+# offline ISOs, and fetch failures keep the copy already running.
+maybe_self_update() {
+  if [[ "${TSOS_SELF_UPDATED:-0}" == 1 || "${TSOS_SKIP_SELF_UPDATE:-0}" == 1 ]]; then
+    return 0
+  fi
+  ((DRY_RUN)) && return 0
+  [[ -z "${TSOS_OFFLINE_ROOT:-}" ]] || return 0
+  command -v curl >/dev/null || return 0
+  local self=""
+  self=$(installer_self_path) || return 0
+
+  local url tmp remote_ver rel
+  url="$(repo_raw_base)/tsos-installer.sh"
+  tmp=$(mktemp "${TMPDIR:-/tmp}/tsos-installer.XXXXXX")
+  self_update_say "Checking GitHub for a newer installer..."
+  if ! curl -fsSL --connect-timeout 8 --max-time 30 --retry 2 --retry-delay 1 \
+       -o "$tmp" "$url"; then
+    rm -f "$tmp"
+    log "Could not fetch installer from GitHub; using the copy on this ISO"
+    return 0
+  fi
+  if ! grep -q '^SCRIPT_VERSION=' "$tmp" || ! grep -q 'tabbyapi-stack' "$tmp"; then
+    rm -f "$tmp"
+    log "GitHub installer download looked invalid; using the copy on this ISO"
+    return 0
+  fi
+  remote_ver=$(script_version_of_file "$tmp" || true)
+  if [[ -z "$remote_ver" ]]; then
+    rm -f "$tmp"
+    return 0
+  fi
+  rel=$(version_rel "$remote_ver" "$SCRIPT_VERSION")
+  if [[ "$rel" != gt ]]; then
+    rm -f "$tmp"
+    log "Installer is current (${SCRIPT_VERSION})"
+    return 0
+  fi
+  if [[ "$(file_digest "$tmp")" == "$(file_digest "$self")" ]]; then
+    rm -f "$tmp"
+    return 0
+  fi
+  chmod 0755 "$tmp"
+  self_update_say "Updated installer ${SCRIPT_VERSION} -> ${remote_ver}; restarting."
+  if install -m 0755 "$tmp" "$self" 2>/dev/null; then
+    rm -f "$tmp"
+    exec env TSOS_SELF_UPDATED=1 bash "$self" "$@"
+  fi
+  exec env TSOS_SELF_UPDATED=1 bash "$tmp" "$@"
 }
 
 # Cheap checks before the questionnaire so a missing ISO/network fails immediately.
@@ -5107,6 +5251,7 @@ main() {
   pkill -x dialog 2>/dev/null || true
   restore_tty
   early_preflight
+  maybe_self_update "$@"
   if ((RESUME_TABBY)); then
     log "Resuming tabbyapi-stack in the already-mounted system at $TARGET (no disk wipe)"
     if ((DRY_RUN)); then

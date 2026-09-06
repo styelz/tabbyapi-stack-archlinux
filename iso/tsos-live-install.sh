@@ -43,6 +43,7 @@ clear
 printf 'TSOS installer\n'
 printf 'This installs Arch Linux and tabbyapi-stack.\n'
 wait_for_network
+# tsos-installer.sh checks GitHub for a newer copy of itself once HTTPS works.
 set +e
 "$INSTALLER"
 status=$?
