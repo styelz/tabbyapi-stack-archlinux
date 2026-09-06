@@ -148,6 +148,41 @@ def _fmt_runtime(seconds: float) -> str:
     return f"{minutes}:{secs:02d}"
 
 
+_CHAT_RUN_PHASES = frozenset({"thinking", "using tools", "in use"})
+_RUN_GAP_S = 12.0
+
+
+def fmt_run_clock(run_s: float, step_s: float = 0.0) -> str:
+    """Whole-run clock, plus this generate when it is clearly a later step."""
+    run = _fmt_runtime(run_s)
+    try:
+        step = float(step_s or 0.0)
+        whole = float(run_s or 0.0)
+    except (TypeError, ValueError):
+        return run
+    if step >= 1.0 and whole >= step + 1.5:
+        return f"{run}  step {_fmt_runtime(step)}"
+    return run
+
+
+def tok_hud_line(run_tokens: int, step_tokens: int, rate: float) -> str:
+    """Run total + tok/s, and this step when it is not the whole run."""
+    run = max(0, int(run_tokens or 0))
+    step = max(0, int(step_tokens or 0))
+    if run <= 0 and step <= 0 and rate < 0.5:
+        return ""
+    shown = max(run, step)
+    if rate >= 0.5:
+        line = f"{shown} tok   {int(round(rate))}/s"
+    elif shown > 0:
+        line = f"{shown} tok"
+    else:
+        line = ""
+    if line and step > 0 and shown > step + 2:
+        line = f"{line}   step {step}"
+    return line
+
+
 def idle_tod_hue(hour: float) -> float:
     """Idle field only: cooler after midnight, warmer around dusk."""
     h = hour % 24.0
@@ -197,7 +232,10 @@ def idle_hud_quiet(scene: dict[str, Any]) -> bool:
 
 
 _TIMES_PATH = Path(__file__).resolve().parents[2] / "model_profiles" / "switch_times.json"
+_LAST_PROFILE_PATH = Path(__file__).resolve().parents[2] / "model_profiles" / "last.json"
 _IDLE_TIMES: dict[str, Any] | None = None
+_UNIT_STATE: tuple[float, str] = (0.0, "")
+_SKIP_PROFILES = frozenset({"", "—", "-", "comfy", "flux", "llm", "restart"})
 
 
 def load_idle_times() -> dict[str, Any]:
@@ -221,8 +259,178 @@ def _ready_s(entry: Any) -> int | None:
     return None
 
 
-def idle_fact_lines(times: dict[str, Any], idle_s: float) -> list[str]:
+def read_last_profile(path: Path | None = None) -> str:
+    target = path or _LAST_PROFILE_PATH
+    try:
+        data = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return ""
+    name = str((data or {}).get("profile") or "").strip().lower()
+    return "" if name in _SKIP_PROFILES else name
+
+
+def profile_from_state(data: dict[str, Any] | None) -> str:
+    raw = str((data or {}).get("profile") or "").strip()
+    if raw.lower() not in _SKIP_PROFILES:
+        return raw
+    return read_last_profile()
+
+
+def wait_s_for(name: str) -> int | None:
+    key = (name or "").strip().lower()
+    times = load_idle_times()
+    if key in {"comfy", "flux", "image"}:
+        return _ready_s(times.get("comfy"))
+    if key:
+        got = _ready_s(times.get(key))
+        if got:
+            return got
+    return _ready_s(times.get("llm")) or _ready_s(times.get("qwen"))
+
+
+def format_wait_s(seconds: int | None) -> str:
+    if seconds is None:
+        return ""
+    try:
+        secs = float(seconds)
+    except (TypeError, ValueError):
+        return ""
+    if secs <= 0:
+        return ""
+    if secs < 90:
+        rounded = int(5 * round(secs / 5.0)) if secs >= 5 else max(1, int(round(secs)))
+        unit = "second" if rounded == 1 else "seconds"
+        return f"{rounded} {unit}"
+    minutes = max(1, int(round(secs / 60.0)))
+    unit = "minute" if minutes == 1 else "minutes"
+    return f"{minutes} {unit}"
+
+
+def tabbyapi_unit_state(now: float | None = None) -> str:
+    """active / activating / failed / inactive / unknown. Cached ~2s."""
+    global _UNIT_STATE
+    t = time.monotonic() if now is None else now
+    cached_t, cached = _UNIT_STATE
+    if cached and (t - cached_t) < 2.0:
+        return cached
+    try:
+        proc = subprocess.run(
+            ["systemctl", "--user", "is-active", "tabbyapi"],
+            capture_output=True,
+            text=True,
+            timeout=0.4,
+            check=False,
+        )
+        state = (proc.stdout or proc.stderr or "").strip().splitlines()
+        text = (state[0] if state else "").strip().lower()
+    except (OSError, subprocess.TimeoutExpired):
+        text = "unknown"
+    if text not in {"active", "activating", "failed", "inactive"}:
+        text = "unknown"
+    _UNIT_STATE = (t, text)
+    return text
+
+
+def scene_help_note(
+    *,
+    phase: str,
+    connected: bool,
+    data: dict[str, Any],
+    unit_state: str = "",
+) -> str:
+    """Plain-language HUD line: what the box is doing and how long to wait."""
+    profile = profile_from_state(data)
+    want = str(data.get("switch_target") or "").strip().lower()
+    waiters = 0
+    try:
+        waiters = int(round(float(data.get("waiters") or 0)))
+    except (TypeError, ValueError):
+        waiters = 0
+    if phase in {"waiting for api", "restarting api"}:
+        load_name = "comfy" if want == "comfy" else profile
+        if unit_state == "failed":
+            return "tabbyapi failed to start. open Logs, or send restart from Status."
+        if unit_state == "inactive":
+            return "tabbyapi is stopped. send restart from Status or in chat."
+        loading = unit_state in {"active", "activating"}
+        extra = ""
+        if loading and phase == "waiting for api":
+            extra = " the service is up and still copying weights into VRAM."
+        elif loading:
+            extra = " the process is running; it has not opened the port yet."
+        if phase == "waiting for api":
+            if profile:
+                wait = format_wait_s(wait_s_for(profile))
+                how = f" wait about {wait} for /health." if wait else " wait for /health."
+                return (
+                    f"the API is coming up after a reboot or restart. last model is {profile}."
+                    f"{how}{extra} first boot can compile longer."
+                )
+            qwen = format_wait_s(wait_s_for("qwen"))
+            q35 = format_wait_s(wait_s_for("qwen35"))
+            return (
+                "the API is coming up after a reboot or restart. "
+                f"/health stays down until the last model is in VRAM. "
+                f"daily models take about {qwen}; qwen35 about {q35}."
+                f"{extra} first boot can compile longer."
+            )
+        wait = format_wait_s(wait_s_for(load_name or "qwen"))
+        who = profile or "the last model"
+        how = f" wait about {wait} for /health." if wait else " wait for /health."
+        if data.get("restarting") and connected:
+            return f"restarting TabbyAPI. reloading {who}.{how}{extra}"
+        return (
+            f"the API dropped (reboot, restart, or a model switch). "
+            f"reloading {who}.{how}{extra}"
+        )
+    if phase == "loading comfy":
+        wait = format_wait_s(wait_s_for("comfy"))
+        how = f" wait about {wait}." if wait else ""
+        return (
+            f"unloading the LLM and starting ComfyUI.{how} "
+            "then describe an image. flux is the draft; prefix qwen-image: for readable text."
+        )
+    if phase == "loading llm":
+        who = profile or "the last LLM"
+        wait = format_wait_s(wait_s_for(profile or "llm"))
+        how = f" wait about {wait}." if wait else ""
+        return (
+            f"loading {who} onto the GPU.{how} "
+            "editors should keep the model name gpt-4o."
+        )
+    if phase == "resetting generator":
+        return "VRAM recovery. Comfy is clearing, then the last LLM will reload."
+    if phase == "using tools":
+        extra = f" {waiters} more waiting." if waiters > 0 else ""
+        return f"the model called a tool and is waiting for the workspace.{extra}"
+    if phase == "thinking":
+        extra = f" {waiters} more waiting." if waiters > 0 else ""
+        return f"answering a chat or code request.{extra}"
+    if phase == "in use":
+        extra = f" {waiters} more waiting." if waiters > 0 else ""
+        return f"the GPU is busy.{extra}"
+    if phase == "rendering":
+        if str(data.get("image_what") or "").strip():
+            return ""
+        return "drawing a picture. first flux is about 3 minutes; qwen-image about 4."
+    if phase == "comfy":
+        return "ComfyUI is loaded. describe an image in chat, or send switch to llm."
+    return ""
+
+
+def idle_fact_lines(
+    times: dict[str, Any], idle_s: float, profile: str = "", mode: str = ""
+) -> list[str]:
     facts: list[str] = []
+    prof = str(profile or "").strip()
+    if prof.lower() not in _SKIP_PROFILES:
+        facts.append(f"ready  {prof}")
+    mode_l = str(mode or "").strip().lower()
+    if mode_l == "comfy":
+        facts.append("comfy is loaded  describe an image in chat")
+    elif mode_l == "llm" or prof.lower() not in _SKIP_PROFILES:
+        facts.append("chat and code are ready  keep the editor model as gpt-4o")
+        facts.append("say switch to comfy for pictures")
     gpu = str(times.get("gpu") or "").strip()
     if gpu:
         facts.append(f"this box is a {gpu}")
@@ -334,6 +542,12 @@ def overlay_saver_live(
         tokens = 0
     if tokens > 0:
         out["tokens"] = tokens
+    try:
+        run_tokens = int(live.get("run_tokens") or 0)
+    except (TypeError, ValueError):
+        run_tokens = 0
+    if run_tokens > 0:
+        out["run_tokens"] = run_tokens
     return out
 
 
@@ -389,6 +603,11 @@ class SceneFollow:
         self._cycle_started = 0.0
         self.tokens = 0.0
         self.token_rate = 0.0
+        self.run_tokens = 0.0
+        self._run_bank = 0.0
+        self._run_t0 = 0.0
+        self._step_t0 = 0.0
+        self._last_chat = 0.0
         self.stage = "idle"
         self.has_gpu = False
         self.image_n = 0.0
@@ -499,17 +718,26 @@ class SceneFollow:
         self.profile = str(target.get("profile") or self.profile)
         self.connected = bool(target.get("connected"))
         dest_tokens = max(0.0, float(target.get("tokens") or 0.0))
+        dest_run = max(0.0, float(target.get("run_tokens") or dest_tokens))
+        stage_now = str(target.get("stage") or self.stage or "idle")
         if dest_tokens + 1.0 < self.tokens:
+            self._run_bank += self.tokens
             self.tokens = dest_tokens
-            self.token_rate = 0.0
+            self._step_t0 = now
         else:
-            delta = max(0.0, dest_tokens - self.tokens)
-            inst = min(80.0, delta / dt) if dt > 1e-6 else 0.0
-            self.token_rate = _exp_approach(self.token_rate, inst, dt, 0.22)
             self.tokens = dest_tokens
+        if dest_run + 1.0 < self.run_tokens and dest_run <= dest_tokens + 1.0:
+            dest_run = max(dest_run, self._run_bank + dest_tokens)
+        self.run_tokens = max(dest_run, self._run_bank + dest_tokens)
+        if stage_now == "decode" and dest_tokens > 0.0:
+            step_s = max(0.08, now - self._step_t0) if self._step_t0 else dt
+            inst = min(120.0, dest_tokens / step_s)
+            self.token_rate = _exp_approach(self.token_rate, inst, dt, 0.28)
+        # Keep last decode rate through tool / prefill so /s does not drop to 0
+        # between steps of the same run.
         chatty = dest == "chat" or self.weights.get("chat", 0.0) > 0.18
         self.hue = (self.hue + _chat_hue_rate(self.speed, self.token_rate, chatty) * dt) % 1.0
-        self.stage = str(target.get("stage") or self.stage or "idle")
+        self.stage = stage_now
         self.has_gpu = bool(target.get("has_gpu"))
         self.image_n = _exp_approach(
             self.image_n, float(target.get("image_n") or 0.0), dt, 0.4
@@ -540,7 +768,10 @@ class SceneFollow:
         else:
             self._idle_t0 = 0.0
             self.idle_s = 0.0
-        self.idle_fact = pick_idle_fact(idle_fact_lines(load_idle_times(), self.idle_s), wall)
+        self.idle_fact = pick_idle_fact(
+            idle_fact_lines(load_idle_times(), self.idle_s, self.profile, self.mode),
+            wall,
+        )
         hud_alpha = (
             idle_hud_alpha(self.idle_s, hold_s=self.hud_hold_s)
             if self.cycle == "idle" and not held
@@ -556,16 +787,45 @@ class SceneFollow:
             self.phase = str(target.get("phase") or self.phase)
         elif self.weights.get("idle", 0.0) > 0.65:
             self.phase = "idle"
+        chat_run = self.phase in _CHAT_RUN_PHASES
+        if chat_run:
+            self._last_chat = now
+            if self._run_t0 <= 0.0:
+                self._run_t0 = now
+            if self._step_t0 <= 0.0:
+                self._step_t0 = now
+        elif self._last_chat > 0.0 and (now - self._last_chat) > _RUN_GAP_S:
+            self._run_t0 = 0.0
+            self._step_t0 = 0.0
+            self._run_bank = 0.0
+            self.run_tokens = 0.0
+            self.tokens = 0.0
+            self.token_rate = 0.0
+            self._last_chat = 0.0
         if self.phase != self.task_name:
+            same_run = self.task_name in _CHAT_RUN_PHASES and chat_run
             self.task_name = self.phase
-            self._task_t0 = now
-        self.runtime_s = max(0.0, now - self._task_t0) if self._task_t0 else 0.0
+            if not same_run:
+                self._task_t0 = now
+            if same_run:
+                self._step_t0 = now
+        self.runtime_s = max(0.0, now - self._run_t0) if chat_run and self._run_t0 else (
+            max(0.0, now - self._task_t0) if self._task_t0 else 0.0
+        )
+        step_s = max(0.0, now - self._step_t0) if chat_run and self._step_t0 else 0.0
         show_clock = dest == "down" or self.phase not in {"idle", "stirring", "settling"}
         if show_clock:
             clock_s = self.elapsed_s if self.elapsed_s > 0.5 else self.runtime_s
-            runtime = _fmt_runtime(clock_s)
+            if chat_run and self._run_t0:
+                clock_s = max(clock_s, now - self._run_t0)
+            runtime = (
+                fmt_run_clock(clock_s, step_s)
+                if chat_run
+                else _fmt_runtime(clock_s)
+            )
         else:
             runtime = ""
+            step_s = 0.0
         return {
             "phase": self.phase,
             "palette": self.palette,
@@ -587,6 +847,8 @@ class SceneFollow:
             "cycle_t": self.cycle_t,
             "tokens": self.tokens,
             "token_rate": self.token_rate,
+            "run_tokens": self.run_tokens,
+            "step_s": step_s,
             "stage": self.stage,
             "has_gpu": self.has_gpu,
             "image_n": self.image_n,
@@ -609,7 +871,12 @@ class SceneFollow:
         }
 
 
-def scene_from_state(data: dict[str, Any] | None, connected: bool) -> dict[str, Any]:
+def scene_from_state(
+    data: dict[str, Any] | None,
+    connected: bool,
+    *,
+    unit_state: str | None = None,
+) -> dict[str, Any]:
     data = data or {}
     gpu = data.get("gpu") if isinstance(data.get("gpu"), dict) else {}
     util_raw = gpu.get("utilization_pct")
@@ -621,7 +888,7 @@ def scene_from_state(data: dict[str, Any] | None, connected: bool) -> dict[str, 
     temp = _num(temp_raw, 40.0) if temp_raw is not None else 40.0
     kind = str(data.get("kind") or "")
     mode = str(data.get("gpu_mode") or "").strip() or "—"
-    profile = str(data.get("profile") or "").strip() or "—"
+    profile = profile_from_state(data) or str(data.get("profile") or "").strip() or "—"
     restarting = bool(data.get("restarting"))
     recovering = bool(data.get("recovering")) or str(data.get("stage") or "").strip().lower() == "recover"
     switching = bool(data.get("switching") or restarting)
@@ -637,24 +904,19 @@ def scene_from_state(data: dict[str, Any] | None, connected: bool) -> dict[str, 
 
     image_job = kind == "image" or mode == "comfy" or stage == "image"
     down = (not connected) or restarting
-    note = ""
     if down:
         if restarting and connected:
             phase, palette = "restarting api", "down"
-            note = "reloading python / weights"
         elif data:
             phase, palette = "restarting api", "down"
-            note = "waiting for /health"
         else:
             phase, palette = "waiting for api", "down"
-            note = "waiting for /health. after reboot or a fresh install this can take 1-2 min"
         live = True
         intensity = 0.30
         speed = 0.20
         heat = 0.42
     elif recovering:
         phase, palette = "resetting generator", "switch"
-        note = ""
         live = True
         intensity = 0.34
         speed = 0.28
@@ -708,6 +970,24 @@ def scene_from_state(data: dict[str, Any] | None, connected: bool) -> dict[str, 
         intensity = 0.52 + 0.14 * (util / 100.0)
         speed = 0.55 + 0.35 * (util / 100.0)
         heat = max(0.22, min(0.62, 0.28 + (temp - 38.0) / 55.0))
+    typical = data.get("typical_s")
+    if typical is None and (
+        down or phase in {"loading llm", "loading comfy", "restarting api", "waiting for api"}
+    ):
+        want = str(data.get("switch_target") or "").strip().lower()
+        load_name = "comfy" if (want == "comfy" or phase == "loading comfy") else (
+            profile if str(profile).lower() not in _SKIP_PROFILES else "qwen"
+        )
+        typical = wait_s_for(load_name)
+    unit = unit_state if unit_state is not None else (
+        tabbyapi_unit_state() if down else "unknown"
+    )
+    note = scene_help_note(
+        phase=phase,
+        connected=connected,
+        data=data,
+        unit_state=unit,
+    )
     return {
         "phase": phase,
         "palette": palette,
@@ -723,6 +1003,10 @@ def scene_from_state(data: dict[str, Any] | None, connected: bool) -> dict[str, 
         "connected": connected,
         "has_gpu": has_gpu,
         "tokens": tokens,
+        "run_tokens": max(
+            _num(data.get("run_tokens")) if data.get("run_tokens") is not None else tokens,
+            tokens,
+        ),
         "stage": stage or ("idle" if not live else "decode"),
         "image_n": image_n,
         "image_of": image_of,
@@ -731,7 +1015,7 @@ def scene_from_state(data: dict[str, Any] | None, connected: bool) -> dict[str, 
         "note": note,
         "waiters": _num(data.get("waiters")),
         "elapsed_s": _num(data.get("elapsed_s")),
-        "typical_s": _num(data.get("typical_s")) if data.get("typical_s") is not None else None,
+        "typical_s": _num(typical) if typical is not None else None,
     }
 
 
@@ -1813,6 +2097,17 @@ def hud_caption(text: str) -> str:
         "comfy": "Comfy",
         "gb": "GB",
         "rtx": "RTX",
+        "gpt-4o": "gpt-4o",
+        "qwen": "qwen",
+        "qwen35": "qwen35",
+        "qwen36": "qwen36",
+        "gemma": "gemma",
+        "gemma26": "gemma26",
+        "glm": "glm",
+        "flux": "Flux",
+        "qwen-image:": "qwen-image:",
+        "tabbyapi": "TabbyAPI",
+        "/health": "/health",
     }
     bits: list[str] = []
     for word in str(text or "").split(" "):
@@ -1822,6 +2117,11 @@ def hud_caption(text: str) -> str:
         key = word.lower()
         if key in special:
             bits.append(special[key])
+            continue
+        stem = word.rstrip(".,;:")
+        suffix = word[len(stem) :]
+        if stem.lower() in special:
+            bits.append(special[stem.lower()] + suffix)
             continue
         if word[:1].isdigit() or word.startswith("~") or word.startswith("%"):
             bits.append(word)
@@ -2007,7 +2307,7 @@ def draw_hud(
         typical_n = float(typical) if typical is not None else 0.0
     except (TypeError, ValueError):
         typical_n = 0.0
-    if typical_n >= 1.0:
+    if typical_n >= 1.0 and str(scene.get("phase") or "") not in _CHAT_RUN_PHASES:
         phase = f"{phase}   ~{_fmt_runtime(typical_n)} typical"
     note = str(scene.get("note") or "").strip()
     if scene["connected"] and scene.get("has_gpu") and not down:
@@ -2039,16 +2339,23 @@ def draw_hud(
     wait_line = f"{waiters} Waiting" if waiters > 0 else ""
     tok_line = ""
     try:
-        tokens = int(round(float(scene.get("tokens") or 0)))
+        step_tok = int(round(float(scene.get("tokens") or 0)))
     except (TypeError, ValueError):
-        tokens = 0
+        step_tok = 0
+    try:
+        run_tok = int(round(float(scene.get("run_tokens") or step_tok)))
+    except (TypeError, ValueError):
+        run_tok = step_tok
     try:
         rate = float(scene.get("token_rate") or 0.0)
     except (TypeError, ValueError):
         rate = 0.0
     stage = str(scene.get("stage") or "")
-    if active and stage in {"prefill", "decode", "tool"} and (tokens > 0 or rate >= 0.5):
-        tok_line = f"{tokens} tok   {int(round(rate))}/s" if rate >= 0.5 else f"{tokens} tok"
+    if active and (
+        stage in {"prefill", "decode", "tool"}
+        or str(scene.get("phase") or "") in _CHAT_RUN_PHASES
+    ):
+        tok_line = tok_hud_line(run_tok, step_tok, rate)
 
     if down:
         phase_color = DOWN_TEXT
@@ -2066,7 +2373,7 @@ def draw_hud(
     if note:
         extras.extend(
             (line, MUTED, info_font)
-            for line in _hud_wrap(info_font, hud_caption(note), max_left, 3)
+            for line in _hud_wrap(info_font, hud_caption(note), max_left, 4)
         )
     if tok_line:
         extras.append((tok_line, MUTED, info_font))

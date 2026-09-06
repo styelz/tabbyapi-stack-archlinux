@@ -12,9 +12,13 @@ _lock = threading.Lock()
 _holders: set[str] = set()
 _request_id: str | None = None
 _tokens: int = 0
+_run_tokens: int = 0
+_run_started: float = 0.0
+_last_active: float = 0.0
 _stage: str = "idle"
 _last_write = 0.0
 LIVE_PATH = Path(__file__).resolve().parents[1] / "saver-live.json"
+_RUN_GAP_S = 12.0
 
 
 def is_generate_post(method: str, path: str) -> bool:
@@ -32,10 +36,28 @@ def is_generate_post(method: str, path: str) -> bool:
 
 
 def _idle_locked() -> None:
-    global _request_id, _tokens, _stage
+    global _request_id, _tokens, _stage, _run_tokens
+    if _tokens > 0:
+        _run_tokens += _tokens
     _request_id = None
     _tokens = 0
     _stage = "idle"
+
+
+def _touch_run_locked(now: float, *, new_step: bool) -> None:
+    """Keep one token/time total across tool-call generates in the same run."""
+    global _run_tokens, _run_started, _tokens, _last_active
+    if _run_started > 0.0 and _last_active > 0.0 and (now - _last_active) > _RUN_GAP_S:
+        _run_tokens = 0
+        _run_started = now
+        _tokens = 0
+    elif _run_started <= 0.0:
+        _run_started = now
+        _run_tokens = 0
+    elif new_step and _tokens > 0:
+        _run_tokens += _tokens
+        _tokens = 0
+    _last_active = now
 
 
 def _snapshot_locked() -> dict[str, Any]:
@@ -43,7 +65,13 @@ def _snapshot_locked() -> dict[str, Any]:
     if stage == "idle" and _holders:
         stage = "prefill"
     busy = bool(_holders) or stage != "idle"
-    return {"busy": busy, "tokens": int(_tokens), "stage": stage}
+    step = int(_tokens)
+    return {
+        "busy": busy,
+        "tokens": step,
+        "run_tokens": int(_run_tokens) + step,
+        "stage": stage,
+    }
 
 
 def _persist_locked(*, force: bool = False) -> None:
@@ -99,6 +127,7 @@ def note_prefill(request_id: str) -> None:
         return
     with _lock:
         global _request_id, _tokens, _stage
+        _touch_run_locked(time.monotonic(), new_step=True)
         _holders.add(rid)
         _request_id = rid
         _tokens = 0
@@ -120,6 +149,7 @@ def note_decode(request_id: str, tokens: int) -> None:
         global _request_id, _tokens, _stage
         if _request_id and _request_id != rid:
             return
+        _touch_run_locked(time.monotonic(), new_step=False)
         _holders.add(rid)
         _request_id = rid
         _tokens = count
@@ -180,12 +210,22 @@ def overlay_live_file(payload: dict[str, Any] | None, live: dict[str, Any] | Non
         tokens = 0
     if tokens > 0:
         out["tokens"] = tokens
+    try:
+        run_tokens = int(live.get("run_tokens") or 0)
+    except (TypeError, ValueError):
+        run_tokens = 0
+    if run_tokens > 0:
+        out["run_tokens"] = run_tokens
     return out
 
 
 def reset_for_tests() -> None:
+    global _run_tokens, _run_started, _last_active
     with _lock:
         _holders.clear()
+        _run_tokens = 0
+        _run_started = 0.0
+        _last_active = 0.0
         _idle_locked()
     try:
         LIVE_PATH.unlink(missing_ok=True)

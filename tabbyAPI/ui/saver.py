@@ -158,6 +158,9 @@ def sanitize_status(raw: dict[str, Any]) -> dict[str, Any]:
         "kind": _kind(queue.get("kind") if queue.get("kind") is not None else raw.get("kind")),
         "stage": _stage(raw.get("stage")),
         "tokens": _int_ge0(raw.get("tokens")),
+        "run_tokens": _int_ge0(
+            raw.get("run_tokens") if raw.get("run_tokens") is not None else raw.get("tokens")
+        ),
         "image_n": _optional_int(raw.get("image_n")),
         "image_of": _optional_int(raw.get("image_of")),
         "image_file": _safe_image_file(raw.get("image_file")),
@@ -320,6 +323,7 @@ def _compose_weather(
     if not image_what:
         image_what = _safe_image_what(queue.get("prompt")) or _flight_prompt(flights)
     tokens = 0
+    run_tokens = 0
     stage = "idle"
     kind = queue.get("kind")
     busy = bool(queue.get("busy") or queue.get("live"))
@@ -337,20 +341,26 @@ def _compose_weather(
     if stage == "idle":
         decode_stage = str(decode.get("stage") or "idle")
         decode_tokens = _int_ge0(decode.get("tokens"))
+        decode_run = _int_ge0(
+            decode.get("run_tokens") if decode.get("run_tokens") is not None else decode_tokens
+        )
         if decode_stage in ("prefill", "decode"):
             stage = decode_stage
             tokens = decode_tokens
+            run_tokens = max(decode_run, decode_tokens)
             kind = kind or "chat"
         else:
             flight_tokens, flight_stage = _flight_weather(flights)
             if flight_stage != "idle":
                 stage = flight_stage
                 tokens = flight_tokens
+                run_tokens = flight_tokens
             elif busy and str(kind or "") in {"chat", "code"}:
                 stage = "prefill"
 
     return {
         "tokens": tokens,
+        "run_tokens": max(run_tokens, tokens),
         "stage": stage,
         "image_n": image_n,
         "image_of": image_of,
@@ -467,6 +477,7 @@ async def saver_state() -> dict[str, Any]:
             "switch_target": switch_target,
             "stack_queue": queue,
             "tokens": weather["tokens"],
+            "run_tokens": weather.get("run_tokens") or weather["tokens"],
             "stage": weather["stage"],
             "image_n": weather["image_n"],
             "image_of": weather["image_of"],

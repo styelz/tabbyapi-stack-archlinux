@@ -619,15 +619,17 @@ class SaverKioskSceneTests(unittest.TestCase):
         switch = self.kiosk.scene_from_state(
             {"gpu_mode": "llm", "switching": True, "kind": "gpu"}, True
         )
-        waiting = self.kiosk.scene_from_state(None, False)
+        waiting = self.kiosk.scene_from_state(None, False, unit_state="unknown")
         self.assertEqual(image["palette"], "image")
         self.assertEqual(switch["palette"], "switch")
         self.assertEqual(waiting["phase"], "waiting for api")
         self.assertEqual(waiting["palette"], "down")
         self.assertTrue(waiting["live"])
-        self.assertIn("1-2 min", waiting["note"])
         self.assertIn("reboot", waiting["note"])
-        self.assertIn("fresh install", waiting["note"])
+        self.assertIn("/health", waiting["note"])
+        self.assertTrue(
+            "wait about" in waiting["note"] or "qwen35" in waiting["note"]
+        )
 
     def test_recovering_from_oom_is_live_hud(self):
         scene = self.kiosk.scene_from_state(
@@ -662,7 +664,7 @@ class SaverKioskSceneTests(unittest.TestCase):
         self.assertIn("GPU ran out of memory", text)
 
     def test_waiting_hud_mentions_reboot_ready_time(self):
-        waiting = self.kiosk.scene_from_state(None, False)
+        waiting = self.kiosk.scene_from_state(None, False, unit_state="unknown")
         waiting = dict(waiting)
         waiting["clock"] = "14:20:07"
         waiting["date"] = "Sat 5 Sep"
@@ -670,28 +672,85 @@ class SaverKioskSceneTests(unittest.TestCase):
         self.kiosk.draw_hud(screen, _FakeFont(), _FakeFont(), waiting)
         text = " ".join(str(item) for item in screen.blits)
         self.assertIn("Waiting For API", text)
-        self.assertIn("1-2 Min", text)
         self.assertIn("Reboot", text)
-        self.assertIn("Fresh Install", text)
+        self.assertIn("/health", text)
+
+    def test_waiting_note_names_last_profile_and_service(self):
+        scene = self.kiosk.scene_from_state(
+            {"profile": "qwen35"},
+            False,
+            unit_state="active",
+        )
+        self.assertEqual(scene["phase"], "restarting api")
+        self.assertIn("qwen35", scene["note"])
+        self.assertIn("3 minutes", scene["note"])
+        self.assertIn("process is running", scene["note"])
+
+    def test_cold_boot_note_when_service_is_loading(self):
+        scene = self.kiosk.scene_from_state(None, False, unit_state="active")
+        self.assertEqual(scene["phase"], "waiting for api")
+        self.assertIn("reboot", scene["note"])
+        self.assertIn("copying weights", scene["note"])
+
+    def test_failed_service_note(self):
+        scene = self.kiosk.scene_from_state(None, False, unit_state="failed")
+        self.assertIn("failed", scene["note"])
+        self.assertIn("Logs", scene["note"])
+
+    def test_loading_llm_note_explains_wait(self):
+        scene = self.kiosk.scene_from_state(
+            {
+                "gpu_mode": "llm",
+                "profile": "qwen35",
+                "busy": True,
+                "switching": True,
+                "stage": "switch",
+                "switch_target": "llm",
+            },
+            True,
+            unit_state="unknown",
+        )
+        self.assertEqual(scene["phase"], "loading llm")
+        self.assertIn("qwen35", scene["note"])
+        self.assertIn("gpt-4o", scene["note"])
+        self.assertIn("wait about", scene["note"])
+
+    def test_thinking_note_mentions_queue(self):
+        scene = self.kiosk.scene_from_state(
+            {
+                "gpu_mode": "llm",
+                "kind": "chat",
+                "busy": True,
+                "stage": "decode",
+                "waiters": 2,
+            },
+            True,
+        )
+        self.assertIn("answering", scene["note"])
+        self.assertIn("2 more waiting", scene["note"])
 
     def test_disconnect_after_live_is_restarting_api(self):
         scene = self.kiosk.scene_from_state(
             {"gpu_mode": "llm", "kind": "chat", "busy": True, "profile": "qwen"},
             False,
+            unit_state="unknown",
         )
         self.assertEqual(scene["phase"], "restarting api")
         self.assertEqual(scene["palette"], "down")
         self.assertTrue(scene["live"])
         self.assertIn("health", scene["note"])
+        self.assertIn("reloading", scene["note"])
 
     def test_restarting_flag_uses_down_palette(self):
         scene = self.kiosk.scene_from_state(
             {"gpu_mode": "llm", "restarting": True, "busy": True},
             True,
+            unit_state="unknown",
         )
         self.assertEqual(scene["phase"], "restarting api")
         self.assertEqual(scene["palette"], "down")
-        self.assertEqual(scene["note"], "reloading python / weights")
+        self.assertIn("reloading", scene["note"])
+        self.assertIn("wait about", scene["note"])
 
     def test_saver_url_joins_origin(self):
         self.assertEqual(
@@ -1037,7 +1096,8 @@ class SaverKioskSceneTests(unittest.TestCase):
         self.assertIn("Restarting API", text)
         self.assertIn("0:08", text)
         self.assertIn("API Down", text)
-        self.assertIn("Waiting For /health", text)
+        self.assertIn("/health", text)
+        self.assertIn("qwen", text)
 
     def test_hud_shows_waiters_and_toks(self):
         scene = self.kiosk.scene_from_state(
@@ -1059,6 +1119,15 @@ class SaverKioskSceneTests(unittest.TestCase):
         self.assertIn("1842 tok", text)
         self.assertIn("12/s", text)
         self.assertIn("2 Waiting", text)
+
+    def test_tok_line_shows_run_total_and_step(self):
+        self.assertEqual(self.kiosk.tok_hud_line(1842, 1842, 12.0), "1842 tok   12/s")
+        self.assertEqual(
+            self.kiosk.tok_hud_line(1962, 120, 42.0),
+            "1962 tok   42/s   step 120",
+        )
+        self.assertEqual(self.kiosk.fmt_run_clock(84, 8), "1:24  step 0:08")
+        self.assertEqual(self.kiosk.fmt_run_clock(8, 8), "0:08")
 
     def test_hud_shows_typical_switch(self):
         scene = self.kiosk.scene_from_state(
@@ -1122,6 +1191,60 @@ class SaverKioskSceneTests(unittest.TestCase):
             scene = follow.tick(hot, 0.04, 10.0 + 0.04 * (_step + 1))
         self.assertEqual(scene["phase"], "thinking")
         self.assertEqual(scene["runtime"], "0:40")
+
+    def test_follow_keeps_run_clock_across_tool_steps(self):
+        follow = self.kiosk.SceneFollow()
+        think = self.kiosk.scene_from_state(
+            {
+                "gpu_mode": "llm",
+                "kind": "chat",
+                "busy": True,
+                "stage": "decode",
+                "tokens": 40,
+            },
+            True,
+        )
+        now = 10.0
+        scene = follow.tick(think, 0.04, now)
+        for _step in range(50):
+            now += 0.04
+            scene = follow.tick(think, 0.04, now)
+        tools = self.kiosk.scene_from_state(
+            {
+                "gpu_mode": "llm",
+                "kind": "chat",
+                "busy": True,
+                "stage": "tool",
+                "tokens": 0,
+                "run_tokens": 40,
+            },
+            True,
+        )
+        scene = follow.tick(tools, 0.04, now + 0.04)
+        self.assertEqual(scene["phase"], "using tools")
+        self.assertGreaterEqual(scene["runtime_s"], 1.5)
+        self.assertNotIn("step", scene["runtime"].split("  ")[0])
+        self.assertRegex(scene["runtime"], r"^\d+:\d{2}")
+        think2 = self.kiosk.scene_from_state(
+            {
+                "gpu_mode": "llm",
+                "kind": "chat",
+                "busy": True,
+                "stage": "decode",
+                "tokens": 12,
+                "run_tokens": 52,
+            },
+            True,
+        )
+        later = now + 2.0
+        scene = follow.tick(think2, 0.04, later)
+        for _step in range(40):
+            later += 0.04
+            scene = follow.tick(think2, 0.04, later)
+        self.assertEqual(scene["phase"], "thinking")
+        self.assertGreaterEqual(scene["runtime_s"], 3.0)
+        self.assertIn("step", scene["runtime"])
+        self.assertGreaterEqual(scene["run_tokens"], 52)
 
     def test_follow_snaps_to_down_when_api_drops(self):
         follow = self.kiosk.SceneFollow()
@@ -1210,6 +1333,7 @@ class SaverComposeTests(unittest.TestCase):
         )
         self.assertEqual(weather["stage"], "decode")
         self.assertEqual(weather["tokens"], 20)
+        self.assertEqual(weather["run_tokens"], 20)
         self.assertEqual(weather["waiters"], 1)
         self.assertEqual(weather["elapsed_s"], 4)
 
@@ -1323,12 +1447,25 @@ class LiveDecodeTests(unittest.TestCase):
         live_decode.note_prefill("a")
         self.assertEqual(live_decode.snapshot()["stage"], "prefill")
         live_decode.note_decode("a", 7)
-        self.assertEqual(live_decode.snapshot(), {"busy": True, "tokens": 7, "stage": "decode"})
+        self.assertEqual(live_decode.snapshot(), {"busy": True, "tokens": 7, "run_tokens": 7, "stage": "decode"})
         live_decode.clear("b")
         self.assertEqual(live_decode.snapshot()["tokens"], 7)
         live_decode.clear("a")
         self.assertEqual(live_decode.snapshot()["stage"], "idle")
         self.assertEqual(live_decode.snapshot()["tokens"], 0)
+
+    def test_live_decode_run_tokens_span_tool_steps(self):
+        live_decode.reset_for_tests()
+        live_decode.note_prefill("a")
+        live_decode.note_decode("a", 40)
+        live_decode.clear("a")
+        live_decode.note_prefill("b")
+        self.assertEqual(live_decode.snapshot()["tokens"], 0)
+        self.assertEqual(live_decode.snapshot()["run_tokens"], 40)
+        live_decode.note_decode("b", 15)
+        self.assertEqual(live_decode.snapshot()["tokens"], 15)
+        self.assertEqual(live_decode.snapshot()["run_tokens"], 55)
+        live_decode.reset_for_tests()
 
     def test_generate_post_paths(self):
         self.assertTrue(live_decode.is_generate_post("POST", "/v1/chat/completions"))
