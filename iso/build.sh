@@ -103,7 +103,8 @@ rsync -a --delete \
   --exclude '**/logs/' --exclude '**/pasted-images/' \
   "$ROOT/" "$PAYLOAD/tabby-stack/"
 if [[ -d "$ROOT/.git" ]]; then
-  git -C "$ROOT" bundle create "$PAYLOAD/bundles/tabby-stack.bundle" --all
+  git -c "safe.directory=$ROOT" -C "$ROOT" \
+    bundle create "$PAYLOAD/bundles/tabby-stack.bundle" --all
 else
   SNAPSHOT_REPO="$WORK/tabby-stack-repo"
   mkdir -p "$SNAPSHOT_REPO"
