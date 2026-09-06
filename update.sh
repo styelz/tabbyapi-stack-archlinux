@@ -26,8 +26,9 @@ new update.sh is used. config.yml, tabby.env, models, and venv stay.
 Does not run pacman -Syu or upgrade already-installed OS packages.
 
 Options
-  --git         Git pull only. No pip or missing OS packages. After the
-                pull you can restart tabbyapi.
+  --git         Git pull only. No pip or missing OS packages. A TTY asks
+                before restarting tabbyapi. Status Update git restarts by
+                itself when API Python files changed.
   --all         Pull, then apply code, Python deps, and reload tabbyapi.
   --comfy       Also git pull ComfyUI and ComfyUI-GGUF. Update all then
                 reinstalls their Python requirements; git-only only pulls.
@@ -620,6 +621,52 @@ install_tabby_gpu() {
   rm -f "$tmp"
 }
 
+codebox_image_present() {
+  docker image inspect tabbyapi-stack-code:local >/dev/null 2>&1 && return 0
+  sudo -n docker image inspect tabbyapi-stack-code:local >/dev/null 2>&1
+}
+
+codebox_sources_changed() {
+  local from="${TABBY_UPDATE_FROM_REV:-none}" to="${1:-}"
+  [[ -n "$to" && "$from" != none && "$from" != "$to" ]] || return 1
+  git -C "$DEST" diff --name-only "$from" "$to" | grep -q '^tabbyAPI/ui/codebox/'
+}
+
+ensure_codebox_image() {
+  local df="$DEST/tabbyAPI/ui/codebox/Dockerfile"
+  local new_head="${1:-}"
+  [[ -f "$df" ]] || return 0
+  command -v docker >/dev/null 2>&1 || return 0
+  if codebox_image_present && ! codebox_sources_changed "$new_head"; then
+    echo "==> Code sandbox image already present; skipping rebuild" >> "$UPDATE_LOG"
+    return 0
+  fi
+  progress 85 "Building Code sandbox image"
+  echo "==> Building Code sandbox image" >> "$UPDATE_LOG"
+  if DOCKER_BUILDKIT=1 docker build -t tabbyapi-stack-code:local \
+    -f "$df" "$DEST/tabbyAPI/ui/codebox" >> "$UPDATE_LOG" 2>&1; then
+    :
+  elif DOCKER_BUILDKIT=1 sudo -n docker build -t tabbyapi-stack-code:local \
+    -f "$df" "$DEST/tabbyAPI/ui/codebox" >> "$UPDATE_LOG" 2>&1; then
+    :
+  else
+    echo "WARNING: tabbyapi-stack-code image build failed" >> "$UPDATE_LOG"
+    return 0
+  fi
+  local box_ids=()
+  mapfile -t box_ids < <(docker ps -aq --filter label=tabby.stack=code 2>/dev/null || true)
+  if ((${#box_ids[@]})); then
+    docker rm -f "${box_ids[@]}" >> "$UPDATE_LOG" 2>&1 || \
+      sudo -n docker rm -f "${box_ids[@]}" >> "$UPDATE_LOG" 2>&1 || true
+  fi
+}
+
+git_should_auto_restart() {
+  ((${#RESTART_FILES[@]} > 0)) && return 0
+  api_unit_running || return 0
+  return 1
+}
+
 finish_git_update() {
   local new_head=""
   new_head="$(git -C "$DEST" rev-parse HEAD 2>/dev/null || true)"
@@ -630,35 +677,7 @@ finish_git_update() {
   collect_restart_files "${TABBY_UPDATE_FROM_REV:-none}" "$new_head"
   printf '%s\n' "==> from_rev=${TABBY_UPDATE_FROM_REV:-none} to_rev=$new_head restart_files=${#RESTART_FILES[@]} restart=${RESTART_API:-auto}" >> "$UPDATE_LOG"
   write_restart_prompt_json
-
-  if [[ -f "$DEST/tabbyAPI/ui/codebox/Dockerfile" ]]; then
-    if command -v docker >/dev/null 2>&1; then
-      local built=0
-      if docker build -t tabbyapi-stack-code:local \
-        -f "$DEST/tabbyAPI/ui/codebox/Dockerfile" \
-        "$DEST/tabbyAPI/ui/codebox" >> "$UPDATE_LOG" 2>&1; then
-        built=1
-      elif sudo -n docker build -t tabbyapi-stack-code:local \
-        -f "$DEST/tabbyAPI/ui/codebox/Dockerfile" \
-        "$DEST/tabbyAPI/ui/codebox" >> "$UPDATE_LOG" 2>&1; then
-        built=1
-      else
-        echo "WARNING: tabbyapi-stack-code image build failed" >> "$UPDATE_LOG"
-      fi
-      if [[ "$built" -eq 1 ]]; then
-        local box_ids=()
-        mapfile -t box_ids < <(docker ps -aq --filter label=tabby.stack=code 2>/dev/null || true)
-        if ((${#box_ids[@]})); then
-          docker rm -f "${box_ids[@]}" >> "$UPDATE_LOG" 2>&1 || \
-            sudo -n docker rm -f "${box_ids[@]}" >> "$UPDATE_LOG" 2>&1 || true
-        fi
-      fi
-    fi
-  fi
-
-  progress 100 "Git update finished"
-  trap - EXIT
-  progress_stop
+  ensure_codebox_image "$new_head"
 
   local pulled=0
   if [[ "${TABBY_UPDATE_FROM_REV:-none}" == none || "${TABBY_UPDATE_FROM_REV:-}" != "$new_head" ]]; then
@@ -667,51 +686,50 @@ finish_git_update() {
 
   local done_ok="Pulled the latest code."
   [[ "$pulled" -eq 0 ]] && done_ok="Already up to date."
+  local restart_msg="$done_ok Restarted tabbyapi."
+  [[ "$pulled" -eq 0 ]] && restart_msg="Already up to date. Restarted tabbyapi."
 
-  if [[ "$RESTART_API" == 0 ]]; then
+  do_restart() {
+    trap - EXIT
+    progress_stop
+    restart_tabbyapi "$restart_msg"
+  }
+
+  skip_restart() {
+    progress 100 "Git update finished"
+    trap - EXIT
+    progress_stop
     ui_msg "Update git" "$done_ok The API was not restarted.
 
 Reload later with:
   systemctl --user restart tabbyapi
 
 Log: $UPDATE_LOG"
+  }
+
+  if [[ "$RESTART_API" == 0 ]]; then
+    skip_restart
     exit 0
   fi
 
   if [[ "$RESTART_API" == 1 ]]; then
-    if [[ "$pulled" -eq 0 ]]; then
-      restart_tabbyapi "Already up to date. Restarted tabbyapi."
-    else
-      restart_tabbyapi
-    fi
+    do_restart
     exit 0
   fi
 
   if [[ ! -t 1 && ! -c /dev/tty ]]; then
-    ui_msg "Update git" "$done_ok Not restarting (no TTY).
-
-Reload with:
-  systemctl --user restart tabbyapi
-  $DEST/update.sh --git --restart
-
-Log: $UPDATE_LOG"
+    if git_should_auto_restart; then
+      do_restart
+    else
+      skip_restart
+    fi
     exit 0
   fi
 
   if ask_restart_api; then
-    if [[ "$pulled" -eq 0 ]]; then
-      restart_tabbyapi "Already up to date. Restarted tabbyapi."
-    else
-      restart_tabbyapi
-    fi
+    do_restart
   else
-    ui_msg "Update git" "$done_ok The API was not restarted.
-
-Reload later with:
-  systemctl --user restart tabbyapi
-  $DEST/update.sh --git --restart
-
-Log: $UPDATE_LOG"
+    skip_restart
   fi
   exit 0
 }

@@ -936,7 +936,9 @@
     }
 
     function updateLooksDone(text) {
-      return /Update finished\.|==> \[100%\] Finished\b/i.test(text);
+      return /Update finished\.|==> \[100%\] (Git update finished|API healthy|Finished)\b/i.test(
+        text
+      );
     }
 
     async function waitUntilReady(opts = {}) {
@@ -971,7 +973,12 @@
           } else if (looksReady(data) && sawBusy) {
             paintGpuFromStatus(data);
             return data;
-          } else if (looksReady(data) && !requireDown && Date.now() - started > 2500) {
+          } else if (
+            looksReady(data) &&
+            !requireDown &&
+            !watchUpdate &&
+            Date.now() - started > 2500
+          ) {
             paintGpuFromStatus(data);
             return data;
           } else if (

@@ -443,7 +443,6 @@ def gallery_upload(raw: bytes, username: str) -> dict[str, Any]:
 
 
 UPDATE_PROMPT_NAME = "tabby-update-prompt.json"
-GIT_UPDATE_TIMEOUT_S = 300
 
 
 def start_stack_restart() -> dict[str, Any]:
@@ -489,26 +488,7 @@ def load_update_prompt(path: Path | None = None) -> dict[str, Any] | None:
     return data
 
 
-def _prompt_response(prompt: dict[str, Any] | None, fallback: str) -> dict[str, Any]:
-    log = _update_log_tail(400)
-    if not prompt:
-        return {"ok": True, "message": fallback, "ask_restart": False, "log": log}
-    summary = str(prompt.get("summary") or fallback)
-    text = str(prompt.get("text") or "").strip()
-    return {
-        "ok": True,
-        "message": summary,
-        "ask_restart": bool(text),
-        "restart_title": str(prompt.get("title") or "Restart API?"),
-        "restart_text": text,
-        "restart_yes": str(prompt.get("yes_label") or "Restart"),
-        "restart_no": str(prompt.get("no_label") or "Skip"),
-        "pulled": bool(prompt.get("pulled")),
-        "log": log,
-    }
-
-
-def _spawn_full_update(script: Path) -> dict[str, Any]:
+def _spawn_stack_update(script: Path, args: list[str], message: str) -> dict[str, Any]:
     """Run update.sh outside the tabbyapi cgroup so systemctl restart can finish.
 
     A child of tabbyapi.service (even with start_new_session) stays in that
@@ -516,12 +496,9 @@ def _spawn_full_update(script: Path) -> dict[str, Any]:
     systemd waits for the update process, the update process waits for systemd.
     The API never bounces and the Status modal waits forever.
     """
-    args = ["bash", str(script), "--all", "--restart"]
     started = {
         "ok": True,
-        "message": (
-            "Started full (git + deps) update. TabbyAPI will bounce when it finishes."
-        ),
+        "message": message,
         "restarting": True,
         "log": _update_log_tail(400),
     }
@@ -600,42 +577,16 @@ def start_stack_update(*, full: bool = False) -> dict[str, Any]:
     if not script.is_file():
         return {"ok": False, "message": f"update.sh not found at {script}"}
     if full:
-        return _spawn_full_update(script)
-
-    prompt_path = STACK_ROOT / UPDATE_PROMPT_NAME
-    try:
-        prompt_path.unlink(missing_ok=True)
-    except OSError:
-        pass
-    env = os.environ.copy()
-    env["TABBY_UPDATE_RESTART"] = "0"
-    try:
-        proc = subprocess.run(
-            ["bash", str(script), "--git", "--no-restart"],
-            cwd=str(STACK_ROOT),
-            env=env,
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            text=True,
-            timeout=GIT_UPDATE_TIMEOUT_S,
+        return _spawn_stack_update(
+            script,
+            ["bash", str(script), "--all", "--restart"],
+            "Started full (git + deps) update. TabbyAPI will bounce when it finishes.",
         )
-    except subprocess.TimeoutExpired:
-        return {
-            "ok": False,
-            "message": "Git update timed out after 5 minutes.",
-            "log": _update_log_tail(400),
-        }
-    except OSError as exc:
-        return {"ok": False, "message": str(exc), "log": _update_log_tail(400)}
-    if proc.returncode != 0:
-        log = _update_log_tail(400)
-        detail = log or (proc.stderr or proc.stdout or "").strip()
-        return {
-            "ok": False,
-            "message": detail[:1500] if detail else "update.sh --git failed.",
-            "log": log,
-        }
-    return _prompt_response(load_update_prompt(prompt_path), "Git update finished.")
+    return _spawn_stack_update(
+        script,
+        ["bash", str(script), "--git"],
+        "Started git update. TabbyAPI restarts on its own if API code changed.",
+    )
 
 
 MAX_CODE_TOOL_ROUNDS = 32

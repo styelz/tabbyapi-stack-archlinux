@@ -26,6 +26,8 @@ class UpdateShRestartOptionTests(unittest.TestCase):
         self.assertIn('--no-label "Skip"', src)
         self.assertIn("Already up to date. Restart tabbyapi anyway", src)
         self.assertIn("if ask_restart_api; then", src)
+        self.assertIn("git_should_auto_restart", src)
+        self.assertIn("Code sandbox image already present; skipping rebuild", src)
         self.assertIn("write_restart_prompt_json", src)
         self.assertIn("tabby-update-prompt.json", src)
         self.assertIn("restart_prompt_text", src)

@@ -431,77 +431,30 @@ function mountStatus(root) {
     msg.textContent = "Updating git…";
     const modal = TabbyUI.progressModal({
       title: "Updating git",
-      note: "Pulling the latest code. Log output appears below.",
+      note: "Pulling origin. If API code changed, TabbyAPI restarts by itself.",
     });
     modal.startUpdateLog();
+    modal.startJournal();
     try {
       const result = await TabbyUI.api("update", { method: "POST", body: { full: false } });
       modal.ingestText(result.log || "");
-      modal.stopUpdateLog();
       if (!result.ok) {
         msg.textContent = result.message || "Git update failed.";
         finishProgress(modal, {
           title: "Git update failed",
-          note: result.message || "Git update failed.",
+          note: result.message || "Git update failed to start.",
         });
         return;
       }
-      msg.textContent = result.message || "Git update finished.";
-      await refresh().catch(() => {});
-      if (!result.ask_restart) {
-        finishProgress(modal, {
-          title: "Git update finished",
-          note: result.message || "Git update finished.",
-          reloadPrimary: true,
-        });
-        return;
-      }
-      modal.setTitle(result.restart_title || "Restart API?");
-      modal.setNote(
-        [result.message, result.restart_text].filter(Boolean).join("\n\n") || "Restart TabbyAPI now?"
-      );
-      modal.setBusy(false);
-      await new Promise((resolve) => {
-        modal.setActions([
-          {
-            label: result.restart_no || "Skip",
-            run: () => {
-              msg.textContent = `${result.message || "Git update finished."} The API was not restarted.`;
-              finishProgress(modal, {
-                title: "Git update finished",
-                note: `${result.message || "Git update finished."} The API was not restarted.`,
-                reloadPrimary: true,
-              });
-              resolve();
-            },
-          },
-          {
-            label: "Reload",
-            run: () => {
-              msg.textContent = "Reloading the UI…";
-              location.reload();
-              resolve();
-            },
-          },
-          {
-            label: result.restart_yes || "Restart",
-            danger: true,
-            run: async () => {
-              modal.setBusy(true);
-              modal.setActions([]);
-              try {
-                await runRestart(modal, { fromUpdate: true });
-              } catch (err) {
-                msg.textContent = err.message;
-                finishProgress(modal, {
-                  title: "Restart",
-                  note: err.message || "Restart failed.",
-                });
-              }
-              resolve();
-            },
-          },
-        ]);
+      if (result.message) modal.setNote(result.message);
+      modal.setTitle("Updating git");
+      await modal.waitUntilReady({ requireDown: false, watchUpdate: true });
+      msg.textContent = "API is back.";
+      await refresh().catch((err) => TabbyUI.paintApiDown(err));
+      finishProgress(modal, {
+        title: "Git update finished",
+        note: "Git update finished. Reload the UI to pick up updated pages.",
+        reloadPrimary: true,
       });
     } catch (err) {
       msg.textContent = err.message;
