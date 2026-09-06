@@ -646,7 +646,7 @@ def scene_from_state(data: dict[str, Any] | None, connected: bool) -> dict[str, 
             note = "waiting for /health"
         else:
             phase, palette = "waiting for api", "down"
-            note = "waiting for /health"
+            note = "waiting for /health. after reboot or a fresh install this can take 1-2 min"
         live = True
         intensity = 0.30
         speed = 0.20
@@ -2056,7 +2056,10 @@ def draw_hud(
     for line in _hud_wrap(info_font, what, max_left, 6):
         extras.append((line, MUTED, info_font))
     if note:
-        extras.append((hud_caption(note), MUTED, info_font))
+        extras.extend(
+            (line, MUTED, info_font)
+            for line in _hud_wrap(info_font, hud_caption(note), max_left, 3)
+        )
     if tok_line:
         extras.append((tok_line, MUTED, info_font))
     if wait_line:

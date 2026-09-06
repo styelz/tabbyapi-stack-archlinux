@@ -611,6 +611,22 @@ class SaverKioskSceneTests(unittest.TestCase):
         self.assertEqual(waiting["phase"], "waiting for api")
         self.assertEqual(waiting["palette"], "down")
         self.assertTrue(waiting["live"])
+        self.assertIn("1-2 min", waiting["note"])
+        self.assertIn("reboot", waiting["note"])
+        self.assertIn("fresh install", waiting["note"])
+
+    def test_waiting_hud_mentions_reboot_ready_time(self):
+        waiting = self.kiosk.scene_from_state(None, False)
+        waiting = dict(waiting)
+        waiting["clock"] = "14:20:07"
+        waiting["date"] = "Sat 5 Sep"
+        screen = _FakeScreen()
+        self.kiosk.draw_hud(screen, _FakeFont(), _FakeFont(), waiting)
+        text = " ".join(str(item) for item in screen.blits)
+        self.assertIn("Waiting For API", text)
+        self.assertIn("1-2 Min", text)
+        self.assertIn("Reboot", text)
+        self.assertIn("Fresh Install", text)
 
     def test_disconnect_after_live_is_restarting_api(self):
         scene = self.kiosk.scene_from_state(
