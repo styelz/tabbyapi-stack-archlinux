@@ -119,6 +119,25 @@ async def entrypoint_async():
         )
         model_name = None
     if model_name:
+        from select_model import retarget_startup_model
+
+        new_name, changed = retarget_startup_model(model_name)
+        if changed:
+            logger.warning(
+                f"Startup model {model_name} is not on disk; "
+                f"switching to {new_name or '(none)'}"
+            )
+            config.load()
+            model_name = config.model.model_name if new_name else None
+        elif not new_name:
+            logger.error(
+                f"Startup model {model_name} is not on disk and no other LLM "
+                "is installed; starting with no LLM"
+            )
+            model_name = None
+        else:
+            model_name = new_name
+    if model_name:
         await _load_startup_model(model, model_name)
 
     # If an initial embedding model name is specified, create a separate container

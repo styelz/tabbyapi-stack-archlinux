@@ -3115,9 +3115,8 @@ if [[ ! -f "$DEST_TABBY/config.yml" && -f "$DEST_TABBY/config_sample.yml" ]]; th
   cp "$DEST_TABBY/config_sample.yml" "$DEST_TABBY/config.yml"
   CREATED_CONFIG=1
 fi
-DEFAULT_MODEL="Qwen3.5-9B-exl3-4.00bpw"
-# Seed model_name only when we just created config.yml. A re-run or update
-# must not throw away the profile the user last switched to.
+# Embedding only here. The LLM folder is set after weights copy from what
+# actually landed in models/ (select_model.py --seed-installed --ids).
 if [[ "$CREATED_CONFIG" -eq 1 ]]; then
   "$PY" -c "
 from pathlib import Path
@@ -3125,9 +3124,7 @@ p = Path(r'''$DEST_TABBY/config.yml''')
 text = p.read_text(encoding='utf-8')
 out = []
 for line in text.splitlines(True):
-    if line.startswith('  model_name:'):
-        out.append('  model_name: $DEFAULT_MODEL\n')
-    elif line.startswith('  embedding_model_name:'):
+    if line.startswith('  embedding_model_name:'):
         out.append('  embedding_model_name: $EMBED_NAME\n')
     else:
         out.append(line)
@@ -3135,13 +3132,8 @@ p.write_text(''.join(out), encoding='utf-8')
 " >>"$INSTALL_LOG" 2>&1 || progress_fail
 fi
 mkdir -p "$DEST_TABBY/model_profiles" "$DEST_TABBY/models"
-# Seed only on a first install; a re-run must not throw away the profile the
-# user last switched to.
-if [[ ! -s "$DEST_TABBY/model_profiles/last.json" ]]; then
-  printf '%s\n' '{"profile": "qwen"}' > "$DEST_TABBY/model_profiles/last.json"
-fi
 if [[ ! -s "$DEST_TABBY/model_profiles/gpu_mode.json" ]]; then
-  printf '%s\n' '{"mode": "llm", "profile": "qwen"}' > "$DEST_TABBY/model_profiles/gpu_mode.json"
+  printf '%s\n' '{"mode": "llm"}' > "$DEST_TABBY/model_profiles/gpu_mode.json"
 fi
 
 progress 28 "Installing ComfyUI"
@@ -3388,6 +3380,11 @@ if [[ -n "$WIN_ROOT" && -d "$WIN_ROOT" ]]; then
   FETCH_ARGS+=(--cache "$WIN_ROOT")
 fi
 run_quiet "$DEST_TABBY/venv/bin/python" -u "$DEST_FETCH" "${FETCH_ARGS[@]}"
+
+# Point last.json / model_name at an LLM that was actually copied. Do not
+# assume qwen 9B — USB subset and extra local folders are valid too.
+run_quiet "$DEST_TABBY/venv/bin/python" -u "$DEST_TABBY/select_model.py" \
+  --seed-installed --ids "$MODEL_SET"
 
 progress 94 "Writing config and enabling service"
 install_unless_same() {
