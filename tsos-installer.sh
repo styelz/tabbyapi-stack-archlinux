@@ -76,13 +76,20 @@ TABBY_CACHE_CHROOT=""
 TSOS_OFFLINE_ROOT="${TSOS_OFFLINE_ROOT:-}"
 TSOS_OFFLINE_CHROOT=/opt/tsos
 TSOS_PACMAN_CONFIG=""
+TSOS_PAYLOAD_ROOT="${TSOS_PAYLOAD_ROOT:-}"
 
 if [[ -z "$TSOS_OFFLINE_ROOT" && -f /opt/tsos/pacman/tsos.db ]]; then
   TSOS_OFFLINE_ROOT=/opt/tsos
 fi
-if [[ -n "$TSOS_OFFLINE_ROOT" && -z "$TABBY_LOCAL_SRC" &&
-      -f "$TSOS_OFFLINE_ROOT/tabbyapi-stack/install.sh" ]]; then
-  TABBY_LOCAL_SRC="$TSOS_OFFLINE_ROOT/tabbyapi-stack"
+if [[ -z "$TABBY_LOCAL_SRC" && -f /opt/tsos/tabbyapi-stack/install.sh ]]; then
+  TABBY_LOCAL_SRC=/opt/tsos/tabbyapi-stack
+fi
+if [[ -z "$TSOS_PAYLOAD_ROOT" ]]; then
+  if [[ -n "$TSOS_OFFLINE_ROOT" ]]; then
+    TSOS_PAYLOAD_ROOT="$TSOS_OFFLINE_ROOT"
+  elif [[ -f /opt/tsos/tabbyapi-stack/install.sh ]]; then
+    TSOS_PAYLOAD_ROOT=/opt/tsos
+  fi
 fi
 
 usage() {
@@ -3748,11 +3755,11 @@ setup_storage() {
 }
 
 bind_offline_payload_into_target() {
-  [[ -n "$TSOS_OFFLINE_ROOT" ]] || return 0
+  [[ -n "$TSOS_PAYLOAD_ROOT" ]] || return 0
   mkdir -p "$TARGET$TSOS_OFFLINE_CHROOT"
   if ! mountpoint -q "$TARGET$TSOS_OFFLINE_CHROOT"; then
-    log "Binding offline payload into the new system"
-    mount --bind "$TSOS_OFFLINE_ROOT" "$TARGET$TSOS_OFFLINE_CHROOT"
+    log "Binding ISO payload into the new system"
+    mount --bind "$TSOS_PAYLOAD_ROOT" "$TARGET$TSOS_OFFLINE_CHROOT"
     mount -o remount,bind,ro "$TARGET$TSOS_OFFLINE_CHROOT" 2>/dev/null || true
   fi
 }
@@ -4361,8 +4368,16 @@ PROFILE
   chmod 0644 "$TARGET/etc/profile.d/tsos-motd.sh"
 
   log "Cloning tabbyapi-stack for the chroot install"
-  if [[ -n "$TSOS_OFFLINE_ROOT" &&
-        -f "$TARGET$TSOS_OFFLINE_CHROOT/bundles/tabbyapi-stack.bundle" ]]; then
+  local stack_bundle=""
+  for stack_bundle in \
+    "${TSOS_PAYLOAD_ROOT:-}/bundles/tabbyapi-stack.bundle" \
+    "${TSOS_OFFLINE_ROOT:-}/bundles/tabbyapi-stack.bundle" \
+    /opt/tsos/bundles/tabbyapi-stack.bundle
+  do
+    [[ -f "$stack_bundle" ]] && break
+    stack_bundle=""
+  done
+  if [[ -n "$stack_bundle" ]]; then
     if ! arch-chroot "$TARGET" /usr/bin/runuser -u "$TARGET_USER" -- \
       git clone "$TSOS_OFFLINE_CHROOT/bundles/tabbyapi-stack.bundle" "$stack_home"; then
       die "local tabbyapi-stack bundle could not be cloned"
@@ -4728,8 +4743,10 @@ cleanup() {
   if mountpoint -q "$TARGET$CACHE_CHROOT_PATH" 2>/dev/null; then
     umount "$TARGET$CACHE_CHROOT_PATH" 2>/dev/null || umount -l "$TARGET$CACHE_CHROOT_PATH" 2>/dev/null || true
   fi
-  if [[ -n "$TSOS_OFFLINE_ROOT" ]]; then
-    sed -i '/^# BEGIN TSOS OFFLINE$/,/^# END TSOS OFFLINE$/d' "$TARGET/etc/pacman.conf" 2>/dev/null || true
+  if [[ -n "$TSOS_PAYLOAD_ROOT" ]]; then
+    if [[ -n "$TSOS_OFFLINE_ROOT" ]]; then
+      sed -i '/^# BEGIN TSOS OFFLINE$/,/^# END TSOS OFFLINE$/d' "$TARGET/etc/pacman.conf" 2>/dev/null || true
+    fi
     if mountpoint -q "$TARGET$TSOS_OFFLINE_CHROOT" 2>/dev/null; then
       umount "$TARGET$TSOS_OFFLINE_CHROOT" 2>/dev/null ||
         umount -l "$TARGET$TSOS_OFFLINE_CHROOT" 2>/dev/null || true

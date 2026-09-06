@@ -1,4 +1,4 @@
-name: Build frozen TSOS ISO
+name: Build TSOS ISO
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ permissions:
 jobs:
   iso:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 120
 
     steps:
       - uses: actions/checkout@v4
@@ -26,24 +26,15 @@ jobs:
           sudo docker system prune --all --force --volumes
           df -h
 
-      - name: Build and save Code sandbox images
-        run: |
-          mkdir -p "$RUNNER_TEMP/tsos-docker"
-          docker pull debian:bookworm-slim
-          docker build -t tabbyapi-stack-code:local tabbyAPI/ui/codebox
-          docker save -o "$RUNNER_TEMP/tsos-docker/codebox-images.tar" \
-            debian:bookworm-slim tabbyapi-stack-code:local
-          df -h
-
       - name: Build TSOS Arch Linux ISO
         run: |
           docker run --rm --privileged \
             -v "$GITHUB_WORKSPACE:/src" \
-            -v "$RUNNER_TEMP/tsos-docker/codebox-images.tar:/codebox-images.tar:ro" \
             archlinux:latest \
-            bash -lc 'TSOS_DOCKER_TAR=/codebox-images.tar TSOS_ISO_OUT=/src/out /src/iso/build.sh'
+            bash -lc 'TSOS_ISO_OUT=/src/out /src/iso/build.sh'
           sudo chown -R "$USER:$USER" out
           df -h
+          ls -lh out
 
       - name: Prepare release assets
         id: release
@@ -51,12 +42,6 @@ jobs:
         run: |
           set -euo pipefail
           cd out
-          size=$(stat -c %s tsos-archlinux.iso)
-          if (( size > 1900 * 1024 * 1024 )); then
-            split -b 1900M -d -a 3 tsos-archlinux.iso tsos-archlinux.iso.part-
-            sha256sum tsos-archlinux.iso.part-* >> SHA256SUMS
-            rm tsos-archlinux.iso
-          fi
           if [[ "$GITHUB_REF_TYPE" == tag ]]; then
             tag="$GITHUB_REF_NAME"
           else
@@ -71,22 +56,17 @@ jobs:
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
         run: |
           cat > "$RUNNER_TEMP/release-notes.md" <<'EOF'
-          Bootable frozen-package TSOS Arch Linux installer.
-
-          If the ISO is split, reassemble it before writing it to USB:
-
-              cat tsos-archlinux.iso.part-* > tsos-archlinux.iso
-              sha256sum -c SHA256SUMS --ignore-missing
+          Bootable TSOS Arch Linux installer. This ISO is small: Arch packages,
+          Python, PyTorch, ComfyUI, Docker images, and model weights download
+          during `tsos-installer.sh`. The image includes tabbyapi-stack and a
+          frozen ComfyUI-GGUF git bundle.
 
           Write directly (replace `/dev/sdX` with the whole USB device):
 
               sudo dd if=tsos-archlinux.iso of=/dev/sdX bs=4M status=progress oflag=sync
 
-          Ventoy also works; use exFAT when the ISO exceeds 4 GiB. Arch,
-          installer dependencies, Python wheels, source repositories, Monaco,
-          and the Code sandbox image are frozen in the ISO. Model weights are
-          not included: provide the existing TSOS weights cache on another
-          drive or connect to Hugging Face. Omarchy also requires a network.
+          Boot with Secure Boot disabled, connect to the network, then run
+          `tsos-installer.sh`.
           EOF
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" out/* --clobber

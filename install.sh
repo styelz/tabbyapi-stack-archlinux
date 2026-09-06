@@ -22,6 +22,17 @@ if [[ -n "$TSOS_OFFLINE_ROOT" && -d "$TSOS_OFFLINE_ROOT/wheels" ]]; then
   export PIP_FIND_LINKS="$TSOS_OFFLINE_ROOT/wheels"
 fi
 
+tsos_bundle() {
+  local name=$1 path
+  for path in \
+    "${TSOS_OFFLINE_ROOT:-}/bundles/${name}.bundle" \
+    /opt/tsos/bundles/${name}.bundle
+  do
+    [[ -n "$path" && -f "$path" ]] && { printf '%s' "$path"; return 0; }
+  done
+  return 1
+}
+
 BACKTITLE="tabbyapi-stack"
 TUI=""
 USE_TUI=0
@@ -1500,9 +1511,10 @@ install_pyenv() {
     rm -rf "$PYENV_ROOT"
   fi
 
-  if [[ -n "$TSOS_OFFLINE_ROOT" && -f "$TSOS_OFFLINE_ROOT/bundles/pyenv.bundle" ]]; then
+  local pyenv_bundle=""
+  if pyenv_bundle=$(tsos_bundle pyenv); then
     echo "    Cloning pyenv from the TSOS ISO..."
-    git clone "$TSOS_OFFLINE_ROOT/bundles/pyenv.bundle" "$PYENV_ROOT"
+    git clone "$pyenv_bundle" "$PYENV_ROOT"
     pyenv_tree_ok "$PYENV_ROOT" && return 0
     rm -rf "$PYENV_ROOT"
     echo "The pyenv bundle on the TSOS ISO is invalid."
@@ -3138,8 +3150,8 @@ fi
 
 progress 28 "Installing ComfyUI"
 if [[ ! -f "$DEST_COMFY/main.py" ]]; then
-  if [[ -n "$TSOS_OFFLINE_ROOT" && -f "$TSOS_OFFLINE_ROOT/bundles/ComfyUI.bundle" ]]; then
-    run_quiet git clone "$TSOS_OFFLINE_ROOT/bundles/ComfyUI.bundle" "$DEST_COMFY"
+  if comfy_bundle=$(tsos_bundle ComfyUI); then
+    run_quiet git clone "$comfy_bundle" "$DEST_COMFY"
     run_quiet git -C "$DEST_COMFY" remote set-url origin https://github.com/comfyanonymous/ComfyUI.git
   else
     run_quiet git clone https://github.com/comfyanonymous/ComfyUI.git "$DEST_COMFY"
@@ -3346,8 +3358,8 @@ chmod +x "$DEST_COMFY/start.sh"
 progress 78 "ComfyUI-GGUF"
 mkdir -p "$DEST_COMFY/custom_nodes"
 if [[ ! -f "$DEST_COMFY/custom_nodes/ComfyUI-GGUF/nodes.py" ]]; then
-  if [[ -n "$TSOS_OFFLINE_ROOT" && -f "$TSOS_OFFLINE_ROOT/bundles/ComfyUI-GGUF.bundle" ]]; then
-    run_quiet git clone "$TSOS_OFFLINE_ROOT/bundles/ComfyUI-GGUF.bundle" "$DEST_COMFY/custom_nodes/ComfyUI-GGUF"
+  if gguf_bundle=$(tsos_bundle ComfyUI-GGUF); then
+    run_quiet git clone "$gguf_bundle" "$DEST_COMFY/custom_nodes/ComfyUI-GGUF"
     run_quiet git -C "$DEST_COMFY/custom_nodes/ComfyUI-GGUF" remote set-url origin https://github.com/city96/ComfyUI-GGUF.git
   else
     run_quiet git clone --depth 1 https://github.com/city96/ComfyUI-GGUF "$DEST_COMFY/custom_nodes/ComfyUI-GGUF"
