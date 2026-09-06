@@ -504,8 +504,10 @@ def _spawn_stack_update(script: Path, args: list[str], message: str) -> dict[str
     }
     if update_job_running():
         return {
-            "ok": False,
-            "message": "An update is already running.",
+            "ok": True,
+            "already_running": True,
+            "restarting": True,
+            "message": "An update is already running. Waiting for it to finish.",
             "log": _update_log_tail(400),
         }
     systemd_run = shutil.which("systemd-run")

@@ -438,7 +438,7 @@ function mountStatus(root) {
     try {
       const result = await TabbyUI.api("update", { method: "POST", body: { full: false } });
       modal.ingestText(result.log || "");
-      if (!result.ok) {
+      if (!result.ok && !result.already_running && !/already running/i.test(result.message || "")) {
         msg.textContent = result.message || "Git update failed.";
         finishProgress(modal, {
           title: "Git update failed",
@@ -487,7 +487,7 @@ function mountStatus(root) {
     try {
       const result = await TabbyUI.api("update", { method: "POST", body: { full: true } });
       modal.ingestText(result.log || "");
-      if (!result.ok) {
+      if (!result.ok && !result.already_running && !/already running/i.test(result.message || "")) {
         msg.textContent = result.message || "Full update failed.";
         finishProgress(modal, {
           title: "Update failed",

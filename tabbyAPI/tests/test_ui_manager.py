@@ -331,3 +331,17 @@ class UiManagerTests(unittest.TestCase):
             self.assertIn("--restart", spawned)
             self.assertTrue(result["ok"])
             self.assertNotIn("ask_restart", result)
+
+    def test_update_already_running_is_followable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "update.sh").write_text("#!/bin/bash\nexit 0\n")
+            with mock.patch.object(manager, "STACK_ROOT", root):
+                with mock.patch.object(manager, "update_job_running", return_value=True):
+                    with mock.patch.object(manager.subprocess, "Popen") as popen:
+                        result = manager.start_stack_update(full=True)
+        popen.assert_not_called()
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["already_running"])
+        self.assertTrue(result["restarting"])
+        self.assertIn("already running", result["message"].lower())
