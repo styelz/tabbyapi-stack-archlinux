@@ -23,7 +23,7 @@ SCRIPT_NAME="${0##*/}"
 if [[ "$SCRIPT_NAME" == "bash" || "$SCRIPT_NAME" == "-bash" || "$SCRIPT_NAME" == "sh" || "$SCRIPT_NAME" == "-sh" ]]; then
   SCRIPT_NAME="tsos-installer.sh"
 fi
-SCRIPT_VERSION="1.0.51"
+SCRIPT_VERSION="1.0.52"
 
 # Generic defaults. Do not default TARGET_HOSTNAME from $HOSTNAME — the live
 # ISO sets HOSTNAME=archiso.
@@ -62,6 +62,7 @@ INSTALL_MODE="${INSTALL_MODE:-}" # simple | advanced | empty (ask)
 ENCRYPT_FROM_CLI=""
 OMARCHY_FROM_CLI=""
 HOST_FROM_CLI=""
+TIMEZONE_FROM_CLI=""
 MODELS_FROM_CLI=""
 CACHE_FROM_CLI=""
 DEFAULT_DISK=/dev/sda
@@ -107,10 +108,11 @@ USAGE
   curl -fsSL https://raw.githubusercontent.com/styelz/tabbyapi-stack-archlinux/main/tsos-installer.sh | bash -s -- [options]
 
 With no --config file, the script starts with Simple setup. A review menu
-lists disk, hostname, user, weights, optional GPU models, and who can connect
-— open a row to change it, then start the install. Choose Advanced for
-encryption, Omarchy, full model control, and SSH tunnels. It uses the same dialog menus as install.sh
-when dialog is available (installed on the live ISO if needed).
+lists disk, hostname, user, timezone, weights, optional GPU models, and who
+can connect — open a row to change it, then start the install. Choose
+Advanced for encryption, Omarchy, full model control, and SSH tunnels. It
+uses the same dialog menus as install.sh when dialog is available
+(installed on the live ISO if needed).
 
 curl | bash needs a real terminal so the questions can be answered. Use
 bash, not sh. Pass flags after bash -s -- .
@@ -124,10 +126,10 @@ OPTIONS
   --locale NAME            Locale, without the leading # (default: en_US.UTF-8)
   --keymap NAME            Console keymap (default: us)
   --esp-size SIZE          EFI partition size (default: 2G)
-  --simple                 Review menu: disk, hostname, user, weights
-                           source (Hugging Face / USB / path), this PC vs
-                           LAN. Skips Omarchy (always). No LUKS unless
-                           --encrypt.
+  --simple                 Review menu: disk, hostname, user, timezone,
+                           weights source (Hugging Face / USB / path),
+                           this PC vs LAN. Skips Omarchy (always). No
+                           LUKS unless --encrypt.
   --advanced               Review menu for every setting (encryption,
                            Omarchy, cache, models, bind address, public
                            URL, SSH tunnel)
@@ -173,8 +175,8 @@ The live ISO's HOSTNAME (usually archiso) is ignored on purpose.
 
 tabbyapi-stack install.sh runs in the chroot on the live ISO (Python, venvs,
 weights) and must finish before reboot. Simple setup opens a review menu
-(disk, hostname, user, weights, this PC vs LAN). Advanced adds locale,
-encryption, Omarchy, models, and tunnels. After you confirm the wipe, the install screen stays up with
+(disk, hostname, user, timezone, weights, this PC vs LAN). Advanced adds
+locale, encryption, Omarchy, models, and tunnels. After you confirm the wipe, the install screen stays up with
 the step list, a progress bar, and the live log while Arch
 and tabbyapi-stack install.
 install.sh is non-interactive from here so it does not open a second
@@ -1716,8 +1718,67 @@ tunnels later in Settings, or re-run and pick Advanced.
   encryption:    $(encrypt_label)
   Omarchy:       not installed
   screensaver:   on (tty8)
+  timezone:      ${TIMEZONE:-UTC}
 
 EOF
+}
+
+# Live ISO is usually UTC. If timedatectl or /etc/localtime already names
+# a zone, use that as the Simple/Advanced default so the prompt is closer.
+maybe_detect_timezone() {
+  [[ -z "${TIMEZONE_FROM_CLI:-}" ]] || return 0
+  [[ "${TIMEZONE:-UTC}" == UTC ]] || return 0
+  local tz=""
+  tz=$(timedatectl show -p Timezone --value 2>/dev/null || true)
+  if [[ -z "$tz" || "$tz" == UTC ]]; then
+    if [[ -L /etc/localtime ]]; then
+      tz=$(readlink -f /etc/localtime 2>/dev/null || true)
+      tz=${tz#/usr/share/zoneinfo/}
+    fi
+  fi
+  if [[ -n "$tz" && "$tz" != UTC && -e "/usr/share/zoneinfo/$tz" ]]; then
+    TIMEZONE=$tz
+  fi
+}
+
+apply_timezone() {
+  local v=${1:-UTC}
+  v=${v#/usr/share/zoneinfo/}
+  v=${v#/}
+  [[ -n "$v" ]] || v=UTC
+  TIMEZONE=$v
+}
+
+warn_unknown_timezone() {
+  if [[ -e "/usr/share/zoneinfo/${TIMEZONE}" ]]; then
+    return 0
+  fi
+  if ((USE_TUI)); then
+    ui_msg "Timezone not found" \
+"No file at /usr/share/zoneinfo/${TIMEZONE}.
+Continuing anyway — fix it after boot if the clock is wrong." || true
+  else
+    warn "timezone not found at /usr/share/zoneinfo/$TIMEZONE — continuing anyway"
+  fi
+}
+
+prompt_timezone() {
+  local v
+  if ((USE_TUI)); then
+    v=$(ui_input "Timezone" \
+"Timezone from /usr/share/zoneinfo. This is the system clock
+on first boot (not UTC unless you want UTC).
+
+Examples: Australia/Sydney  America/New_York  Europe/London  UTC" \
+      "$TIMEZONE") || return 1
+  else
+    printf '%s\n' >/dev/tty \
+"Timezone from /usr/share/zoneinfo (system clock on first boot).
+Examples: Australia/Sydney  America/New_York  Europe/London  UTC"
+    v=$(ask "Timezone" "$TIMEZONE")
+  fi
+  apply_timezone "$v"
+  warn_unknown_timezone
 }
 
 # Hugging Face, a USB copy, or a typed folder. --tabby-cache skips the ask.
@@ -1791,18 +1852,18 @@ pick_install_mode() {
   if ((USE_TUI)); then
     choice=$(ui_menu "Setup type" \
 "Simple (recommended) opens a review menu: disk, hostname,
-username, weights source, and whether other computers on
-your network can connect. Open a row to change it.
+username, timezone, weights source, and whether other computers
+on your network can connect. Open a row to change it.
 
 Advanced adds locale, encryption, Omarchy, full model control,
 bind address, public URL, and SSH tunnel.
 
 Omarchy is not installed in Simple." \
-      simple "Simple — disk, hostname, user, weights, this PC vs LAN" \
+      simple "Simple — disk, hostname, user, timezone, weights, this PC vs LAN" \
       advanced "Advanced — every setting")
   else
     printf '\n' >/dev/tty
-    printf '%s\n' "Simple (recommended): disk, hostname, user, weights, this PC vs LAN." >/dev/tty
+    printf '%s\n' "Simple (recommended): disk, hostname, user, timezone, weights, this PC vs LAN." >/dev/tty
     printf '%s\n' "Advanced: encryption, Omarchy, full model control, tunnel." >/dev/tty
     printf '%s\n' "Omarchy is not installed in Simple." >/dev/tty
     choice=$(ask_until "Setup type (simple / advanced)" "simple" valid_install_mode)
@@ -1815,6 +1876,9 @@ prompt_settings() {
   pick_install_mode
   if [[ "$INSTALL_MODE" == simple ]]; then
     apply_simple_defaults
+  fi
+  maybe_detect_timezone
+  if [[ "$INSTALL_MODE" == simple ]]; then
     if ((USE_TUI)); then
       prompt_settings_simple_tui
     else
@@ -1836,6 +1900,7 @@ prompt_settings_simple_text() {
   ask_install_disk "Target disk"
   TARGET_HOSTNAME=$(ask_until "Hostname" "$TARGET_HOSTNAME" valid_hostname)
   TARGET_USER=$(ask_until "Username" "$TARGET_USER" valid_username)
+  prompt_timezone || true
   prompt_weights_source "Weights source"
   if [[ -z "${TABBY_CACHE:-}" && "${TABBY_MODELS:-core}" == core ]]; then
     TABBY_MODELS="$(simple_model_baseline "$(gpu_vram_mib)")"
@@ -1934,19 +1999,13 @@ Lowercase, not root. Example: tabby" \
   TARGET_USER=$v
 }
 
+hub_edit_timezone() {
+  prompt_timezone || return 0
+}
+
 hub_edit_locale() {
   local v
-  v=$(ui_input "Timezone" \
-"Timezone from /usr/share/zoneinfo.
-
-Examples: UTC  Australia/Sydney  America/New_York" \
-    "$TIMEZONE") || return 0
-  TIMEZONE="${v:-UTC}"
-  if [[ ! -e "/usr/share/zoneinfo/$TIMEZONE" ]]; then
-    ui_msg "Timezone not found" \
-"No file at /usr/share/zoneinfo/${TIMEZONE}.
-Continuing anyway — fix it after boot if the clock is wrong." || true
-  fi
+  prompt_timezone || return 0
   v=$(ui_input "Locale" \
 "Locale name without a leading #.
 
@@ -2205,6 +2264,8 @@ prompt_review_hub() {
     if [[ "$kind" == advanced ]]; then
       items+=(locale "$(hub_desc "$(locale_hub_label)")")
       items+=(desktop "$(hub_desc "$(encrypt_hub_label)")")
+    else
+      items+=(timezone "$(hub_desc "$TIMEZONE")")
     fi
     items+=(weights "$(hub_desc "$(weights_label)")")
     weight_gib="$(model_disk_gib "${TABBY_MODELS:-core}")"
@@ -2234,6 +2295,7 @@ bar, and the live log." \
       disk) ask_install_disk "Target disk" || true ;;
       hostname) hub_edit_hostname ;;
       user) hub_edit_user ;;
+      timezone) hub_edit_timezone ;;
       locale) hub_edit_locale ;;
       desktop) hub_edit_desktop ;;
       weights) prompt_weights_source "Weights source" || true ;;
@@ -2274,7 +2336,7 @@ A review menu lists every setting. Open a row to change it,
 then Start install.
 
   • disk to wipe (type the path to confirm)
-  • hostname and username
+  • hostname, username, and timezone (system clock)
   • model weights (Hugging Face, USB, or a path)
   • this PC vs other computers on the LAN
   • password after you confirm (login only; the disk is not
@@ -2288,6 +2350,7 @@ the step list, a progress bar, and the live log.
 
 Esc on the review menu cancels. Esc on a setting goes back."
 
+  prompt_timezone || true
   if [[ -z "${TABBY_CACHE:-}" && "${TABBY_MODELS:-core}" == core ]]; then
     TABBY_MODELS="$(simple_model_baseline "$(gpu_vram_mib)")"
   fi
@@ -2304,10 +2367,7 @@ prompt_settings_text() {
   ask_install_disk
   TARGET_HOSTNAME=$(ask_until "Hostname" "$TARGET_HOSTNAME" valid_hostname)
   TARGET_USER=$(ask_until "Username" "$TARGET_USER" valid_username)
-  TIMEZONE=$(ask "Timezone" "$TIMEZONE")
-  if [[ ! -e "/usr/share/zoneinfo/$TIMEZONE" ]]; then
-    warn "timezone not found at /usr/share/zoneinfo/$TIMEZONE — continuing anyway"
-  fi
+  prompt_timezone || true
   LOCALE=$(ask "Locale" "$LOCALE")
   KEYMAP=$(ask "Console keymap" "$KEYMAP")
   ESP_SIZE=$(ask_until "EFI partition size" "$ESP_SIZE" valid_esp_size)
@@ -2831,6 +2891,22 @@ self_test() {
   TARGET_HOSTNAME=studio
   apply_simple_defaults
   check "$TARGET_HOSTNAME" studio "simple keeps hostname"
+  TIMEZONE=Australia/Sydney
+  apply_simple_defaults
+  check "$TIMEZONE" Australia/Sydney "simple keeps timezone"
+  apply_timezone "/usr/share/zoneinfo/America/New_York"
+  check "$TIMEZONE" America/New_York "timezone strips zoneinfo prefix"
+  apply_timezone ""
+  check "$TIMEZONE" UTC "empty timezone becomes UTC"
+  TIMEZONE=Europe/Paris
+  TIMEZONE_FROM_CLI=""
+  maybe_detect_timezone
+  check "$TIMEZONE" Europe/Paris "maybe_detect keeps a set timezone"
+  TIMEZONE=UTC
+  TIMEZONE_FROM_CLI=1
+  maybe_detect_timezone
+  check "$TIMEZONE" UTC "maybe_detect respects --timezone"
+  TIMEZONE_FROM_CLI=""
 
   if valid_omarchy_mode now && valid_omarchy_mode skip && ! valid_omarchy_mode later; then
     printf 'ok   omarchy now/skip\n'
@@ -2980,6 +3056,7 @@ parse_args() {
         ;;
       --timezone)
         TIMEZONE=${2:?}
+        TIMEZONE_FROM_CLI=1
         shift 2
         ;;
       --locale)
