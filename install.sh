@@ -1908,7 +1908,7 @@ listen_ipv4_ifaces() {
 
 ui_listen_host() {
   local title="$1"
-  local current="${2:-127.0.0.1}"
+  local current="${2:-0.0.0.0}"
   local -a items=()
   local seen="|"
   local addr iface choice
@@ -1920,24 +1920,24 @@ ui_listen_host() {
     items+=("$ip" "$desc")
   }
   case "$current" in
-    127.0.0.1) _listen_host_add "$current" "this machine only (usual)" ;;
-    0.0.0.0) _listen_host_add "$current" "all interfaces — LAN clients can connect" ;;
+    0.0.0.0) _listen_host_add "$current" "all interfaces — LAN clients can connect (default)" ;;
+    127.0.0.1) _listen_host_add "$current" "this machine only" ;;
     "") ;;
     *) _listen_host_add "$current" "current choice" ;;
   esac
-  _listen_host_add "127.0.0.1" "this machine only (usual)"
+  _listen_host_add "0.0.0.0" "all interfaces — LAN clients can connect (default)"
+  _listen_host_add "127.0.0.1" "this machine only"
   while read -r addr iface; do
     _listen_host_add "$addr" "this NIC (${iface})"
   done < <(listen_ipv4_ifaces)
-  _listen_host_add "0.0.0.0" "all interfaces — LAN clients can connect"
   _listen_host_add "other" "type a different address"
   unset -f _listen_host_add
   choice="$(ui_menu "$title" \
 "Which address should TabbyAPI bind on? Pick from this machine.
 
-  127.0.0.1  — this machine only (usual)
+  0.0.0.0    — other devices on the LAN can connect (default)
+  127.0.0.1  — this machine only
   a LAN IP   — only that NIC
-  0.0.0.0    — other devices on the LAN can connect
 
 Do not pick a public hostname. The TCP port is the next screen." \
     "${items[@]}")" || return 1
@@ -1945,11 +1945,11 @@ Do not pick a public hostname. The TCP port is the next screen." \
     choice="$(ui_input "$title" \
 "Address TabbyAPI binds on.
 
-Examples: 127.0.0.1 (this machine), 0.0.0.0 (all NICs), or a LAN IPv4.
+Examples: 0.0.0.0 (all NICs, default), 127.0.0.1 (this machine), or a LAN IPv4.
 Do not put a public hostname here." \
-      "${current:-127.0.0.1}")" || return 1
+      "${current:-0.0.0.0}")" || return 1
   fi
-  printf '%s' "${choice:-127.0.0.1}"
+  printf '%s' "${choice:-0.0.0.0}"
 }
 
 # Simple-mode listen choice: this PC vs LAN.
@@ -1959,15 +1959,15 @@ ui_listen_access() {
   choice="$(ui_menu "$title" \
 "Who should be able to open the API and browser UI?
 
-  This PC only — Cursor and the UI on this machine (127.0.0.1).
   Other computers on my network — laptops and editors on the LAN (0.0.0.0).
+  This PC only — Cursor and the UI on this machine (127.0.0.1).
 
-You can change this later in Settings." \
-    this-pc "This PC only" \
-    lan "Other computers on my network")" || return 1
+LAN is the default. You can change this later in Settings." \
+    lan "Other computers on my network (default)" \
+    this-pc "This PC only")" || return 1
   case "$choice" in
-    lan) printf '%s' "0.0.0.0" ;;
-    *) printf '%s' "127.0.0.1" ;;
+    this-pc) printf '%s' "127.0.0.1" ;;
+    *) printf '%s' "0.0.0.0" ;;
   esac
 }
 
@@ -2030,7 +2030,7 @@ Esc on the review menu cancels. Esc on a setting goes back."
   TABBY_SSH_REMOTE=""
   TABBY_SSH_FORWARD=""
   TABBY_SSH_KEY=""
-  TABBY_NETWORK_HOST="${TABBY_NETWORK_HOST:-127.0.0.1}"
+  TABBY_NETWORK_HOST="${TABBY_NETWORK_HOST:-0.0.0.0}"
   apply_saver_defaults
   local choice host access weight_gib model_desc vram
   vram="$(gpu_vram_mib)"
@@ -2075,7 +2075,7 @@ Esc aborts." \
     case "$choice" in
       access)
         UI_ALLOW_BACK=1
-        host=$(ui_listen_access "Who can connect") && TABBY_NETWORK_HOST="${host:-127.0.0.1}"
+        host=$(ui_listen_access "Who can connect") && TABBY_NETWORK_HOST="${host:-0.0.0.0}"
         UI_ALLOW_BACK=0
         ;;
       models)
@@ -2146,7 +2146,7 @@ EOF
 }
 
 apply_network_defaults() {
-  TABBY_NETWORK_HOST="${TABBY_NETWORK_HOST:-127.0.0.1}"
+  TABBY_NETWORK_HOST="${TABBY_NETWORK_HOST:-0.0.0.0}"
   TABBY_NETWORK_PORT="${TABBY_NETWORK_PORT:-5000}"
   COMFYUI_URL="${COMFYUI_URL:-http://127.0.0.1:8188}"
   local hostport="${COMFYUI_URL#*://}"
@@ -2571,8 +2571,8 @@ You do not need a token for qwen / Flux / Qwen-Image." || true
 
 inst_edit_network() {
   local host port comfy
-  host=$(ui_listen_host "TabbyAPI listen host" "${TABBY_NETWORK_HOST:-127.0.0.1}") || return 0
-  host="${host:-127.0.0.1}"
+  host=$(ui_listen_host "TabbyAPI listen host" "${TABBY_NETWORK_HOST:-0.0.0.0}") || return 0
+  host="${host:-0.0.0.0}"
   port=$(ui_input "TabbyAPI listen port" \
 "TCP port for the API. Default 5000.
 

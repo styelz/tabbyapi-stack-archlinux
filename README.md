@@ -23,7 +23,7 @@ cd "$HOME/tabbyapi-stack"
 bash install.sh
 ```
 
-The menu defaults to **Simple** (timezone, this PC vs LAN, minimal coding and image models from Hugging Face, plus GPU-compatible optional models with disk-size estimates). The default is Qwen 9B, the CPU embedder, and Qwen-Image (~29 GiB of weights); 8 GB GPUs use Flux instead. Choose **Advanced** for encryption, full model control, bind address, public URL, reverse SSH, Omarchy, or to turn the screensaver off.
+The menu defaults to **Simple** (timezone, LAN access, minimal coding and image models from Hugging Face, plus GPU-compatible optional models with disk-size estimates). The default is Qwen 9B, the CPU embedder, and Qwen-Image (~29 GiB of weights); 8 GB GPUs use Flux instead. Choose **Advanced** for encryption, full model control, bind address, public URL, reverse SSH, Omarchy, or to turn the screensaver off.
 
 Re-run is safe: existing weights are skipped. USB caches, unattended install, and recovery: [Arch install guide](tabbyAPI/deploy/arch/README.md).
 

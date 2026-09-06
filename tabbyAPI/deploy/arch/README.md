@@ -27,7 +27,7 @@ bash install.sh
 
 Clone into `$HOME/tabbyapi-stack` so that folder is the git checkout.
 
-**Simple** (default): disk, hostname, username, timezone, weights source, this PC vs LAN. No Omarchy, no disk encryption unless you pass `--encrypt`.
+**Simple** (default): disk, hostname, username, timezone, weights source, LAN access (this PC is optional). No Omarchy, no disk encryption unless you pass `--encrypt`.
 
 **Simple** includes minimal coding/image models and a GPU-filtered optional-model checklist with disk estimates. **Advanced** adds locale, encryption, Omarchy, full model control, bind address, public URL, and SSH tunnel. Flags: `--simple` / `--advanced`, or `INSTALL_MODE=simple|advanced`.
 
@@ -35,7 +35,7 @@ Non-interactive:
 
 ```bash
 TABBY_INSTALL_ROOT="$HOME/tabbyapi-stack" TABBY_CACHE="" TABBY_MODELS=core \
-  TABBY_NETWORK_HOST=127.0.0.1 TABBY_NETWORK_PORT=5000 \
+  TABBY_NETWORK_HOST=0.0.0.0 TABBY_NETWORK_PORT=5000 \
   COMFYUI_URL=http://127.0.0.1:8188 \
   TABBY_PUBLIC_BASE="" TABBY_SSH_REMOTE="" \
   bash install.sh

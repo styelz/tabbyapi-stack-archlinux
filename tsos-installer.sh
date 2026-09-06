@@ -23,7 +23,7 @@ SCRIPT_NAME="${0##*/}"
 if [[ "$SCRIPT_NAME" == "bash" || "$SCRIPT_NAME" == "-bash" || "$SCRIPT_NAME" == "sh" || "$SCRIPT_NAME" == "-sh" ]]; then
   SCRIPT_NAME="tsos-installer.sh"
 fi
-SCRIPT_VERSION="1.0.52"
+SCRIPT_VERSION="1.0.53"
 
 # Generic defaults. Do not default TARGET_HOSTNAME from $HOSTNAME — the live
 # ISO sets HOSTNAME=archiso.
@@ -41,7 +41,7 @@ OMARCHY_USER_EMAIL="${OMARCHY_USER_EMAIL:-}"
 TABBY_REPO="${TABBY_REPO:-https://github.com/styelz/tabbyapi-stack-archlinux.git}"
 TABBY_LOCAL_SRC="${TABBY_LOCAL_SRC:-}"
 TABBY_MODELS="${TABBY_MODELS:-core}"
-TABBY_NETWORK_HOST="${TABBY_NETWORK_HOST:-127.0.0.1}"
+TABBY_NETWORK_HOST="${TABBY_NETWORK_HOST:-0.0.0.0}"
 TABBY_NETWORK_PORT="${TABBY_NETWORK_PORT:-5000}"
 TABBY_CACHE="${TABBY_CACHE:-}"
 TABBY_PUBLIC_BASE="${TABBY_PUBLIC_BASE:-}"
@@ -142,7 +142,7 @@ OPTIONS
   --name "FULL NAME"       Git name passed to Omarchy as OMARCHY_USER_NAME
   --email ADDR             Git email passed to Omarchy as OMARCHY_USER_EMAIL
   --models SET             Models: core, all, or comma-separated ids (asked unless --config)
-  --tabby-host ADDR        TabbyAPI listen address (asked in this UI unless --config)
+  --tabby-host ADDR        TabbyAPI listen address (default: 0.0.0.0 LAN)
   --tabby-port N           TabbyAPI listen port (asked in this UI unless --config)
   --tabby-cache PATH       Optional weights cache. Asked here (before wipe)
                            so a USB under /mnt can be bind-mounted aside.
@@ -1566,7 +1566,7 @@ listen_ipv4_ifaces() {
 
 ui_listen_host() {
   local title="$1"
-  local current="${2:-127.0.0.1}"
+  local current="${2:-0.0.0.0}"
   local -a items=()
   local seen="|"
   local addr iface choice
@@ -1578,24 +1578,24 @@ ui_listen_host() {
     items+=("$ip" "$desc")
   }
   case "$current" in
-    127.0.0.1) _listen_host_add "$current" "this machine only (usual)" ;;
-    0.0.0.0) _listen_host_add "$current" "all interfaces — LAN clients can connect" ;;
+    0.0.0.0) _listen_host_add "$current" "all interfaces — LAN clients can connect (default)" ;;
+    127.0.0.1) _listen_host_add "$current" "this machine only" ;;
     "") ;;
     *) _listen_host_add "$current" "current choice" ;;
   esac
-  _listen_host_add "127.0.0.1" "this machine only (usual)"
+  _listen_host_add "0.0.0.0" "all interfaces — LAN clients can connect (default)"
+  _listen_host_add "127.0.0.1" "this machine only"
   while read -r addr iface; do
     _listen_host_add "$addr" "this NIC (${iface})"
   done < <(listen_ipv4_ifaces)
-  _listen_host_add "0.0.0.0" "all interfaces — LAN clients can connect"
   _listen_host_add "other" "type a different address"
   unset -f _listen_host_add
   choice="$(ui_menu "$title" \
 "Which address should TabbyAPI bind on? Pick from this machine.
 
-  127.0.0.1  — this machine only (usual)
+  0.0.0.0    — other devices on the LAN can connect (default)
+  127.0.0.1  — this machine only
   a LAN IP   — only that NIC
-  0.0.0.0    — other devices on the LAN can connect
 
 Do not pick a public hostname. The TCP port is the next screen.
 On the live ISO these IPs are the installer NIC; 0.0.0.0 still
@@ -1605,11 +1605,11 @@ means “all interfaces” after reboot." \
     choice="$(ui_input "$title" \
 "Address TabbyAPI binds on.
 
-Examples: 127.0.0.1 (this machine), 0.0.0.0 (all NICs), or a LAN IPv4.
+Examples: 0.0.0.0 (all NICs, default), 127.0.0.1 (this machine), or a LAN IPv4.
 Do not put a public hostname here." \
-      "${current:-127.0.0.1}")" || return 1
+      "${current:-0.0.0.0}")" || return 1
   fi
-  printf '%s' "${choice:-127.0.0.1}"
+  printf '%s' "${choice:-0.0.0.0}"
 }
 
 # Simple-mode listen choice: this PC vs LAN. Always returns 0.
@@ -1619,15 +1619,15 @@ ui_listen_access() {
   choice="$(ui_menu "$title" \
 "Who should be able to open the API and browser UI?
 
-  This PC only — Cursor and the UI on this machine (127.0.0.1).
   Other computers on my network — laptops and editors on the LAN (0.0.0.0).
+  This PC only — Cursor and the UI on this machine (127.0.0.1).
 
-You can change this later in Settings." \
-    this-pc "This PC only" \
-    lan "Other computers on my network")" || return 1
+LAN is the default. You can change this later in Settings." \
+    lan "Other computers on my network (default)" \
+    this-pc "This PC only")" || return 1
   case "$choice" in
-    lan) printf '%s' "0.0.0.0" ;;
-    *) printf '%s' "127.0.0.1" ;;
+    this-pc) printf '%s' "127.0.0.1" ;;
+    *) printf '%s' "0.0.0.0" ;;
   esac
 }
 
@@ -1694,6 +1694,9 @@ apply_simple_defaults() {
     TABBY_MODELS=core
   fi
   TABBY_NETWORK_PORT="${TABBY_NETWORK_PORT:-5000}"
+  if [[ -z "${HOST_FROM_CLI:-}" ]]; then
+    TABBY_NETWORK_HOST="${TABBY_NETWORK_HOST:-0.0.0.0}"
+  fi
   COMFYUI_URL="${COMFYUI_URL:-http://127.0.0.1:8188}"
   TABBY_PUBLIC_BASE=""
   TABBY_SSH_REMOTE=""
@@ -1703,16 +1706,16 @@ apply_simple_defaults() {
 }
 
 simple_plan_notes() {
-  local access="this PC only"
-  if [[ "${TABBY_NETWORK_HOST:-}" == "0.0.0.0" ]]; then
-    access="other computers on the network"
+  local access="other computers on the network"
+  if [[ "${TABBY_NETWORK_HOST:-0.0.0.0}" != "0.0.0.0" ]]; then
+    access="this PC only"
   fi
   cat <<EOF
 Simple setup — you can change listen address, models, and
 tunnels later in Settings, or re-run and pick Advanced.
 
   hostname:      ${TARGET_HOSTNAME:-tsos}
-  access:        ${access} (${TABBY_NETWORK_HOST:-127.0.0.1}:${TABBY_NETWORK_PORT:-5000})
+  access:        ${access} (${TABBY_NETWORK_HOST:-0.0.0.0}:${TABBY_NETWORK_PORT:-5000})
   models:        ${TABBY_MODELS:-core}
   weights:       ${TABBY_CACHE:-Hugging Face}
   encryption:    $(encrypt_label)
@@ -1909,7 +1912,7 @@ prompt_settings_simple_text() {
   if [[ -z "${HOST_FROM_CLI:-}" ]]; then
     TABBY_NETWORK_HOST=$(ui_listen_access "Who can connect")
   fi
-  TABBY_NETWORK_HOST="${TABBY_NETWORK_HOST:-127.0.0.1}"
+  TABBY_NETWORK_HOST="${TABBY_NETWORK_HOST:-0.0.0.0}"
   printf '\n' >/dev/tty
 }
 
@@ -1932,10 +1935,10 @@ weights_label() {
 }
 
 access_label() {
-  if [[ "${TABBY_NETWORK_HOST:-127.0.0.1}" == "0.0.0.0" ]]; then
+  if [[ "${TABBY_NETWORK_HOST:-0.0.0.0}" == "0.0.0.0" ]]; then
     printf 'LAN (0.0.0.0:%s)' "${TABBY_NETWORK_PORT:-5000}"
   else
-    printf 'this PC (%s:%s)' "${TABBY_NETWORK_HOST:-127.0.0.1}" "${TABBY_NETWORK_PORT:-5000}"
+    printf 'this PC (%s:%s)' "${TABBY_NETWORK_HOST:-0.0.0.0}" "${TABBY_NETWORK_PORT:-5000}"
   fi
 }
 
@@ -2160,8 +2163,8 @@ You do not need a token for qwen / Flux / Qwen-Image." || true
 hub_edit_network() {
   local host port comfy public
   host=$(ui_listen_host "API listen address" \
-    "${TABBY_NETWORK_HOST:-127.0.0.1}") || return 0
-  host="${host:-127.0.0.1}"
+    "${TABBY_NETWORK_HOST:-0.0.0.0}") || return 0
+  host="${host:-0.0.0.0}"
   port=$(ui_ask_until "API listen port" \
 "TCP port for the API. Default 5000.
 
@@ -2243,14 +2246,14 @@ Default is fine unless your key has another name." \
 hub_edit_access() {
   local host
   host=$(ui_listen_access "Who can connect") || return 0
-  TABBY_NETWORK_HOST="${host:-127.0.0.1}"
+  TABBY_NETWORK_HOST="${host:-0.0.0.0}"
 }
 
 # Review menu: every setting is a row. Esc on a row returns here.
 # Esc on this menu aborts. Start install leaves the loop.
 prompt_review_hub() {
   local kind=$1 choice v weight_gib model_desc
-  TABBY_NETWORK_HOST="${TABBY_NETWORK_HOST:-127.0.0.1}"
+  TABBY_NETWORK_HOST="${TABBY_NETWORK_HOST:-0.0.0.0}"
   TABBY_NETWORK_PORT="${TABBY_NETWORK_PORT:-5000}"
   TABBY_MODELS="${TABBY_MODELS:-core}"
   if [[ -z "${DISK:-}" ]]; then
@@ -2396,8 +2399,8 @@ prompt_settings_text() {
 
   prompt_weights_source "Weights source"
   TABBY_MODELS=$(ask_until "Models (core / all / comma-separated ids)" "${TABBY_MODELS:-core}" valid_models)
-  TABBY_NETWORK_HOST=$(ui_listen_host "TabbyAPI listen address" "${TABBY_NETWORK_HOST:-127.0.0.1}")
-  TABBY_NETWORK_HOST="${TABBY_NETWORK_HOST:-127.0.0.1}"
+  TABBY_NETWORK_HOST=$(ui_listen_host "TabbyAPI listen address" "${TABBY_NETWORK_HOST:-0.0.0.0}")
+  TABBY_NETWORK_HOST="${TABBY_NETWORK_HOST:-0.0.0.0}"
   TABBY_NETWORK_PORT=$(ask_until "TabbyAPI listen port" "${TABBY_NETWORK_PORT:-5000}" valid_port)
   COMFYUI_URL=$(ask "ComfyUI URL" "${COMFYUI_URL:-http://127.0.0.1:8188}")
   TABBY_PUBLIC_BASE=$(ask "Public URL (blank = local only)" "${TABBY_PUBLIC_BASE}")
@@ -2907,6 +2910,18 @@ self_test() {
   maybe_detect_timezone
   check "$TIMEZONE" UTC "maybe_detect respects --timezone"
   TIMEZONE_FROM_CLI=""
+  TABBY_NETWORK_HOST=""
+  HOST_FROM_CLI=""
+  apply_simple_defaults
+  check "$TABBY_NETWORK_HOST" "0.0.0.0" "simple access defaults to LAN"
+  TABBY_NETWORK_HOST=127.0.0.1
+  apply_simple_defaults
+  check "$TABBY_NETWORK_HOST" "127.0.0.1" "simple keeps this-pc host"
+  HOST_FROM_CLI=1
+  TABBY_NETWORK_HOST=127.0.0.1
+  apply_simple_defaults
+  check "$TABBY_NETWORK_HOST" "127.0.0.1" "simple --tabby-host kept"
+  HOST_FROM_CLI=""
 
   if valid_omarchy_mode now && valid_omarchy_mode skip && ! valid_omarchy_mode later; then
     printf 'ok   omarchy now/skip\n'
@@ -3455,7 +3470,7 @@ $root_line
   encryption:    $(encrypt_label)
   omarchy:       $OMARCHY_MODE
   tabby models:  ${TABBY_MODELS:-core}
-  tabby listen:  ${TABBY_NETWORK_HOST:-127.0.0.1}:${TABBY_NETWORK_PORT:-5000}
+  tabby listen:  ${TABBY_NETWORK_HOST:-0.0.0.0}:${TABBY_NETWORK_PORT:-5000}
   tabby public:  ${TABBY_PUBLIC_BASE:-'(none — local only)'}
   tabby ssh:     ${TABBY_SSH_REMOTE:-'(none — no tunnel)'}
   tabby cache:   ${TABBY_CACHE:-'(none — Hugging Face)'}
@@ -4283,7 +4298,7 @@ fi
 
 TARGET_USER="${TARGET_USER:-$USER}"
 TABBY_INSTALL_ROOT="${TABBY_INSTALL_ROOT:-$HOME/tabbyapi-stack}"
-TABBY_NETWORK_HOST="${TABBY_NETWORK_HOST:-127.0.0.1}"
+TABBY_NETWORK_HOST="${TABBY_NETWORK_HOST:-0.0.0.0}"
 TABBY_NETWORK_PORT="${TABBY_NETWORK_PORT:-5000}"
 ENCRYPT="${ENCRYPT:-1}"
 OMARCHY_MODE="${OMARCHY_MODE:-skip}"
@@ -4724,7 +4739,7 @@ run_tabby_install_chroot() {
     TABBY_ISO_CHROOT=1
     TSOS_OFFLINE_ROOT="$([[ -n "$TSOS_OFFLINE_ROOT" ]] && printf '%s' "$TSOS_OFFLINE_CHROOT")"
     TABBY_MODELS="${TABBY_MODELS:-core}"
-    TABBY_NETWORK_HOST="${TABBY_NETWORK_HOST:-127.0.0.1}"
+    TABBY_NETWORK_HOST="${TABBY_NETWORK_HOST:-0.0.0.0}"
     TABBY_NETWORK_PORT="${TABBY_NETWORK_PORT:-5000}"
     TABBY_PUBLIC_BASE="${TABBY_PUBLIC_BASE:-}"
     TABBY_SSH_REMOTE="${TABBY_SSH_REMOTE:-}"
