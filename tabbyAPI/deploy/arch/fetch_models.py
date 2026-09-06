@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import sys
+import time
 from pathlib import Path
 
 SHARD_RE = re.compile(r"^(?P<stem>.+)-(?P<index>\d{5})-of-(?P<total>\d{5})\.safetensors$")
@@ -46,6 +47,32 @@ def catalog_picks(catalog: dict) -> list[dict]:
 
 def pick_map(catalog: dict) -> dict[str, dict]:
     return {str(p["id"]): p for p in catalog_picks(catalog)}
+
+
+def pick_ids_for_items(catalog: dict, item_ids: set[str]) -> list[str]:
+    """Return whole catalog picks fully represented by an item-id set."""
+    return [
+        str(pick["id"])
+        for pick in catalog_picks(catalog)
+        if pick.get("items")
+        and all(str(item_id) in item_ids for item_id in pick.get("items") or [])
+    ]
+
+
+def baseline_pick_ids(catalog: dict, vram_mib: int = 0) -> list[str]:
+    """Simple-mode picks, replacing Qwen-Image with Flux on sub-10 GiB GPUs."""
+    core_items = set(str(x) for x in (catalog.get("sets") or {}).get("core") or [])
+    baseline = pick_ids_for_items(catalog, core_items)
+    picks = pick_map(catalog)
+    qwen_image = picks.get("qwen-image") or {}
+    image_need = int(qwen_image.get("min_vram_mib") or 0)
+    if vram_mib > 0 and image_need > vram_mib and "qwen-image" in baseline:
+        baseline.remove("qwen-image")
+        flux = picks.get("flux") or {}
+        flux_need = int(flux.get("min_vram_mib") or 0)
+        if flux and (flux_need <= 0 or flux_need <= vram_mib):
+            baseline.append("flux")
+    return baseline
 
 
 def expand_pick_ids(catalog: dict, raw: str) -> list[str]:
@@ -166,6 +193,8 @@ def list_pick_rows(
     cache_root: Path | None = None,
     vram_mib: int = 0,
     source: str = "hf",
+    extras_only: bool = False,
+    selected_ids: str = "",
 ) -> list[dict]:
     """Rows for the installer checklist: id, on, label."""
     core_ids = set((catalog.get("sets") or {}).get("core") or [])
@@ -197,12 +226,21 @@ def list_pick_rows(
                 )
         return rows
 
+    selected_items = set(expand_pick_ids(catalog, selected_ids)) if selected_ids else set()
+    baseline_ids = set(baseline_pick_ids(catalog, vram_mib))
     for pick in catalog_picks(catalog):
+        pick_id = str(pick["id"])
+        if extras_only and pick_id in baseline_ids:
+            continue
         need = int(pick.get("min_vram_mib") or 0)
         if vram_mib > 0 and need > vram_mib:
             continue
         item_ids = [str(x) for x in pick.get("items") or []]
-        default_on = bool(item_ids) and all(i in core_ids for i in item_ids)
+        default_on = bool(item_ids) and (
+            all(i in selected_items for i in item_ids)
+            if selected_ids
+            else all(i in core_ids for i in item_ids)
+        )
         rows.append(
             {
                 "id": str(pick["id"]),
@@ -218,6 +256,9 @@ def list_pick_rows(
 def format_pick_label(row: dict, vram_mib: int = 0) -> str:
     label = str(row.get("label") or row.get("id") or "")
     need = int(row.get("min_vram_mib") or 0)
+    disk = int(row.get("disk_gib") or 0)
+    if disk > 0:
+        label = f"{label} — ~{disk} GiB"
     if vram_mib > 0 and need > vram_mib:
         label = f"{label} (needs {vram_label(need)})"
     elif vram_mib <= 0 and need > 0:
@@ -517,6 +558,45 @@ def note(msg: str) -> None:
     print(msg, flush=True)
 
 
+def installer_tqdm_class(download_label: str):
+    """tqdm class that uses normal log lines when the installer owns stdout."""
+    from tqdm.auto import tqdm
+
+    use_log_lines = not sys.stdout.isatty() or os.environ.get("TABBY_NESTED_UI") == "1"
+
+    class InstallerTqdm(tqdm):
+        def __init__(self, *args, **kwargs):
+            self._tabby_started = time.monotonic()
+            self._tabby_last = 0.0
+            if use_log_lines:
+                kwargs["disable"] = False
+                kwargs["mininterval"] = 1.0
+            super().__init__(*args, **kwargs)
+
+        def display(self, msg=None, pos=None):
+            if not use_log_lines:
+                return super().display(msg=msg, pos=pos)
+            now = time.monotonic()
+            total = int(self.total or 0)
+            done = int(self.n or 0)
+            complete = total > 0 and done >= total
+            if not complete and now - self._tabby_last < 1.0:
+                return
+            self._tabby_last = now
+            elapsed = max(now - self._tabby_started, 0.001)
+            rate = max(0.0, done - int(self.initial or 0)) / elapsed
+            detail = str(self.desc or "").strip()
+            name = download_label if not detail else f"{download_label} ({detail})"
+            if total > 0:
+                percent = min(100, int(done * 100 / total))
+                progress = f"{percent}% ({fmt_bytes(done)}/{fmt_bytes(total)})"
+            else:
+                progress = fmt_bytes(done)
+            note(f"      downloading {name}: {progress} at {fmt_bytes(int(rate))}/s")
+
+    return InstallerTqdm
+
+
 def copy_file_logged(src: str, dst: str, *, follow_symlinks: bool = True) -> str:
     src_path = Path(src)
     size = src_path.stat().st_size if src_path.is_file() else 0
@@ -574,18 +654,17 @@ def download_item(item: dict, dest: Path) -> None:
     repo = item["repo"]
     revision = item.get("revision") or None
     dest.parent.mkdir(parents=True, exist_ok=True)
-    # Carriage-return tqdm bars look like noise inside the installer gauge.
-    # Keep one line per file (note()) and only enable bars on a real tty.
-    if sys.stdout.isatty() and os.environ.get("TABBY_NESTED_UI") != "1":
-        os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "0"
-        try:
-            from huggingface_hub.utils import enable_progress_bars
+    # The custom tqdm retains normal terminal bars but emits throttled,
+    # newline-oriented progress when stdout feeds the installer's log well.
+    os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "0"
+    try:
+        from huggingface_hub.utils import enable_progress_bars
 
-            enable_progress_bars()
-        except Exception:
-            pass
-    else:
-        os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+        enable_progress_bars()
+    except Exception:
+        pass
+    download_label = str(item.get("remote") or repo)
+    tqdm_class = installer_tqdm_class(download_label)
     try:
         if item.get("kind") == "file":
             tmp = dest.parent / f".hf-{dest.name}"
@@ -597,6 +676,7 @@ def download_item(item: dict, dest: Path) -> None:
                     revision=revision,
                     local_dir=str(tmp),
                     token=token,
+                    tqdm_class=tqdm_class,
                 )
                 shutil.move(path, dest)
             finally:
@@ -609,6 +689,7 @@ def download_item(item: dict, dest: Path) -> None:
             revision=revision,
             local_dir=str(dest),
             token=token,
+            tqdm_class=tqdm_class,
         )
     except Exception as exc:
         hint = ""
@@ -657,6 +738,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--set", dest="model_set", default="core")
     parser.add_argument("--ids", default="", help="Comma-separated pick or item ids")
     parser.add_argument("--list-picks", action="store_true")
+    parser.add_argument("--baseline", action="store_true", help="Print Simple-mode baseline pick ids")
+    parser.add_argument("--extras-only", action="store_true", help="Omit Simple-mode baseline picks")
+    parser.add_argument("--selected-ids", default="", help="Picks/items checked in --list-picks output")
     parser.add_argument("--source", choices=("hf", "cache"), default=None)
     parser.add_argument("--vram-mib", type=int, default=0)
     parser.add_argument("--disk-gib", action="store_true")
@@ -669,8 +753,19 @@ def main(argv: list[str] | None = None) -> int:
     source = args.source or ("cache" if cache else "hf")
     selection = (args.ids or args.model_set or "core").strip()
 
+    if args.baseline:
+        print(",".join(baseline_pick_ids(catalog, args.vram_mib)), flush=True)
+        return 0
+
     if args.list_picks:
-        rows = list_pick_rows(catalog, cache_root=cache, vram_mib=args.vram_mib, source=source)
+        rows = list_pick_rows(
+            catalog,
+            cache_root=cache,
+            vram_mib=args.vram_mib,
+            source=source,
+            extras_only=args.extras_only,
+            selected_ids=args.selected_ids,
+        )
         print_pick_rows(rows, args.vram_mib)
         return 0
 

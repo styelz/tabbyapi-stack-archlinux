@@ -107,9 +107,9 @@ USAGE
   curl -fsSL https://raw.githubusercontent.com/styelz/tabbyapi-stack-archlinux/main/tsos-installer.sh | bash -s -- [options]
 
 With no --config file, the script starts with Simple setup. A review menu
-lists disk, hostname, user, weights, and who can connect — open a row to
-change it, then start the install. Choose Advanced for encryption, Omarchy,
-extra models, and SSH tunnels. It uses the same dialog menus as install.sh
+lists disk, hostname, user, weights, optional GPU models, and who can connect
+— open a row to change it, then start the install. Choose Advanced for
+encryption, Omarchy, full model control, and SSH tunnels. It uses the same dialog menus as install.sh
 when dialog is available (installed on the live ISO if needed).
 
 curl | bash needs a real terminal so the questions can be answered. Use
@@ -1794,7 +1794,7 @@ pick_install_mode() {
 username, weights source, and whether other computers on
 your network can connect. Open a row to change it.
 
-Advanced adds locale, encryption, Omarchy, extra models,
+Advanced adds locale, encryption, Omarchy, full model control,
 bind address, public URL, and SSH tunnel.
 
 Omarchy is not installed in Simple." \
@@ -1803,7 +1803,7 @@ Omarchy is not installed in Simple." \
   else
     printf '\n' >/dev/tty
     printf '%s\n' "Simple (recommended): disk, hostname, user, weights, this PC vs LAN." >/dev/tty
-    printf '%s\n' "Advanced: encryption, Omarchy, extra models, tunnel." >/dev/tty
+    printf '%s\n' "Advanced: encryption, Omarchy, full model control, tunnel." >/dev/tty
     printf '%s\n' "Omarchy is not installed in Simple." >/dev/tty
     choice=$(ask_until "Setup type (simple / advanced)" "simple" valid_install_mode)
   fi
@@ -1837,6 +1837,10 @@ prompt_settings_simple_text() {
   TARGET_HOSTNAME=$(ask_until "Hostname" "$TARGET_HOSTNAME" valid_hostname)
   TARGET_USER=$(ask_until "Username" "$TARGET_USER" valid_username)
   prompt_weights_source "Weights source"
+  if [[ -z "${TABBY_CACHE:-}" && "${TABBY_MODELS:-core}" == core ]]; then
+    TABBY_MODELS="$(simple_model_baseline "$(gpu_vram_mib)")"
+  fi
+  simple_edit_models
   if [[ -z "${HOST_FROM_CLI:-}" ]]; then
     TABBY_NETWORK_HOST=$(ui_listen_access "Who can connect")
   fi
@@ -2073,9 +2077,9 @@ If VRAM could not be read, every catalog model is listed." \
         picked=$(ui_menu "Model set" \
 "Could not list individual models. Pick a preset.
 
-core - qwen 9B, Flux, Qwen-Image, CPU embedder
+core - qwen 9B, Qwen-Image, CPU embedder
 all  - every switch-to profile" \
-          core "qwen 9B + Flux + Qwen-Image + embedder" \
+          core "qwen 9B + Qwen-Image + embedder" \
           all "every switch-to profile") || return 0
         TABBY_MODELS="${picked:-core}"
         ;;
@@ -2186,7 +2190,7 @@ hub_edit_access() {
 # Review menu: every setting is a row. Esc on a row returns here.
 # Esc on this menu aborts. Start install leaves the loop.
 prompt_review_hub() {
-  local kind=$1 choice v
+  local kind=$1 choice v weight_gib model_desc
   TABBY_NETWORK_HOST="${TABBY_NETWORK_HOST:-127.0.0.1}"
   TABBY_NETWORK_PORT="${TABBY_NETWORK_PORT:-5000}"
   TABBY_MODELS="${TABBY_MODELS:-core}"
@@ -2203,8 +2207,14 @@ prompt_review_hub() {
       items+=(desktop "$(hub_desc "$(encrypt_hub_label)")")
     fi
     items+=(weights "$(hub_desc "$(weights_label)")")
+    weight_gib="$(model_disk_gib "${TABBY_MODELS:-core}")"
+    if [[ "$weight_gib" =~ ^[0-9]+$ ]]; then
+      model_desc="${TABBY_MODELS:-core} (~${weight_gib} GiB)"
+    else
+      model_desc="${TABBY_MODELS:-core}"
+    fi
+    items+=(models "$(hub_desc "$model_desc")")
     if [[ "$kind" == advanced ]]; then
-      items+=(models "$(hub_desc "${TABBY_MODELS:-core}")")
       items+=(network "$(hub_desc "$(access_label)")")
       items+=(tunnel "$(hub_desc "$(tunnel_label)")")
     else
@@ -2227,7 +2237,13 @@ bar, and the live log." \
       locale) hub_edit_locale ;;
       desktop) hub_edit_desktop ;;
       weights) prompt_weights_source "Weights source" || true ;;
-      models) hub_edit_models ;;
+      models)
+        if [[ "$kind" == simple ]]; then
+          simple_edit_models
+        else
+          hub_edit_models
+        fi
+        ;;
       network) hub_edit_network ;;
       tunnel) hub_edit_tunnel ;;
       access)
@@ -2264,7 +2280,7 @@ then Start install.
   • password after you confirm (login only; the disk is not
     encrypted unless you passed --encrypt)
 
-Omarchy is not installed. Encryption, extra models, and SSH
+Omarchy is not installed. Encryption, full model control, and SSH
 tunnels are under Advanced.
 
 After the wipe confirm, the install screen stays up with
@@ -2272,6 +2288,10 @@ the step list, a progress bar, and the live log.
 
 Esc on the review menu cancels. Esc on a setting goes back."
 
+  if [[ -z "${TABBY_CACHE:-}" && "${TABBY_MODELS:-core}" == core ]]; then
+    TABBY_MODELS="$(simple_model_baseline "$(gpu_vram_mib)")"
+  fi
+  simple_edit_models
   prompt_review_hub simple
 }
 
@@ -2637,6 +2657,8 @@ pick_models_ui() {
   local text="$2"
   local source="$3"
   local cache="${4:-}"
+  local mode="${5:-}"
+  local selected="${6:-}"
   local vram rows id state label
   local args=()
   ensure_fetch_tools || return 2
@@ -2648,6 +2670,8 @@ pick_models_ui() {
   if [[ -n "$cache" && -d "$cache" ]]; then
     py+=(--cache "$cache")
   fi
+  [[ "$mode" == extras ]] && py+=(--extras-only)
+  [[ -n "$selected" ]] && py+=(--selected-ids "$selected")
   rows="$("${py[@]}" 2>/dev/null || true)"
   [[ -n "$rows" ]] || return 2
   while IFS=$'\t' read -r id state label; do
@@ -2656,6 +2680,70 @@ pick_models_ui() {
   done <<< "$rows"
   ((${#args[@]} >= 3)) || return 2
   ui_checklist "$title" "$text" "${args[@]}"
+}
+
+model_disk_gib() {
+  local ids="${1:-core}"
+  ensure_fetch_tools || return 0
+  if command -v python3 >/dev/null 2>&1 && [[ -f "$TSOS_FETCH" ]]; then
+    python3 -u "$TSOS_FETCH" --catalog "$TSOS_CATALOG" --ids "$ids" --disk-gib 2>/dev/null || true
+  fi
+}
+
+simple_model_baseline() {
+  local vram="${1:-0}" baseline=""
+  ensure_fetch_tools || true
+  if command -v python3 >/dev/null 2>&1 && [[ -f "${TSOS_FETCH:-}" ]]; then
+    baseline="$(python3 -u "$TSOS_FETCH" --catalog "$TSOS_CATALOG" --baseline --vram-mib "$vram" 2>/dev/null || true)"
+  fi
+  printf '%s' "${baseline:-core}"
+}
+
+simple_edit_models() {
+  local vram gpu_label baseline picked candidate weight_gib rc
+  if [[ -n "${TABBY_CACHE:-}" ]]; then
+    hub_edit_models
+    return 0
+  fi
+  vram="$(gpu_vram_mib)"
+  gpu_label="$(gpu_prompt_label "$vram")"
+  baseline="$(simple_model_baseline "$vram")"
+  while true; do
+    rc=0
+    picked=$(pick_models_ui "Additional Hugging Face models" \
+"The coding, embedding, and image baseline is selected automatically:
+  ${baseline}
+
+Optional models that fit ${gpu_label} are below.
+Each row shows its estimated download size.
+
+Space toggles a row. Enter confirms." \
+      hf "" extras "${TABBY_MODELS:-$baseline}") || rc=$?
+    case "$rc" in
+      1) return 0 ;;
+      2)
+        TABBY_MODELS="$baseline"
+        return 0
+        ;;
+    esac
+    candidate="$baseline"
+    [[ -n "$picked" ]] && candidate="${candidate},${picked}"
+    weight_gib="$(model_disk_gib "$candidate")"
+    [[ "$weight_gib" =~ ^[0-9]+$ ]] || weight_gib="unknown"
+    rc=0
+    ui_yesno "Confirm model downloads" \
+"Selected: ${candidate}
+
+Model weights: about ${weight_gib} GiB
+Python, CUDA, and environments: about 15 GiB extra
+
+Yes = use this selection.
+No = return to the model checklist." 1 || rc=$?
+    case "$rc" in
+      0) TABBY_MODELS="$candidate"; break ;;
+      2) return 0 ;;
+    esac
+  done
 }
 
 self_test() {

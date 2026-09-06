@@ -46,10 +46,10 @@ Usage: $(basename "$0") [--update] [--simple|--advanced]
 
   (no args)     Interactive or env-driven install / re-run.
                 Starts with Simple setup (review menu: this PC vs LAN;
-                core models). Choose Advanced for cache, extra models,
+                minimal models plus optional GPU extras). Choose Advanced for cache,
                 tunnels, screensaver.
   --simple      Review menu: this PC vs LAN. Install root is
-                \$HOME/tabbyapi-stack, models core, Hugging Face.
+                \$HOME/tabbyapi-stack; weights come from Hugging Face.
   --advanced    Review menu for every setting
   --update      Apply code and deps after git pull. Prefer: bash update.sh
                 Reuses tabby.env; does not overwrite config.yml or tabby.env.
@@ -1986,14 +1986,15 @@ pick_install_mode() {
   local choice
   choice="$(ui_menu "Setup type" \
 "Simple (recommended) opens a review menu: this PC vs LAN,
-core models from Hugging Face into \$HOME/tabbyapi-stack.
+minimal coding/image models and optional GPU extras from
+Hugging Face into \$HOME/tabbyapi-stack.
 
 Advanced lists every setting as a row you can open: install
 root, weights cache, models, bind address, public URL, SSH
 tunnel, and screensaver.
 
 You can re-run later and pick Advanced to change those." \
-    simple "Simple — this PC vs LAN, core models" \
+    simple "Simple — this PC vs LAN, minimal models + extras" \
     advanced "Advanced — every setting")"
   INSTALL_MODE="${choice:-simple}"
   valid_install_mode "$INSTALL_MODE" || INSTALL_MODE=simple
@@ -2007,8 +2008,8 @@ plus ComfyUI image generation on Arch.
 Simple setup installs into:
   ${TABBY_INSTALL_ROOT:-$DEFAULT_DEST}
 
-A review menu lists who can connect. Open that row to change
-it, then Start install. Extra models, a USB cache, a public
+A review menu lists who can connect and optional GPU models.
+Open a row to change it, then Start install. A USB cache, a public
 URL, and an SSH tunnel are under Advanced. The TTY screensaver
 is on by default (disable later with tsctl screensaver disable).
 
@@ -2031,7 +2032,12 @@ Esc on the review menu cancels. Esc on a setting goes back."
   TABBY_SSH_KEY=""
   TABBY_NETWORK_HOST="${TABBY_NETWORK_HOST:-127.0.0.1}"
   apply_saver_defaults
-  local choice host access
+  local choice host access weight_gib model_desc vram
+  vram="$(gpu_vram_mib)"
+  if [[ "$MODEL_SET" == core ]]; then
+    MODEL_SET="$(simple_model_baseline "$vram")"
+  fi
+  simple_edit_models
   while true; do
     apply_choices
     apply_network_defaults
@@ -2048,6 +2054,12 @@ Esc on the review menu cancels. Esc on a setting goes back."
     else
       access="this PC (${TABBY_NETWORK_HOST}:${TABBY_NETWORK_PORT})"
     fi
+    weight_gib="$(model_disk_gib "$MODEL_SET")"
+    if [[ "$weight_gib" =~ ^[0-9]+$ ]]; then
+      model_desc="${MODEL_SET} (~${weight_gib} GiB)"
+    else
+      model_desc="$MODEL_SET"
+    fi
     choice=$(ui_menu "Review install plan" \
 "Open a row to change it. Start install when the plan looks right.
 
@@ -2058,11 +2070,17 @@ Esc on the review menu cancels. Esc on a setting goes back."
 
 Esc aborts." \
       access "$(printf '%s' "$access" | cut -c1-48)" \
+      models "$(printf '%s' "$model_desc" | cut -c1-48)" \
       go "Start install") || ui_cancel
     case "$choice" in
       access)
         UI_ALLOW_BACK=1
         host=$(ui_listen_access "Who can connect") && TABBY_NETWORK_HOST="${host:-127.0.0.1}"
+        UI_ALLOW_BACK=0
+        ;;
+      models)
+        UI_ALLOW_BACK=1
+        simple_edit_models
         UI_ALLOW_BACK=0
         ;;
       go)
@@ -2305,6 +2323,8 @@ pick_models_ui() {
   local text="$2"
   local source="$3"
   local cache="${4:-}"
+  local mode="${5:-}"
+  local selected="${6:-}"
   local vram rows id state label
   local args=()
   if ! need_cmd python3 || [[ ! -f "$FETCH_MODELS" ]]; then
@@ -2315,6 +2335,8 @@ pick_models_ui() {
   if [[ -n "$cache" && -d "$cache" ]]; then
     py+=(--cache "$cache")
   fi
+  [[ "$mode" == extras ]] && py+=(--extras-only)
+  [[ -n "$selected" ]] && py+=(--selected-ids "$selected")
   rows="$("${py[@]}" 2>/dev/null || true)"
   [[ -n "$rows" ]] || return 2
   while IFS=$'\t' read -r id state label; do
@@ -2323,6 +2345,64 @@ pick_models_ui() {
   done <<< "$rows"
   ((${#args[@]} >= 3)) || return 2
   ui_checklist "$title" "$text" "${args[@]}"
+}
+
+model_disk_gib() {
+  local ids="${1:-core}"
+  if need_cmd python3 && [[ -f "$FETCH_MODELS" ]]; then
+    python3 -u "$FETCH_MODELS" --catalog "$CATALOG" --ids "$ids" --disk-gib 2>/dev/null || true
+  fi
+}
+
+simple_model_baseline() {
+  local vram="${1:-0}" baseline=""
+  if need_cmd python3 && [[ -f "$FETCH_MODELS" ]]; then
+    baseline="$(python3 -u "$FETCH_MODELS" --catalog "$CATALOG" --baseline --vram-mib "$vram" 2>/dev/null || true)"
+  fi
+  printf '%s' "${baseline:-core}"
+}
+
+simple_edit_models() {
+  local vram gpu_label baseline picked candidate weight_gib rc
+  vram="$(gpu_vram_mib)"
+  gpu_label="$(gpu_prompt_label "$vram")"
+  baseline="$(simple_model_baseline "$vram")"
+  while true; do
+    rc=0
+    picked=$(pick_models_ui "Additional Hugging Face models" \
+"The coding, embedding, and image baseline is selected automatically:
+  ${baseline}
+
+Optional models that fit ${gpu_label} are below.
+Each row shows its estimated download size.
+
+Space toggles a row. Enter confirms." \
+      hf "" extras "${MODEL_SET:-$baseline}") || rc=$?
+    case "$rc" in
+      1) return 0 ;;
+      2)
+        MODEL_SET="$baseline"
+        return 0
+        ;;
+    esac
+    candidate="$baseline"
+    [[ -n "$picked" ]] && candidate="${candidate},${picked}"
+    weight_gib="$(model_disk_gib "$candidate")"
+    [[ "$weight_gib" =~ ^[0-9]+$ ]] || weight_gib="unknown"
+    rc=0
+    ui_yesno "Confirm model downloads" \
+"Selected: ${candidate}
+
+Model weights: about ${weight_gib} GiB
+Python, CUDA, and environments: about 15 GiB extra
+
+Yes = use this selection.
+No = return to the model checklist." 1 || rc=$?
+    case "$rc" in
+      0) MODEL_SET="$candidate"; break ;;
+      2) return 0 ;;
+    esac
+  done
 }
 
 hub_desc() {
@@ -2468,9 +2548,9 @@ If VRAM could not be read, every catalog model is listed." \
         picked=$(ui_menu "Model set" \
 "Could not list individual models. Pick a preset.
 
-core  — qwen 9B, Flux, Qwen-Image, CPU embedder
+core  — qwen 9B, Qwen-Image, CPU embedder
 all   — every switch-to profile (needs more disk and VRAM)" \
-          core "qwen 9B + Flux + Qwen-Image + embedder" \
+          core "qwen 9B + Qwen-Image + embedder" \
           all "every switch-to profile") || return 0
         MODEL_SET="${picked:-core}"
         ;;

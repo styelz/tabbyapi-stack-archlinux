@@ -1,18 +1,25 @@
+import contextlib
+import io
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ARCH = Path(__file__).resolve().parents[1] / "deploy" / "arch"
 sys.path.insert(0, str(ARCH))
 
 from fetch_models import (  # noqa: E402
+    baseline_pick_ids,
     copy_from_cache,
     dest_path,
     disk_gib_for_ids,
     expand_pick_ids,
     extra_item_id,
     find_cache,
+    format_pick_label,
+    installer_tqdm_class,
     is_ready,
     list_pick_rows,
     load_catalog,
@@ -234,14 +241,57 @@ class FetchModelsTests(unittest.TestCase):
         self.assertNotIn("qwen35", ids_8g)
         self.assertNotIn("qwen-image", ids_8g)
         on_ids = {row["id"] for row in rows_8g if row["on"]}
-        self.assertEqual(on_ids, {"qwen", "embed", "flux"})
+        self.assertEqual(on_ids, {"qwen", "embed"})
 
         rows_12g = list_pick_rows(catalog, vram_mib=12288, source="hf")
         ids_12g = {row["id"] for row in rows_12g}
         self.assertIn("qwen35", ids_12g)
         self.assertIn("qwen-image", ids_12g)
         on_12g = {row["id"] for row in rows_12g if row["on"]}
-        self.assertEqual(on_12g, {"qwen", "embed", "flux", "qwen-image"})
+        self.assertEqual(on_12g, {"qwen", "embed", "qwen-image"})
+
+    def test_simple_baseline_falls_back_to_flux_on_8g(self):
+        catalog = load_catalog(CATALOG)
+        self.assertEqual(baseline_pick_ids(catalog, 8192), ["qwen", "embed", "flux"])
+        self.assertEqual(baseline_pick_ids(catalog, 12288), ["qwen", "embed", "qwen-image"])
+        self.assertEqual(baseline_pick_ids(catalog, 0), ["qwen", "embed", "qwen-image"])
+
+        extras = list_pick_rows(catalog, vram_mib=12288, source="hf", extras_only=True)
+        self.assertNotIn("qwen", {row["id"] for row in extras})
+        self.assertNotIn("qwen-image", {row["id"] for row in extras})
+        self.assertIn("flux", {row["id"] for row in extras})
+        self.assertIn("~17 GiB", format_pick_label(next(row for row in extras if row["id"] == "flux")))
+
+    def test_installer_progress_uses_newline_status(self):
+        class FakeTqdm:
+            def __init__(self, *args, **kwargs):
+                self.total = kwargs.get("total")
+                self.n = 0
+                self.initial = kwargs.get("initial", 0)
+                self.desc = kwargs.get("desc", "")
+
+            def display(self, msg=None, pos=None):
+                return None
+
+            def update(self, amount=1):
+                self.n += amount
+                self.display()
+
+        package = types.ModuleType("tqdm")
+        package.__path__ = []
+        auto = types.ModuleType("tqdm.auto")
+        auto.tqdm = FakeTqdm
+        package.auto = auto
+        output = io.StringIO()
+        with mock.patch.dict(sys.modules, {"tqdm": package, "tqdm.auto": auto}):
+            with contextlib.redirect_stdout(output):
+                bar = installer_tqdm_class("model.safetensors")(total=100)
+                bar._tabby_last = 0
+                bar.update(100)
+        line = output.getvalue()
+        self.assertIn("model.safetensors", line)
+        self.assertIn("100%", line)
+        self.assertIn("/s", line)
 
     def test_list_picks_cache_found_and_extra(self):
         catalog = load_catalog(CATALOG)
@@ -261,7 +311,7 @@ class FetchModelsTests(unittest.TestCase):
 
     def test_write_selected_catalog_and_disk(self):
         catalog = load_catalog(CATALOG)
-        self.assertGreater(disk_gib_for_ids(catalog, "core"), 30)
+        self.assertEqual(disk_gib_for_ids(catalog, "core"), 29)
         self.assertGreater(disk_gib_for_ids(catalog, "all"), disk_gib_for_ids(catalog, "core"))
         with tempfile.TemporaryDirectory() as raw:
             path = Path(raw) / "models.json"

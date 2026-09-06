@@ -29,7 +29,7 @@ Clone into `$HOME/tabbyapi-stack` so that folder is the git checkout.
 
 **Simple** (default): disk, hostname, username, weights source, this PC vs LAN. No Omarchy, no disk encryption unless you pass `--encrypt`.
 
-**Advanced**: locale, encryption, Omarchy, extra models, bind address, public URL, SSH tunnel. Flags: `--simple` / `--advanced`, or `INSTALL_MODE=simple|advanced`.
+**Simple** includes minimal coding/image models and a GPU-filtered optional-model checklist with disk estimates. **Advanced** adds locale, encryption, Omarchy, full model control, bind address, public URL, and SSH tunnel. Flags: `--simple` / `--advanced`, or `INSTALL_MODE=simple|advanced`.
 
 Non-interactive:
 

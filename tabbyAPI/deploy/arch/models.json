@@ -1,6 +1,6 @@
 {
   "sets": {
-    "core": ["qwen", "embed", "flux", "qwen-image-unet", "qwen-image-clip", "qwen-image-vae", "qwen-image-lora"],
+    "core": ["qwen", "embed", "qwen-image-unet", "qwen-image-clip", "qwen-image-vae", "qwen-image-lora"],
     "all": ["qwen", "qwen35", "qwen36", "gemma", "gemma26", "glm", "embed", "flux", "qwen-image-unet", "qwen-image-clip", "qwen-image-vae", "qwen-image-lora"]
   },
   "picks": [
