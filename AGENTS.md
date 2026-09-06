@@ -1,4 +1,4 @@
-# Agent / IDE notes (tabby-stack)
+# Agent / IDE notes (tabbyapi-stack)
 
 Use **gpt-4o** as the model name in your editor, and leave it. That is not ChatGPT — it is only a name. Many editors sandbox or block tools unless they see a known OpenAI name. The GPU still runs the local model you switched to.
 
@@ -18,7 +18,7 @@ Treat the API like OpenAI: chat and HTTP. Some editors only accept `https://`; t
 - Browser UI: `/v1/ui` on that same origin. Sign in with the Linux account that runs the stack (admin), or a Tabby-only account that admin created.
   - **Chat** — same Chat Completions pipeline as an editor, without file tools (searchable history, follow-up queue)
   - **Code** — a self-contained IDE on this host. The browser calls Chat Completions, then runs Grep/Glob/Read/Write/Shell against a jailed workspace (Monaco, preview, container terminal, zip). Nested chats under a workspace share the same files. **Agent** can write; **Ask** and **Plan** are read-only (Grep, Glob, Read, List)
-  - **Status** — profile, GPU mode, occupancy, health, graphs, restart, and updates. **Update git** pulls `origin/main` into `$HOME/tabby-stack` (that folder is the running checkout of `main`, not a second source tree). **Update all** also refreshes Python deps and restarts. Do not commit or push on the live install; its git hooks refuse those.
+  - **Status** — profile, GPU mode, occupancy, health, graphs, restart, and updates. **Update git** pulls `origin/main` into `$HOME/tabbyapi-stack` (that folder is the running checkout of `main`, not a second source tree). **Update all** also refreshes Python deps and restarts. Do not commit or push on the live install; its git hooks refuse those.
   - **Gallery** — generated images (the administrator can see every account)
   - **Logs** — live TabbyAPI and ComfyUI output
   - **Users** — administrator-only account creation. Extra users get Chat, Code, Status, Gallery, and Logs; they cannot create accounts

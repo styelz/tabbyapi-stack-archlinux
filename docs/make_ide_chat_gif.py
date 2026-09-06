@@ -113,7 +113,7 @@ def new_window(slide: int, total: int, caption: str) -> tuple[Image.Image, Image
     d.line((0, TITLE_H, W, TITLE_H), fill=SEP, width=1)
     d.rounded_rectangle((17, 10, 39, 34), radius=7, fill=(20, 29, 44), outline=SEP)
     d.polygon(((23, 15), (34, 15), (30, 21), (35, 21), (26, 30), (28, 23), (22, 23)), fill=ACCENT)
-    d.text((48, 12), "Tabby Stack", font=font(15, bold=True), fill=TEXT)
+    d.text((48, 12), "TabbyAPI Stack", font=font(15, bold=True), fill=TEXT)
     chip = "gpt-4o"
     chip_w = int(d.textlength(chip, font=font(12))) + 18
     d.rounded_rectangle((W - MARGIN - chip_w, 10, W - MARGIN, 34), radius=9, fill=(42, 42, 46), outline=SEP)
@@ -122,7 +122,7 @@ def new_window(slide: int, total: int, caption: str) -> tuple[Image.Image, Image
     d.rectangle((0, H - INPUT_H, W, H), fill=COMPOSER)
     d.line((0, H - INPUT_H, W, H - INPUT_H), fill=SEP, width=1)
     d.rounded_rectangle((MARGIN, H - 44, W - MARGIN, H - 12), radius=12, fill=(7, 10, 16), outline=SEP, width=1)
-    d.text((MARGIN + 14, H - 36), "Ask Tabby Stack…", font=font(13), fill=DIM)
+    d.text((MARGIN + 14, H - 36), "Ask TabbyAPI Stack…", font=font(13), fill=DIM)
 
     cy = H - INPUT_H - 12
     gap = 12

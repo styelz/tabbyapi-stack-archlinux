@@ -362,7 +362,7 @@ def make_ide_preview() -> Image.Image:
     draw.ellipse((18, 17, 30, 29), fill=BAD)
     draw.ellipse((38, 17, 50, 29), fill=WARN)
     draw.ellipse((58, 17, 70, 29), fill=OK)
-    draw.text((94, 15), "tabby-stack  —  Cursor", fill=MUTED, font=font(13))
+    draw.text((94, 15), "tabbyapi-stack  —  Cursor", fill=MUTED, font=font(13))
 
     # Explorer.
     draw.rectangle((0, 48, 228, ph), fill=(10, 14, 21))

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Configure tabby-stack from the shell: tsctl <section> key=value."""
+"""Configure tabbyapi-stack from the shell: tsctl <section> key=value."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from ui.settings import (  # noqa: E402
 GPU_PROFILE_NAMES = ("auto", "quiet", "balanced", "performance", "custom")
 
 USAGE = """\
-tsctl — tabby-stack settings
+tsctl — tabbyapi-stack settings
 
   tsctl                         interactive menu (dialog) or shell
   tsctl list                    sections
@@ -238,7 +238,7 @@ def parse_pairs(tokens: list[str]) -> list[tuple[str, str]]:
 
 def run_dialog(args: list[str]) -> tuple[int, str]:
     result = subprocess.run(
-        ["dialog", "--backtitle", "tabby-stack", *args],
+        ["dialog", "--backtitle", "tabbyapi-stack", *args],
         stderr=subprocess.PIPE,
         text=True,
     )

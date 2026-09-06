@@ -168,6 +168,23 @@ class UserBackupTests(unittest.TestCase):
         self.assertTrue((self.folder / "generated-bob.png").is_file())
         self.assertEqual(gallery_owners.owner_of("generated-bob.png"), "bob")
 
+    def test_restore_accepts_legacy_format_name(self):
+        dest = self.folder / "legacy.zip"
+        backup.build_archive("alice", dest)
+        with zipfile.ZipFile(dest, "r") as zf:
+            payload = {name: zf.read(name) for name in zf.namelist()}
+        manifest = json.loads(payload["manifest.json"])
+        manifest["format"] = backup.FORMAT_LEGACY
+        payload["manifest.json"] = (json.dumps(manifest) + "\n").encode()
+        with zipfile.ZipFile(dest, "w") as zf:
+            for name, data in payload.items():
+                zf.writestr(name, data)
+        chats.save_store("alice", {"version": 1, "activeId": "gone", "chats": []})
+        result = backup.restore_archive("alice", dest)
+        self.assertTrue(result["ok"])
+        store = chats.load_store("alice")
+        self.assertEqual(store["chats"][0]["title"], "Alice app")
+
     def test_restore_imports_into_current_user(self):
         dest = self.folder / "alice.zip"
         backup.build_archive("alice", dest)

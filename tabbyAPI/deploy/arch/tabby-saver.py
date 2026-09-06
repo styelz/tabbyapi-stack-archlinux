@@ -2356,7 +2356,7 @@ def _init_display(windowed: bool):
         if windowed:
             raise
         screen = pygame.display.set_mode((1920, 1080), flags)
-    pygame.display.set_caption("tabby-stack")
+    pygame.display.set_caption("tabbyapi-stack")
     return pygame, screen
 
 

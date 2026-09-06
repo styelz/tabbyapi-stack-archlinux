@@ -17,7 +17,7 @@ from typing import Any, Optional
 
 from ui.workspace import safe_name, user_dir, workspace_root
 
-IMAGE = "tabby-stack-code:local"
+IMAGE = "tabbyapi-stack-code:local"
 LABEL = "tabby.stack=code"
 DOCKER_SOCK = "/var/run/docker.sock"
 WORK_DIR = "/work"

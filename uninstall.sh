@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Remove a tabby-stack install.
+# Remove a tabbyapi-stack install.
 #
 # Services and processes come down first, files second. Deleting the tree while
 # the user unit is still enabled leaves a running process holding the API port
@@ -19,19 +19,21 @@ DISABLE_LINGER=0
 
 UNITS=(tabbyapi comfyui tabby-install-resume)
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
-RESUME_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/tabby-stack"
-AUTOSTART="$HOME/.config/autostart/tabby-stack-install-resume.desktop"
+RESUME_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/tabbyapi-stack"
+OLD_RESUME_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/tabby-stack"
+AUTOSTART="$HOME/.config/autostart/tabbyapi-stack-install-resume.desktop"
+OLD_AUTOSTART="$HOME/.config/autostart/tabby-stack-install-resume.desktop"
 
 usage() {
   cat <<EOF
 Usage: $(basename "$0") [options]
 
-Stops the tabby-stack user services, kills anything still running from the
+Stops the tabbyapi-stack user services, kills anything still running from the
 install, and removes the install tree.
 
 Options
   --dest PATH        Install root to remove. Default: found from the systemd
-                     unit, then tabby.env, then \$HOME/tabby-stack.
+                     unit, then tabby.env, then \$HOME/tabbyapi-stack.
   --keep-models      Keep model weights and generated images (default).
   --purge            Remove the whole install root, weights included.
   --dry-run          Print what would happen; change nothing.
@@ -145,8 +147,16 @@ discover_dest() {
       return 0
     fi
   fi
+  if root="$(env_install_root "$HOME/tabbyapi-stack")"; then
+    printf '%s' "$root"
+    return 0
+  fi
   if root="$(env_install_root "$HOME/tabby-stack")"; then
     printf '%s' "$root"
+    return 0
+  fi
+  if [[ -d "$HOME/tabbyapi-stack" ]]; then
+    printf '%s' "$HOME/tabbyapi-stack"
     return 0
   fi
   if [[ -d "$HOME/tabby-stack" ]]; then
@@ -189,7 +199,7 @@ describe_pid() {
 }
 
 DEST="$(discover_dest || true)"
-[[ -n "$DEST" ]] || die "No tabby-stack install found. Pass --dest /path/to/tabby-stack."
+[[ -n "$DEST" ]] || die "No tabbyapi-stack install found. Pass --dest /path/to/tabbyapi-stack."
 DEST="${DEST%/}"
 
 dest_is_sane "$DEST" || die "Refusing to act on $DEST. Pass an explicit --dest inside your home or data disk."
@@ -252,7 +262,7 @@ prune_dir() {
   done < <(find "$dir" -mindepth 1 -maxdepth 1 -print0 2>/dev/null)
 }
 
-echo "tabby-stack uninstall"
+echo "tabbyapi-stack uninstall"
 echo "  install root:  $DEST"
 if [[ -e "$DEST" ]]; then
   echo "  tree on disk:  yes ($(du -sh "$DEST" 2>/dev/null | cut -f1 || echo '?'))"
@@ -325,7 +335,7 @@ for port in "$TABBY_PORT" "$COMFY_PORT"; do
 done
 if ((${#FOREIGN[@]})); then
   echo
-  echo "Other processes on the tabby-stack ports (left alone):"
+  echo "Other processes on the tabbyapi-stack ports (left alone):"
   for entry in "${FOREIGN[@]}"; do
     printf '  port %-6s pid %-8s %s\n' "${entry%%:*}" "${entry##*:}" "$(describe_pid "${entry##*:}")"
   done
@@ -401,7 +411,9 @@ for u in "${UNITS[@]}"; do
   remove_path "$UNIT_DIR/default.target.wants/$u.service"
 done
 remove_path "$RESUME_DIR"
+remove_path "$OLD_RESUME_DIR"
 remove_path "$AUTOSTART"
+remove_path "$OLD_AUTOSTART"
 if need_cmd systemctl; then
   run systemctl --user daemon-reload
   run systemctl --user reset-failed

@@ -7,7 +7,7 @@ the Shell wait/curl loop while Comfy renders, then lets the 9B write the site.
 Each run lands in $HOME/tabby-mixed-runs/<stamp>-cosmos/ with transcript and
 report. Pytest skips req_*.py; run manually:
 
-    cd $HOME/tabby-stack/tabbyAPI
+    cd $HOME/tabbyapi-stack/tabbyAPI
     PYTHONPATH=. python tests/req_mixed_prompt.py
 """
 
@@ -457,7 +457,7 @@ def load_api_key() -> str:
   env_key = os.environ.get("TABBY_API_KEY", "")
   if env_key:
     return env_key
-  default = Path.home() / "tabby-stack" / "tabbyAPI" / "api_tokens.yml"
+  default = Path.home() / "tabbyapi-stack" / "tabbyAPI" / "api_tokens.yml"
   if default.is_file():
     key, _ = load_api_keys(path=str(default))
     if key:

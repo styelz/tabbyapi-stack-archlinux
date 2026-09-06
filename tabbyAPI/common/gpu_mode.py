@@ -29,7 +29,7 @@ def comfy_paths(
     elif os.environ.get("COMFYUI_DIR"):
         root = Path(os.environ["COMFYUI_DIR"])
     elif is_win:
-        root = Path(r"D:\tabby-stack\ComfyUI")
+        root = Path(r"D:\tabbyapi-stack\ComfyUI")
     else:
         root = ROOT.parent / "ComfyUI"
     if is_win:

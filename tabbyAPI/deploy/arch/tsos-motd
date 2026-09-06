@@ -9,7 +9,7 @@ if [[ -f "$CONF" ]]; then
 fi
 
 TARGET_USER="${TARGET_USER:-$USER}"
-TABBY_INSTALL_ROOT="${TABBY_INSTALL_ROOT:-$HOME/tabby-stack}"
+TABBY_INSTALL_ROOT="${TABBY_INSTALL_ROOT:-$HOME/tabbyapi-stack}"
 TABBY_NETWORK_HOST="${TABBY_NETWORK_HOST:-127.0.0.1}"
 TABBY_NETWORK_PORT="${TABBY_NETWORK_PORT:-5000}"
 ENCRYPT="${ENCRYPT:-1}"
@@ -21,9 +21,9 @@ ENV_FILE="${TABBY_INSTALL_ROOT}/tabbyAPI/deploy/arch/tabby.env"
 CONFIG_FILE="${TABBY_INSTALL_ROOT}/tabbyAPI/config.yml"
 TOKENS_FILE="${TABBY_INSTALL_ROOT}/tabbyAPI/api_tokens.yml"
 
-STATUS_FILE="/home/${TARGET_USER}/.config/tabby-stack/tsos-firstboot.status"
+STATUS_FILE="/home/${TARGET_USER}/.config/tabbyapi-stack/tsos-firstboot.status"
 DONE_FILE=/var/lib/tsos/tabby-firstboot.done
-RESUME_FILE="/home/${TARGET_USER}/.config/tabby-stack/install-resume.env"
+RESUME_FILE="/home/${TARGET_USER}/.config/tabbyapi-stack/install-resume.env"
 LOG_FILE="${TABBY_INSTALL_ROOT}/tabby-install.log"
 FIRSTBOOT_LOG=/var/log/tsos-firstboot.log
 
@@ -198,7 +198,7 @@ fi
 
 printf '\n'
 rule
-printf '  %stabby-stack OS%s\n' "$C_HDR" "$C0"
+printf '  %stabbyapi-stack OS%s\n' "$C_HDR" "$C0"
 rule
 printf '\n'
 
@@ -242,7 +242,7 @@ if [[ "$ENCRYPT" == "1" || "$ENCRYPT" == "yes" ]]; then
 fi
 
 if [[ ! -f "$DONE_FILE" ]]; then
-  printf '  %stabby-stack did not finish on the live ISO. Re-run tsos-installer.sh%s\n' "$C_YELLOW" "$C0"
+  printf '  %stabbyapi-stack did not finish on the live ISO. Re-run tsos-installer.sh%s\n' "$C_YELLOW" "$C0"
   printf '  %sfrom the Arch ISO — install.sh is not run after reboot.%s\n' "$C_YELLOW" "$C0"
   printf '  Log:    %s\n\n' "${LOG_FILE}"
 fi

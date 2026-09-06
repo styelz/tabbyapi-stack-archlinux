@@ -130,7 +130,7 @@ class ConsoleFlight:
         for comment in comments:
             if "tabby-image-status:" in comment:
                 self.status_label = comment.split("tabby-image-status:", 1)[-1].strip()
-            elif "tabby-stack-queue:" in comment:
+            elif "tabbyapi-stack-queue:" in comment:
                 self.status_label = "Queued"
             elif "tabby-agent-step:" in comment:
                 raw = comment.split("tabby-agent-step:", 1)[-1].strip()

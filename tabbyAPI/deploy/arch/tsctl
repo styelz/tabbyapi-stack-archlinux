@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Locate the tabby-stack checkout and run tools/tsctl.py with its venv.
+# Locate the tabbyapi-stack checkout and run tools/tsctl.py with its venv.
 set -euo pipefail
 
 resolve_root() {
@@ -9,7 +9,9 @@ resolve_root() {
     return 0
   fi
   for candidate in \
+      "${HOME}/tabbyapi-stack" \
       "${HOME}/tabby-stack" \
+      /opt/tabbyapi-stack \
       /opt/tabby-stack \
       "$(cd "$(dirname "$0")/../../.." 2>/dev/null && pwd)"; do
     [[ -d "$candidate/tabbyAPI" ]] || continue
@@ -17,7 +19,9 @@ resolve_root() {
     return 0
   done
   for envf in \
+      "${HOME}/tabbyapi-stack/tabbyAPI/deploy/arch/tabby.env" \
       "${HOME}/tabby-stack/tabbyAPI/deploy/arch/tabby.env" \
+      /opt/tabbyapi-stack/tabbyAPI/deploy/arch/tabby.env \
       /opt/tabby-stack/tabbyAPI/deploy/arch/tabby.env; do
     [[ -f "$envf" ]] || continue
     # shellcheck disable=SC1090
@@ -36,7 +40,7 @@ resolve_root() {
 
 ROOT="$(resolve_root || true)"
 if [[ -z "$ROOT" ]]; then
-  echo "tsctl: could not find tabby-stack (set TABBY_INSTALL_ROOT)" >&2
+  echo "tsctl: could not find tabbyapi-stack (set TABBY_INSTALL_ROOT)" >&2
   exit 1
 fi
 TABBY="$ROOT/tabbyAPI"

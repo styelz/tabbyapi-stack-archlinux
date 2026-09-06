@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tsos-installer.sh
 #
-# Install Arch Linux from the official live ISO, then install tabby-stack in
+# Install Arch Linux from the official live ISO, then install tabbyapi-stack in
 # the chroot (venvs, weights) so first boot only starts the API (linger).
 #
 # Run as root from the Arch Linux live ISO. The target disk is wiped
@@ -9,8 +9,8 @@
 #
 # Usage:
 #   ./tsos-installer.sh
-#   curl -fsSL https://raw.githubusercontent.com/styelz/tabby-stack-archlinux/main/tsos-installer.sh | bash
-#   curl -fsSL https://raw.githubusercontent.com/styelz/tabby-stack-archlinux/main/tsos-installer.sh | bash -s -- --no-encrypt
+#   curl -fsSL https://raw.githubusercontent.com/styelz/tabbyapi-stack-archlinux/main/tsos-installer.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/styelz/tabbyapi-stack-archlinux/main/tsos-installer.sh | bash -s -- --no-encrypt
 #
 # curl | bash is supported: questions are read from /dev/tty, not from the
 # download pipe. You must run it from a real console (or ssh -t). Use bash,
@@ -37,7 +37,7 @@ ENCRYPT="${ENCRYPT:-1}"
 OMARCHY_MODE="${OMARCHY_MODE:-skip}" # now | skip
 OMARCHY_USER_NAME="${OMARCHY_USER_NAME:-}"
 OMARCHY_USER_EMAIL="${OMARCHY_USER_EMAIL:-}"
-TABBY_REPO="${TABBY_REPO:-https://github.com/styelz/tabby-stack-archlinux.git}"
+TABBY_REPO="${TABBY_REPO:-https://github.com/styelz/tabbyapi-stack-archlinux.git}"
 TABBY_LOCAL_SRC="${TABBY_LOCAL_SRC:-}"
 TABBY_MODELS="${TABBY_MODELS:-core}"
 TABBY_NETWORK_HOST="${TABBY_NETWORK_HOST:-127.0.0.1}"
@@ -66,7 +66,7 @@ CACHE_FROM_CLI=""
 DEFAULT_DISK=/dev/sda
 TUI=""
 USE_TUI=0
-BACKTITLE="tsos ${SCRIPT_VERSION}  ·  tabby-stack"
+BACKTITLE="tsos ${SCRIPT_VERSION}  ·  tabbyapi-stack"
 
 TARGET="/mnt"
 CRYPT_NAME="$MAPPER_NAME"
@@ -81,8 +81,8 @@ if [[ -z "$TSOS_OFFLINE_ROOT" && -f /opt/tsos/pacman/tsos.db ]]; then
   TSOS_OFFLINE_ROOT=/opt/tsos
 fi
 if [[ -n "$TSOS_OFFLINE_ROOT" && -z "$TABBY_LOCAL_SRC" &&
-      -f "$TSOS_OFFLINE_ROOT/tabby-stack/install.sh" ]]; then
-  TABBY_LOCAL_SRC="$TSOS_OFFLINE_ROOT/tabby-stack"
+      -f "$TSOS_OFFLINE_ROOT/tabbyapi-stack/install.sh" ]]; then
+  TABBY_LOCAL_SRC="$TSOS_OFFLINE_ROOT/tabbyapi-stack"
 fi
 
 usage() {
@@ -90,13 +90,13 @@ usage() {
 ${SCRIPT_NAME} v${SCRIPT_VERSION}
 
 Install Arch Linux (btrfs + Limine, optional LUKS) from the live ISO, then
-install tabby-stack in the chroot before reboot. Omarchy is optional (now
+install tabbyapi-stack in the chroot before reboot. Omarchy is optional (now
 or skip). Omarchy now requires LUKS.
 
 USAGE
   ${SCRIPT_NAME} [options]
-  curl -fsSL https://raw.githubusercontent.com/styelz/tabby-stack-archlinux/main/tsos-installer.sh | bash
-  curl -fsSL https://raw.githubusercontent.com/styelz/tabby-stack-archlinux/main/tsos-installer.sh | bash -s -- [options]
+  curl -fsSL https://raw.githubusercontent.com/styelz/tabbyapi-stack-archlinux/main/tsos-installer.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/styelz/tabbyapi-stack-archlinux/main/tsos-installer.sh | bash -s -- [options]
 
 With no --config file, the script starts with Simple setup. A review menu
 lists disk, hostname, user, weights, and who can connect — open a row to
@@ -111,7 +111,7 @@ OPTIONS
   --config FILE            Use FILE instead of the interactive settings prompts
   --disk PATH              Disk to wipe (default: first installable disk)
   --hostname NAME          Installed system hostname (default: tsos)
-  --user NAME              Regular wheel user that runs tabby-stack (default: tabby)
+  --user NAME              Regular wheel user that runs tabbyapi-stack (default: tabby)
   --timezone ZONE          Timezone (default: UTC)
   --locale NAME            Locale, without the leading # (default: en_US.UTF-8)
   --keymap NAME            Console keymap (default: us)
@@ -136,8 +136,8 @@ OPTIONS
   --tabby-port N           TabbyAPI listen port (asked in this UI unless --config)
   --tabby-cache PATH       Optional weights cache. Asked here (before wipe)
                            so a USB under /mnt can be bind-mounted aside.
-  --tabby-repo URL         Git remote to clone (default: tabby-stack-archlinux)
-  --tabby-local-src PATH   Overlay this tabby-stack tree after clone (install.sh, etc.)
+  --tabby-repo URL         Git remote to clone (default: tabbyapi-stack-archlinux)
+  --tabby-local-src PATH   Overlay this tabbyapi-stack tree after clone (install.sh, etc.)
   --resume-tabby           Do not wipe. Finish install.sh in an already-mounted
                            system at /mnt (after a chroot install.sh failure)
   --confirm-wipe PATH      Non-interactive wipe confirmation; must equal --disk
@@ -163,12 +163,12 @@ unless you set the split password variables.
 
 The live ISO's HOSTNAME (usually archiso) is ignored on purpose.
 
-tabby-stack install.sh runs in the chroot on the live ISO (Python, venvs,
+tabbyapi-stack install.sh runs in the chroot on the live ISO (Python, venvs,
 weights) and must finish before reboot. Simple setup opens a review menu
 (disk, hostname, user, weights, this PC vs LAN). Advanced adds locale,
 encryption, Omarchy, models, and tunnels. After you confirm the wipe, the install screen stays up with
 the step list, a progress bar, and the live log while Arch
-and tabby-stack install.
+and tabbyapi-stack install.
 install.sh is non-interactive from here so it does not open a second
 dialog. The NVIDIA driver loads on the first real boot; linger then
 starts the API.
@@ -520,7 +520,7 @@ gauge_steps() {
     '15|Format|Formatting' \
     '22|Arch|Arch packages' \
     '38|Setup|Configuring' \
-    '45|App|tabby-stack'
+    '45|App|tabbyapi-stack'
   if [[ "${OMARCHY_MODE:-skip}" == now ]]; then
     printf '%s\n' '96|Desk|Omarchy'
   fi
@@ -885,7 +885,7 @@ watch_installer_ui() {
   local stop="$1"
   local pct heading last="" step_t=$SECONDS ticks=0 nested spin='|/-\' ch
   local info1 info2
-  info1="Installing Arch Linux and tabby-stack on ${DISK:-the disk} as ${TARGET_HOSTNAME:-tsos}."
+  info1="Installing Arch Linux and tabbyapi-stack on ${DISK:-the disk} as ${TARGET_HOSTNAME:-tsos}."
   info2="Full log: ${TSOS_LOG}   Ctrl+C cancels."
   while [[ ! -f "$stop" ]]; do
     # A work process that vanished without its EXIT trap (SIGKILL) leaves
@@ -1722,22 +1722,22 @@ prompt_weights_source() {
 "Where should the installer get model weights?
 
 Hugging Face — download models that fit this NVIDIA GPU.
-A local path — search that folder (USB copy, old tabby-stack,
+A local path — search that folder (USB copy, old tabbyapi-stack,
 or model dirs). Name it now; the new root mounts at /mnt next.
 
 Mount the USB first if you want that option (not under /mnt)." \
         hf "Hugging Face (models that fit this GPU)" \
-        usb "Use /run/media/usb/tabby-stack" \
+        usb "Use /run/media/usb/tabbyapi-stack" \
         custom "Type another path") || return 1
       case "$cache_choice" in
         hf|none) TABBY_CACHE="" ;;
-        usb) TABBY_CACHE="/run/media/usb/tabby-stack" ;;
+        usb) TABBY_CACHE="/run/media/usb/tabbyapi-stack" ;;
         custom)
           TABBY_CACHE=$(ui_input "Weights cache path" \
 "Folder to search for existing weights. Any of these work:
 
-  /run/media/usb/tabby-stack
-  /run/media/usb/tabby-stack/tabbyAPI/models
+  /run/media/usb/tabbyapi-stack
+  /run/media/usb/tabbyapi-stack/tabbyAPI/models
   /tmp/tabby-weights
 
 The installer lists what it finds next. Blank = Hugging Face." \
@@ -1747,11 +1747,11 @@ The installer lists what it finds next. Blank = Hugging Face." \
       esac
     else
       printf '%s\n' >/dev/tty \
-"Weights: hf = Hugging Face, usb = /run/media/usb/tabby-stack, or type a folder path."
+"Weights: hf = Hugging Face, usb = /run/media/usb/tabbyapi-stack, or type a folder path."
       cache_choice=$(ask "Weights source (hf / usb / path)" "${TABBY_CACHE:-hf}")
       case "$cache_choice" in
         hf|HF|"") TABBY_CACHE="" ;;
-        usb|USB) TABBY_CACHE="/run/media/usb/tabby-stack" ;;
+        usb|USB) TABBY_CACHE="/run/media/usb/tabbyapi-stack" ;;
         *) TABBY_CACHE="$cache_choice" ;;
       esac
     fi
@@ -1915,7 +1915,7 @@ Letters, digits, and hyphens. Example: tsos" \
 hub_edit_user() {
   local v
   v=$(ui_ask_until "Username" \
-"Regular wheel user that runs tabby-stack.
+"Regular wheel user that runs tabbyapi-stack.
 
 Lowercase, not root. Example: tabby" \
     "$TARGET_USER" valid_username) || return 0
@@ -2244,7 +2244,7 @@ bar, and the live log." \
 
 prompt_settings_simple_tui() {
   ui_msg "Simple setup" \
-"This installs Arch and tabby-stack on the disk you pick.
+"This installs Arch and tabbyapi-stack on the disk you pick.
 
 A review menu lists every setting. Open a row to change it,
 then Start install.
@@ -2338,7 +2338,7 @@ on TabbyAPI here at 127.0.0.1:${TABBY_NETWORK_PORT}."
 
 prompt_settings_tui() {
   ui_msg "What this installer does" \
-"Install Arch Linux from this live ISO, then tabby-stack (Python,
+"Install Arch Linux from this live ISO, then tabbyapi-stack (Python,
 venvs, model weights) before you reboot.
 
 The target disk is wiped. First boot starts the API (linger).
@@ -2578,7 +2578,7 @@ gpu_prompt_label() {
 }
 
 repo_raw_base() {
-  local url="${TABBY_REPO:-https://github.com/styelz/tabby-stack-archlinux.git}"
+  local url="${TABBY_REPO:-https://github.com/styelz/tabbyapi-stack-archlinux.git}"
   url="${url%.git}"
   url="${url%/}"
   case "$url" in
@@ -2586,7 +2586,7 @@ repo_raw_base() {
       printf 'https://raw.githubusercontent.com/%s/main' "${url#https://github.com/}"
       ;;
     *)
-      printf 'https://raw.githubusercontent.com/styelz/tabby-stack-archlinux/main'
+      printf 'https://raw.githubusercontent.com/styelz/tabbyapi-stack-archlinux/main'
       ;;
   esac
 }
@@ -2670,8 +2670,8 @@ self_test() {
   check "$(part_dev /dev/loop0 1)" /dev/loop0p1 "loop p1"
   local offline_test
   offline_test=$(mktemp -d)
-  mkdir -p "$offline_test"/{pacman,wheels,tabby-stack}
-  touch "$offline_test/pacman/tsos.db" "$offline_test/tabby-stack/install.sh"
+  mkdir -p "$offline_test"/{pacman,wheels,tabbyapi-stack}
+  touch "$offline_test/pacman/tsos.db" "$offline_test/tabbyapi-stack/install.sh"
   on=0
   offline_payload_available "$offline_test" || on=1
   check "$on" 0 "complete offline payload"
@@ -2782,7 +2782,7 @@ self_test() {
   check "$(gauge_step_index "Installing Arch packages" 22)" "3" "arch step index"
   check "$(gauge_step_index "Starting the install..." 0)" "0" "start step index"
   check "$(gauge_step_index "Cleaning up" 98)" "6" "done step index"
-  check "$(gauge_step_index "Installing tabby-stack" 45)" "5" "app step index"
+  check "$(gauge_step_index "Installing tabbyapi-stack" 45)" "5" "app step index"
   # Install page: geometry for the 24x80 ISO console, chips, one frame.
   page_layout 24 80
   check "$PAGE_H $PAGE_W $PAGE_LOG_N $PAGE_Y $PAGE_X" "19 74 7 2 2" "page layout 24x80"
@@ -2807,7 +2807,7 @@ self_test() {
   esac
   PAGE_UTF8=1
   page_frame "Installing Arch packages" 22 "5s" "1m 30s" '|' 1 \
-    "Installing Arch Linux and tabby-stack on /dev/sda as studio." \
+    "Installing Arch Linux and tabbyapi-stack on /dev/sda as studio." \
     "Full log: /tmp/tsos-installer.log   Ctrl+C cancels." $'hello\nworld'
   local moves
   moves=$(printf '%s' "$PAGE_BUF" | grep -o $'\033\\[[0-9]*;[0-9]*H' | wc -l)
@@ -3023,7 +3023,7 @@ validate_names() {
   fi
   if [[ -n "$TABBY_LOCAL_SRC" ]]; then
     [[ -f "$TABBY_LOCAL_SRC/install.sh" && -f "$TABBY_LOCAL_SRC/tabbyAPI/pyproject.toml" ]] || \
-      die "TABBY_LOCAL_SRC is not a tabby-stack tree: $TABBY_LOCAL_SRC"
+      die "TABBY_LOCAL_SRC is not a tabbyapi-stack tree: $TABBY_LOCAL_SRC"
   fi
 }
 
@@ -3189,7 +3189,7 @@ offline_payload_available() {
   local root="${1:-}"
   [[ -n "$root" &&
      -f "$root/pacman/tsos.db" &&
-     -f "$root/tabby-stack/install.sh" &&
+     -f "$root/tabbyapi-stack/install.sh" &&
      -d "$root/wheels" ]]
 }
 
@@ -3217,7 +3217,7 @@ early_preflight() {
   fi
   if [[ -n "$TSOS_OFFLINE_ROOT" ]]; then
     offline_payload_available "$TSOS_OFFLINE_ROOT" ||
-      die "offline payload is incomplete under $TSOS_OFFLINE_ROOT (need pacman repo, wheels, and tabby-stack)"
+      die "offline payload is incomplete under $TSOS_OFFLINE_ROOT (need pacman repo, wheels, and tabbyapi-stack)"
     log "Offline payload: $TSOS_OFFLINE_ROOT"
   fi
   if secure_boot_enabled; then
@@ -4061,7 +4061,7 @@ CHROOT
 }
 
 write_tabby_bootstrap() {
-  local stack_home="/home/${TARGET_USER}/tabby-stack"
+  local stack_home="/home/${TARGET_USER}/tabbyapi-stack"
   local conf_dir="$TARGET/etc/tsos"
   install -d -m 0755 "$conf_dir" "$TARGET/usr/local/bin" "$TARGET/etc/profile.d" \
     "$TARGET/var/lib/tsos" "$TARGET/etc/systemd/system"
@@ -4091,7 +4091,7 @@ write_tabby_bootstrap() {
 
   cat >"$TARGET/etc/motd" <<EOF
 
-tabby-stack OS — log in as ${TARGET_USER} for API URLs and install status.
+tabbyapi-stack OS — log in as ${TARGET_USER} for API URLs and install status.
 
 EOF
 
@@ -4109,7 +4109,7 @@ if [[ -f "$CONF" ]]; then
 fi
 
 TARGET_USER="${TARGET_USER:-$USER}"
-TABBY_INSTALL_ROOT="${TABBY_INSTALL_ROOT:-$HOME/tabby-stack}"
+TABBY_INSTALL_ROOT="${TABBY_INSTALL_ROOT:-$HOME/tabbyapi-stack}"
 TABBY_NETWORK_HOST="${TABBY_NETWORK_HOST:-127.0.0.1}"
 TABBY_NETWORK_PORT="${TABBY_NETWORK_PORT:-5000}"
 ENCRYPT="${ENCRYPT:-1}"
@@ -4121,9 +4121,9 @@ ENV_FILE="${TABBY_INSTALL_ROOT}/tabbyAPI/deploy/arch/tabby.env"
 CONFIG_FILE="${TABBY_INSTALL_ROOT}/tabbyAPI/config.yml"
 TOKENS_FILE="${TABBY_INSTALL_ROOT}/tabbyAPI/api_tokens.yml"
 
-STATUS_FILE="/home/${TARGET_USER}/.config/tabby-stack/tsos-firstboot.status"
+STATUS_FILE="/home/${TARGET_USER}/.config/tabbyapi-stack/tsos-firstboot.status"
 DONE_FILE=/var/lib/tsos/tabby-firstboot.done
-RESUME_FILE="/home/${TARGET_USER}/.config/tabby-stack/install-resume.env"
+RESUME_FILE="/home/${TARGET_USER}/.config/tabbyapi-stack/install-resume.env"
 LOG_FILE="${TABBY_INSTALL_ROOT}/tabby-install.log"
 FIRSTBOOT_LOG=/var/log/tsos-firstboot.log
 
@@ -4298,7 +4298,7 @@ fi
 
 printf '\n'
 rule
-printf '  %stabby-stack OS%s\n' "$C_HDR" "$C0"
+printf '  %stabbyapi-stack OS%s\n' "$C_HDR" "$C0"
 rule
 printf '\n'
 
@@ -4342,7 +4342,7 @@ if [[ "$ENCRYPT" == "1" || "$ENCRYPT" == "yes" ]]; then
 fi
 
 if [[ ! -f "$DONE_FILE" ]]; then
-  printf '  %stabby-stack did not finish on the live ISO. Re-run tsos-installer.sh%s\n' "$C_YELLOW" "$C0"
+  printf '  %stabbyapi-stack did not finish on the live ISO. Re-run tsos-installer.sh%s\n' "$C_YELLOW" "$C0"
   printf '  %sfrom the Arch ISO — install.sh is not run after reboot.%s\n' "$C_YELLOW" "$C0"
   printf '  Log:    %s\n\n' "${LOG_FILE}"
 fi
@@ -4353,19 +4353,19 @@ MOTD
   chmod 0755 "$TARGET/usr/local/bin/tsos-motd"
 
   cat >"$TARGET/etc/profile.d/tsos-motd.sh" <<'PROFILE'
-# tabby-stack login banner
+# tabbyapi-stack login banner
 if [[ -t 1 && $- == *i* ]] && command -v tsos-motd >/dev/null 2>&1; then
   tsos-motd
 fi
 PROFILE
   chmod 0644 "$TARGET/etc/profile.d/tsos-motd.sh"
 
-  log "Cloning tabby-stack for the chroot install"
+  log "Cloning tabbyapi-stack for the chroot install"
   if [[ -n "$TSOS_OFFLINE_ROOT" &&
-        -f "$TARGET$TSOS_OFFLINE_CHROOT/bundles/tabby-stack.bundle" ]]; then
+        -f "$TARGET$TSOS_OFFLINE_CHROOT/bundles/tabbyapi-stack.bundle" ]]; then
     if ! arch-chroot "$TARGET" /usr/bin/runuser -u "$TARGET_USER" -- \
-      git clone "$TSOS_OFFLINE_CHROOT/bundles/tabby-stack.bundle" "$stack_home"; then
-      die "local tabby-stack bundle could not be cloned"
+      git clone "$TSOS_OFFLINE_CHROOT/bundles/tabbyapi-stack.bundle" "$stack_home"; then
+      die "local tabbyapi-stack bundle could not be cloned"
     fi
     arch-chroot "$TARGET" /usr/bin/runuser -u "$TARGET_USER" -- \
       git -C "$stack_home" remote set-url origin "$TABBY_REPO"
@@ -4395,11 +4395,11 @@ overlay_local_tabby_sources() {
     src="$(cd "$(dirname "$script")" && pwd)"
   fi
   [[ -f "$src/install.sh" && -f "$src/tabbyAPI/pyproject.toml" ]] || {
-    [[ -n "$TABBY_LOCAL_SRC" ]] && die "TABBY_LOCAL_SRC is not a tabby-stack tree: $src"
+    [[ -n "$TABBY_LOCAL_SRC" ]] && die "TABBY_LOCAL_SRC is not a tabbyapi-stack tree: $src"
     return 0
   }
   [[ "$src" == "$dest" ]] && return 0
-  log "Overlaying local tabby-stack from $src"
+  log "Overlaying local tabbyapi-stack from $src"
   if command -v rsync >/dev/null 2>&1; then
     rsync -a \
       --exclude '.git/' \
@@ -4418,7 +4418,7 @@ overlay_local_tabby_sources() {
     cp -a "$src/tabbyAPI/." "$dest/tabbyAPI/"
     rm -rf "$dest/tabbyAPI/venv" "$dest/tabbyAPI/models"
   fi
-  chown_target_user_tree "/home/${TARGET_USER}/tabby-stack"
+  chown_target_user_tree "/home/${TARGET_USER}/tabbyapi-stack"
 }
 
 # Root writing into /home/USER leaves root-owned files. install.sh runs as
@@ -4444,11 +4444,11 @@ ensure_target_user_file() {
 
 # After a failed chroot install.sh, pull origin/main then overlay a local
 # tree so fixes that are not on the ISO copy get used.
-refresh_tabby_stack_in_target() {
-  local stack_home="/home/${TARGET_USER}/tabby-stack"
+refresh_tabbyapi_stack_in_target() {
+  local stack_home="/home/${TARGET_USER}/tabbyapi-stack"
   [[ -d "$TARGET$stack_home" ]] || die "missing $stack_home on the new system"
   if [[ -d "$TARGET$stack_home/.git" && -z "$TSOS_OFFLINE_ROOT" ]]; then
-    log "Updating tabby-stack in the chroot from origin"
+    log "Updating tabbyapi-stack in the chroot from origin"
     arch-chroot "$TARGET" /usr/bin/runuser -u "$TARGET_USER" -- \
       git -C "$stack_home" fetch --prune origin || \
       warn "git fetch failed; using the tree already on disk"
@@ -4459,7 +4459,7 @@ refresh_tabby_stack_in_target() {
         warn "git pull failed; using the tree already on disk"
     fi
   elif [[ -n "$TSOS_OFFLINE_ROOT" ]]; then
-    log "Using tabby-stack sources from the offline ISO"
+    log "Using tabbyapi-stack sources from the offline ISO"
   fi
   overlay_local_tabby_sources "$TARGET$stack_home"
   install_tsos_motd_from_tree
@@ -4467,7 +4467,7 @@ refresh_tabby_stack_in_target() {
 
 # Prefer the tree copy so update.sh / overlay can refresh the login banner.
 install_tsos_motd_from_tree() {
-  local src="$TARGET/home/${TARGET_USER}/tabby-stack/tabbyAPI/deploy/arch/tsos-motd"
+  local src="$TARGET/home/${TARGET_USER}/tabbyapi-stack/tabbyAPI/deploy/arch/tsos-motd"
   [[ -f "$src" ]] || return 0
   install -m 0755 "$src" "$TARGET/usr/local/bin/tsos-motd"
 }
@@ -4512,7 +4512,7 @@ bind_tabby_cache_into_target() {
 }
 
 run_tabby_install_chroot() {
-  local stack_home="/home/${TARGET_USER}/tabby-stack"
+  local stack_home="/home/${TARGET_USER}/tabbyapi-stack"
   [[ -f "$TARGET$stack_home/install.sh" ]] || die "missing $stack_home/install.sh on the new system"
 
   bind_offline_payload_into_target
@@ -4520,9 +4520,9 @@ run_tabby_install_chroot() {
   bind_tabby_cache_into_target
   write_nopasswd_sudoers "$TARGET"
 
-  log "Installing tabby-stack in the new system (Python, venvs, model files)"
+  log "Installing tabbyapi-stack in the new system (Python, venvs, model files)"
   log "This stays on the live ISO until it finishes. Full log: $stack_home/tabby-install.log"
-  gauge_update 45 "Installing tabby-stack"
+  gauge_update 45 "Installing tabbyapi-stack"
 
   local saver_default=1
   if [[ "${OMARCHY_MODE:-skip}" == "now" ]]; then
@@ -4609,14 +4609,14 @@ or:
   install -d -m 0755 "$TARGET/var/lib/tsos"
   touch "$TARGET/var/lib/tsos/tabby-firstboot.done"
   write_nopasswd_sudoers "$TARGET"
-  log "tabby-stack installed. After reboot, linger starts the API."
+  log "tabbyapi-stack installed. After reboot, linger starts the API."
 }
 
 # MOTD reads /etc/tsos/install.conf. After install.sh, tabby.env has the
 # listen address and model set the user actually chose.
 refresh_tsos_conf_from_tabby_env() {
   local conf="$TARGET/etc/tsos/install.conf"
-  local envf="$TARGET/home/${TARGET_USER}/tabby-stack/tabbyAPI/deploy/arch/tabby.env"
+  local envf="$TARGET/home/${TARGET_USER}/tabbyapi-stack/tabbyAPI/deploy/arch/tabby.env"
   [[ -f "$envf" && -f "$conf" ]] || return 0
   local line key
   while IFS= read -r line || [[ -n "$line" ]]; do
@@ -4777,8 +4777,8 @@ EOF
   fi
   cat <<EOF
 
-tabby-stack
-  Installed in the chroot at /home/${TARGET_USER}/tabby-stack
+tabbyapi-stack
+  Installed in the chroot at /home/${TARGET_USER}/tabbyapi-stack
   After reboot, linger starts the API. install.sh is not run again.
   Models: ${TABBY_MODELS}
   API:       http://${TABBY_NETWORK_HOST}:${TABBY_NETWORK_PORT}
@@ -4847,7 +4847,7 @@ load_existing_tsos_conf() {
 
 # Finish install.sh after a chroot failure. /mnt must still be the new system.
 resume_tabby_work() {
-  gauge_update 40 "Resuming tabby-stack"
+  gauge_update 40 "Resuming tabbyapi-stack"
   run_tabby_install_chroot
   if [[ "$OMARCHY_MODE" == "now" ]]; then
     gauge_update 96 "Installing Omarchy"
@@ -4865,11 +4865,11 @@ resume_tabby_install() {
     TABBY_CACHE="$cli_cache"
   fi
   valid_username "$TARGET_USER" || die "invalid user name: $TARGET_USER"
-  local stack_home="/home/${TARGET_USER}/tabby-stack"
+  local stack_home="/home/${TARGET_USER}/tabbyapi-stack"
   [[ -f "$TARGET$stack_home/install.sh" ]] || \
     die "missing $stack_home/install.sh under $TARGET"
   write_nopasswd_sudoers "$TARGET"
-  refresh_tabby_stack_in_target
+  refresh_tabbyapi_stack_in_target
   run_with_gauge resume_tabby_work
   final_message
   offer_reboot
@@ -4912,7 +4912,7 @@ main() {
   restore_tty
   early_preflight
   if ((RESUME_TABBY)); then
-    log "Resuming tabby-stack in the already-mounted system at $TARGET (no disk wipe)"
+    log "Resuming tabbyapi-stack in the already-mounted system at $TARGET (no disk wipe)"
     if ((DRY_RUN)); then
       log "dry-run: would resume install.sh at $TARGET"
       exit 0

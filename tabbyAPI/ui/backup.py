@@ -16,7 +16,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-FORMAT = "tabby-stack-user-backup"
+FORMAT = "tabbyapi-stack-user-backup"
+FORMAT_LEGACY = "tabby-stack-user-backup"
 VERSION = 1
 SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 PNG_NAME_RE = re.compile(r"^generated-[A-Za-z0-9._-]+\.png$")
@@ -315,7 +316,7 @@ def _extract_zip(
             raise BackupError("Backup manifest is invalid") from exc
         if not isinstance(manifest, dict):
             raise BackupError("Backup manifest is invalid")
-        if manifest.get("format") != FORMAT:
+        if manifest.get("format") not in (FORMAT, FORMAT_LEGACY):
             raise BackupError("Not a Tabby user backup")
         try:
             version = int(manifest.get("version") or 0)

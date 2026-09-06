@@ -178,12 +178,12 @@ class FindRepoLayoutTests(unittest.TestCase):
     def test_finds_single_child_repo(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
-            dest = root / "tabby-stack"
+            dest = root / "tabbyapi-stack"
             dest.mkdir()
             (dest / ".git").mkdir()
             from ui.git import find_repo_on_disk
 
-            self.assertEqual(find_repo_on_disk(root), "tabby-stack")
+            self.assertEqual(find_repo_on_disk(root), "tabbyapi-stack")
 
     def test_finds_nested_single_repo_without_docker(self):
         with tempfile.TemporaryDirectory() as raw:

@@ -30,9 +30,9 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/tsos-docker"
           docker pull debian:bookworm-slim
-          docker build -t tabby-stack-code:local tabbyAPI/ui/codebox
+          docker build -t tabbyapi-stack-code:local tabbyAPI/ui/codebox
           docker save -o "$RUNNER_TEMP/tsos-docker/codebox-images.tar" \
-            debian:bookworm-slim tabby-stack-code:local
+            debian:bookworm-slim tabbyapi-stack-code:local
           df -h
 
       - name: Build TSOS Arch Linux ISO

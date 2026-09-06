@@ -1,11 +1,11 @@
-# tabby-stack - Chat/IDE Web UI using self hosted LLM on ArchLinux
+# tabbyapi-stack - Chat/IDE Web UI using self hosted LLM on ArchLinux
 
 A self-hosted coding assistant, web workspace, and image generator for an Arch Linux machine with an NVIDIA GPU.
 
 From the official Arch live ISO, the **tsos installer** (`tsos-installer.sh`) starts with **Simple** setup: a review menu for disk, hostname, username, weights source (Hugging Face, USB, or a path), and whether other computers on the LAN can connect. Open a row to change it, then start the install. Choose **Advanced** for encryption, Omarchy, extra models, and SSH tunnels. It then installs Arch and this stack in one pass:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/styelz/tabby-stack-archlinux/main/tsos-installer.sh | bash
+curl -fsSL https://raw.githubusercontent.com/styelz/tabbyapi-stack-archlinux/main/tsos-installer.sh | bash
 ```
 
 Use it from Cursor, VS Code, Continue, Cline, another OpenAI-compatible client, or the built-in browser IDE. Editors keep their own tools and files. The browser Code tab is a self-contained IDE on this host that uses the same Chat Completions API. Prompts, project files, and generated images stay on hardware you control.
@@ -18,7 +18,7 @@ Use it from Cursor, VS Code, Continue, Cline, another OpenAI-compatible client, 
 - A browser UI with Chat and Code workspaces, status graphs, logs, a gallery, and user accounts
 - A guided Arch installer plus systemd startup, updates, and an optional HTTPS reverse tunnel
 
-The language model and ComfyUI share one GPU. Tabby Stack unloads one before starting the other; the CPU embedding model can remain available throughout.
+The language model and ComfyUI share one GPU. TabbyAPI Stack unloads one before starting the other; the CPU embedding model can remain available throughout.
 
 ```mermaid
 flowchart LR
@@ -37,19 +37,19 @@ flowchart LR
 **Fresh machine:** boot the official Arch live ISO and run the tsos installer. It does not reboot until Arch and `install.sh` finish. After reboot, linger starts the API.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/styelz/tabby-stack-archlinux/main/tsos-installer.sh | bash
+curl -fsSL https://raw.githubusercontent.com/styelz/tabbyapi-stack-archlinux/main/tsos-installer.sh | bash
 ```
 
 **Already-installed Arch:** NVIDIA GPU, internet, and enough disk for the selected model set. Run as your normal user, not as root.
 
 ```bash
 sudo pacman -S --needed git
-git clone https://github.com/styelz/tabby-stack-archlinux.git "$HOME/tabby-stack"
-cd "$HOME/tabby-stack"
+git clone https://github.com/styelz/tabbyapi-stack-archlinux.git "$HOME/tabbyapi-stack"
+cd "$HOME/tabbyapi-stack"
 bash install.sh
 ```
 
-The installer starts with **Simple** setup (a review menu: this PC vs LAN; core models from Hugging Face into `$HOME/tabby-stack`; TTY screensaver on). Choose **Advanced** for a USB cache, extra models, bind address, public URL, reverse SSH tunnel, or to turn the screensaver off.
+The installer starts with **Simple** setup (a review menu: this PC vs LAN; core models from Hugging Face into `$HOME/tabbyapi-stack`; TTY screensaver on). Choose **Advanced** for a USB cache, extra models, bind address, public URL, reverse SSH tunnel, or to turn the screensaver off.
 
 Simple uses the **core** set (qwen 9B, Flux, Qwen-Image, CPU embedder). Advanced can add every larger switchable model profile (`all`).
 
@@ -142,7 +142,7 @@ For a single image, ask directly:
 generate an image of a neon diner on a rainy street at night
 ```
 
-Tabby Stack moves the GPU to ComfyUI, creates the image, returns a URL from the same server, and restores the previous language model. To make several images without reloading the model between each one, use `switch to comfy`, send prompts, then `switch to qwen`.
+TabbyAPI Stack moves the GPU to ComfyUI, creates the image, returns a URL from the same server, and restores the previous language model. To make several images without reloading the model between each one, use `switch to comfy`, send prompts, then `switch to qwen`.
 
 - Flux Schnell is the default for photos, scenes, drafts, and img2img.
 - Prefix a prompt with `qwen-image:` for logos, posters, interface mockups, or readable text.
@@ -158,7 +158,7 @@ For editor agents that build pages with generated assets, see [AGENTS.md](AGENTS
 Run this on the GPU host:
 
 ```bash
-bash "$HOME/tabby-stack/update.sh"
+bash "$HOME/tabbyapi-stack/update.sh"
 ```
 
 - **Update git** pulls code and optionally restarts the service.

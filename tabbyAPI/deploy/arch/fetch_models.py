@@ -119,6 +119,7 @@ def extra_model_dirs(cache_root: Path, catalog: dict) -> list[Path]:
         cache_root,
         cache_root / "models",
         cache_root / "tabbyAPI" / "models",
+        cache_root / "tabbyapi-stack" / "tabbyAPI" / "models",
         cache_root / "tabby-stack" / "tabbyAPI" / "models",
     ]
     found: list[Path] = []
@@ -361,13 +362,21 @@ def _relative_suffixes(item: dict) -> list[Path]:
     dest = item.get("dest") or ""
     if dest.startswith("tabby/"):
         rel = Path(dest[len("tabby/") :])
-        suffixes.extend((rel, Path(rel.name), Path("tabby-stack") / "tabbyAPI" / rel))
+        suffixes.extend(
+            (
+                rel,
+                Path(rel.name),
+                Path("tabbyapi-stack") / "tabbyAPI" / rel,
+                Path("tabby-stack") / "tabbyAPI" / rel,
+            )
+        )
     elif dest.startswith("comfy/"):
         rel = Path(dest[len("comfy/") :])
         suffixes.extend(
             (
                 rel,
                 Path("ComfyUI") / rel,
+                Path("tabbyapi-stack") / "ComfyUI" / rel,
                 Path("tabby-stack") / "ComfyUI" / rel,
                 Path(rel.name),
             )
@@ -412,7 +421,7 @@ def _cache_hit(item: dict, candidate: Path) -> bool:
 def find_cache(item: dict, cache_root: Path | None) -> Path | None:
     """Return an existing copy of this item under cache_root, if any.
 
-    Exact catalog paths are tried first (a tabby-stack tree). If those miss,
+    Exact catalog paths are tried first (a tabbyapi-stack tree). If those miss,
     the given folder is searched for the same file or directory names so a
     models/ dir, a USB mount, or a Hugging Face hub cache still copies.
     """

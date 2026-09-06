@@ -52,11 +52,11 @@ tsos-installer.sh
 The ISO contains:
 
 - The complete Arch package closure used by the live and target installers
-- The current tabby-stack source tree
+- The current tabbyapi-stack source tree
 - Pyenv, CPython 3.12.5, ComfyUI, and ComfyUI-GGUF sources
 - TabbyAPI, ComfyUI, CUDA PyTorch, and related Python wheels for CPython 3.12
 - Monaco Editor
-- The prebuilt `tabby-stack-code:local` Docker image and its Debian base
+- The prebuilt `tabbyapi-stack-code:local` Docker image and its Debian base
 
 The installer automatically detects `/opt/tsos`. Its local pacman repository is
 used ahead of Arch mirrors, the payload is mounted read-only into the new

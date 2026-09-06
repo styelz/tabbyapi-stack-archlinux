@@ -1,1 +1,1 @@
-"""Tabby Stack management UI (served at /v1/ui)."""
+"""TabbyAPI Stack management UI (served at /v1/ui)."""

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any, AsyncIterator, Optional
 from uuid import uuid4
 
-QUEUE_MARK = "tabby-stack-queue:"
+QUEUE_MARK = "tabbyapi-stack-queue:"
 QUEUE_HINT = "The stack is being used. You are in a queue."
 MINE_HINT = "Your session is running."
 SELF_QUEUED_HINT = "Your previous request is still running."

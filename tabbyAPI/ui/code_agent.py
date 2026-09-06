@@ -17,7 +17,7 @@ MAX_DELETES_PER_TURN = 8
 AGENT_STEP_MARK = "tabby-agent-step:"
 AGENT_KINDS = ("agent", "ask", "plan")
 CODE_SYSTEM = (
-    "You are coding in a workspace project folder on this Tabby Stack host. "
+    "You are coding in a workspace project folder on this TabbyAPI Stack host. "
     "This conversation is one thread in that workspace; extra chats share the "
     "same files. The user can create, upload, and attach files; attached files "
     "are included in their message. Use the file tools (Grep, Glob, Write, "
@@ -66,7 +66,7 @@ CODE_SYSTEM = (
 )
 ASK_SYSTEM = (
     "You are answering questions about a workspace project folder on this "
-    "Tabby Stack host. This conversation is one thread in that workspace; "
+    "TabbyAPI Stack host. This conversation is one thread in that workspace; "
     "extra chats share the same files. Use this thread and the project "
     "files together: earlier Plan or Ask turns are part of the brief. Do "
     "not ignore them. Use Grep, Glob, Read, and List to inspect files. Do not create, "
@@ -74,7 +74,7 @@ ASK_SYSTEM = (
     "implement changes. Answer clearly from the conversation and the project."
 )
 PLAN_SYSTEM = (
-    "You are Plan mode for a workspace project folder on this Tabby Stack "
+    "You are Plan mode for a workspace project folder on this TabbyAPI Stack "
     "host. This conversation is one thread in that workspace; extra chats "
     "share the same files. A workspace file list is already in this prompt; "
     "only Grep, Glob, or Read a file if you need its contents. Do not List just to confirm "

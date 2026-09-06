@@ -11350,7 +11350,7 @@ function mountChat(root) {
       if (
         comment.includes("tabby-image-job:") ||
         comment.includes("tabby-image-status:") ||
-        comment.includes("tabby-stack-queue:") ||
+        comment.includes("tabbyapi-stack-queue:") ||
         comment.includes("tabby-context-usage:") ||
         comment.includes("tabby-agent-step:")
       ) {
@@ -12362,13 +12362,13 @@ function mountChat(root) {
                   /* ignore */
                 }
               }
-              if (event.comment && event.comment.includes("tabby-stack-queue:")) {
+              if (event.comment && event.comment.includes("tabbyapi-stack-queue:")) {
                 const raw = String(event.comment)
                   .split(/\r?\n/)
                   .map((line) => line.trim())
-                  .filter((line) => /tabby-stack-queue:/i.test(line))
+                  .filter((line) => /tabbyapi-stack-queue:/i.test(line))
                   .pop() || "";
-                const hint = tabbyCleanStatusLabel(raw.replace(/^[\s\S]*tabby-stack-queue:\s*/i, ""));
+                const hint = tabbyCleanStatusLabel(raw.replace(/^[\s\S]*tabbyapi-stack-queue:\s*/i, ""));
                 showStackQueue(hint, working);
               }
               if (event.comment && event.comment.includes("tabby-image-status:")) {

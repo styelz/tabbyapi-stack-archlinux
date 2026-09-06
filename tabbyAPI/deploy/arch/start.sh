@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start TabbyAPI from the tabby-stack install root (not from tabbyAPI/).
+# Start TabbyAPI from the tabbyapi-stack install root (not from tabbyAPI/).
 # The installer copies this file to $DEST/start.sh.
 set -euo pipefail
 
@@ -9,7 +9,7 @@ ENV_FILE="$TABBY/deploy/arch/tabby.env"
 
 if [[ ! -x "$TABBY/venv/bin/python" ]]; then
   echo "TabbyAPI is not installed here ($TABBY/venv is missing)."
-  echo "From the tabby-stack source root run: bash install.sh"
+  echo "From the tabbyapi-stack source root run: bash install.sh"
   exit 1
 fi
 

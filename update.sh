@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Pull the latest tabby-stack commit into this install, then apply it.
+# Pull the latest tabbyapi-stack commit into this install, then apply it.
 #
-# The live tree is the git checkout (clone into $HOME/tabby-stack, or an
+# The live tree is the git checkout (clone into $HOME/tabbyapi-stack, or an
 # older rsync dest that this script bootstraps). It always sits on
 # origin's default branch (main). Runtime data stays: venv, models,
 # ComfyUI, config.yml, tabby.env.
 set -euo pipefail
 
 DEST="$(cd "$(dirname "$0")" && pwd)"
-ORIGIN="${TABBY_GIT_ORIGIN:-https://github.com/styelz/tabby-stack-archlinux.git}"
+ORIGIN="${TABBY_GIT_ORIGIN:-https://github.com/styelz/tabbyapi-stack-archlinux.git}"
 UPDATE_COMFY=0
 # git = git pull only (optional API restart at the end);
 # all = pull then install.sh --update (pip, restart).
@@ -87,7 +87,7 @@ need_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
 
-BACKTITLE="tabby-stack"
+BACKTITLE="tabbyapi-stack"
 UPDATE_LOG=""
 UI_STARTED=0
 GAUGE_PID=""
@@ -161,7 +161,7 @@ progress() {
 }
 
 ui_gauge_only() {
-  local title="${1:-Updating tabby-stack}"
+  local title="${1:-Updating tabbyapi-stack}"
   UI_STARTED=1
   if [[ "${TABBY_INSTALL_VERBOSE:-}" == 1 ]]; then
     GAUGE_MODE="verbose"
@@ -188,7 +188,7 @@ ui_gauge_only() {
 ui_start() {
   UPDATE_LOG="$DEST/tabby-update.log"
   {
-    echo "tabby-stack update $(date -Iseconds)"
+    echo "tabbyapi-stack update $(date -Iseconds)"
     echo "dest=$DEST kind=$UPDATE_KIND comfy=$UPDATE_COMFY restart=${RESTART_API:-auto}"
     echo
   } > "$UPDATE_LOG"
@@ -274,8 +274,8 @@ if [[ "${EUID}" -eq 0 ]]; then
   die "Do not run as root. Re-run as the user that owns this install."
 fi
 if [[ ! -f "$DEST/tabbyAPI/main.py" || ! -f "$DEST/install.sh" ]]; then
-  die "This does not look like a tabby-stack install ($DEST).
-Run it from the install root (default \$HOME/tabby-stack)."
+  die "This does not look like a tabbyapi-stack install ($DEST).
+Run it from the install root (default \$HOME/tabbyapi-stack)."
 fi
 if ! need_cmd git; then
   die "git is not installed. On Arch: sudo pacman -S git"
@@ -287,7 +287,9 @@ install_live_git_hooks() {
   local hook_src="$dir/scripts/refuse-live-git.sh"
   local hook
   [[ -d "$dir/.git" ]] || return 0
-  if [[ "$dir" != "$HOME/tabby-stack" && ! -d "$dir/tabbyAPI/venv" ]]; then
+  if [[ "$dir" != "$HOME/tabbyapi-stack" \
+        && "$dir" != "$HOME/tabby-stack" \
+        && ! -d "$dir/tabbyAPI/venv" ]]; then
     return 0
   fi
   printf 'live\n' >"$dir/.live-install"
@@ -304,7 +306,9 @@ install_live_git_hooks() {
 set -euo pipefail
 root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 [[ -n "$root" ]] || exit 0
-if [[ -f "$root/.live-install" || "$root" == "${HOME}/tabby-stack" ]]; then
+if [[ -f "$root/.live-install" \
+     || "$root" == "${HOME}/tabbyapi-stack" \
+     || "$root" == "${HOME}/tabby-stack" ]]; then
   echo "Refuse: this is the live Tabby install (${root})." >&2
   echo "Commit and push in the git source tree. Live only pulls origin/main." >&2
   exit 1
@@ -327,14 +331,14 @@ ask_update_kind() {
     return
   fi
   local out=""
-  local title="Update tabby-stack"
+  local title="Update tabbyapi-stack"
   local text="Update git pulls new code. At the end you can restart tabbyapi (or pass --restart).
 Update all also refreshes Python deps, installs missing OS packages, and restarts the API."
   if need_cmd dialog; then
     local tmp rc
     tmp=$(mktemp "${TMPDIR:-/tmp}/tabby-dialog.XXXXXX")
     set +e
-    dialog --backtitle "tabby-stack" --title "$title" --menu "$text" 16 74 2 \
+    dialog --backtitle "tabbyapi-stack" --title "$title" --menu "$text" 16 74 2 \
       git "Update git" \
       all "Update all" 2> "$tmp"
     rc=$?
@@ -343,7 +347,7 @@ Update all also refreshes Python deps, installs missing OS packages, and restart
     rm -f "$tmp"
     [[ "$rc" -eq 0 ]] || die "Update cancelled."
   elif need_cmd whiptail; then
-    out="$(whiptail --backtitle "tabby-stack" --title "$title" --menu "$text" 16 74 2 \
+    out="$(whiptail --backtitle "tabbyapi-stack" --title "$title" --menu "$text" 16 74 2 \
       git "Update git" \
       all "Update all" 3>&1 1>&2 2>&3)" || die "Update cancelled."
   else
@@ -630,16 +634,16 @@ finish_git_update() {
   if [[ -f "$DEST/tabbyAPI/ui/codebox/Dockerfile" ]]; then
     if command -v docker >/dev/null 2>&1; then
       local built=0
-      if docker build -t tabby-stack-code:local \
+      if docker build -t tabbyapi-stack-code:local \
         -f "$DEST/tabbyAPI/ui/codebox/Dockerfile" \
         "$DEST/tabbyAPI/ui/codebox" >> "$UPDATE_LOG" 2>&1; then
         built=1
-      elif sudo -n docker build -t tabby-stack-code:local \
+      elif sudo -n docker build -t tabbyapi-stack-code:local \
         -f "$DEST/tabbyAPI/ui/codebox/Dockerfile" \
         "$DEST/tabbyAPI/ui/codebox" >> "$UPDATE_LOG" 2>&1; then
         built=1
       else
-        echo "WARNING: tabby-stack-code image build failed" >> "$UPDATE_LOG"
+        echo "WARNING: tabbyapi-stack-code image build failed" >> "$UPDATE_LOG"
       fi
       if [[ "$built" -eq 1 ]]; then
         local box_ids=()
@@ -769,7 +773,7 @@ clear_matching_untracked() {
     done
   fi
   if ((${#conflicts[@]})); then
-    bak="$(mktemp -d "${TMPDIR:-/tmp}/tabby-stack-update-untracked.XXXXXX")"
+    bak="$(mktemp -d "${TMPDIR:-/tmp}/tabbyapi-stack-update-untracked.XXXXXX")"
     printf '%s\n' "==> Untracked files differ from $spec; moving aside to $bak" >> "${UPDATE_LOG:-/dev/null}"
     for f in "${conflicts[@]}"; do
       mkdir -p "$bak/$(dirname "$f")"
@@ -893,7 +897,7 @@ ff_pull() {
     printf '%s\n' "==> Local copies already match origin/$branch" >> "$UPDATE_LOG"
   fi
   if ((${#AHEAD_WRAPPERS[@]})); then
-    wrappers_tmp="$(mktemp -d "${TMPDIR:-/tmp}/tabby-stack-wrappers.XXXXXX")"
+    wrappers_tmp="$(mktemp -d "${TMPDIR:-/tmp}/tabbyapi-stack-wrappers.XXXXXX")"
     for wrap in "${AHEAD_WRAPPERS[@]}"; do
       printf '%s\n' "==> Holding local $wrap (differs from origin/$branch)" >> "$UPDATE_LOG"
       cp "$dir/$wrap" "$wrappers_tmp/$wrap"
@@ -968,7 +972,7 @@ BEFORE_UPDATE_SH="$(hash_ignore_cr <"$DEST/update.sh")"
 
 if [[ -d "$DEST/.git" ]]; then
   ensure_stack_origin
-  ff_pull "$DEST" "tabby-stack" 20 70
+  ff_pull "$DEST" "tabbyapi-stack" 20 70
   install_live_git_hooks "$DEST"
 else
   progress 15 "Bootstrapping git from origin"

@@ -19,19 +19,19 @@ From the official Arch live ISO, `tsos-installer.sh` starts with **Simple** setu
 Choose **Advanced** for a review menu that also covers encryption, Omarchy (`now` requires LUKS, or `skip`), extra models, bind address, public URL, and SSH tunnel.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/styelz/tabby-stack-archlinux/main/tsos-installer.sh | bash
+curl -fsSL https://raw.githubusercontent.com/styelz/tabbyapi-stack-archlinux/main/tsos-installer.sh | bash
 ```
 
 On an already-installed Arch machine, run as **your user**, not root. Needs an NVIDIA GPU and internet.
 
 ```bash
 sudo pacman -S --needed git
-git clone https://github.com/styelz/tabby-stack-archlinux.git "$HOME/tabby-stack"
-cd "$HOME/tabby-stack"
+git clone https://github.com/styelz/tabbyapi-stack-archlinux.git "$HOME/tabbyapi-stack"
+cd "$HOME/tabbyapi-stack"
 bash install.sh
 ```
 
-Clone into `$HOME/tabby-stack` so this folder *is* the git checkout. A leftover `tabby-stack-archlinux` clone is optional; if you still clone elsewhere, the installer copies the tree (including `.git`) into the dest you pick.
+Clone into `$HOME/tabbyapi-stack` so this folder *is* the git checkout. A leftover `tabbyapi-stack-archlinux` clone is optional; if you still clone elsewhere, the installer copies the tree (including `.git`) into the dest you pick.
 
 The installer is a how-to as well as a script. On a terminal it uses **dialog** (ncurses menus). If `dialog` is missing it installs it, or falls back to printed questions. Each screen explains what is needed and gives examples. Esc on the review menu cancels; Esc on a setting goes back. After you confirm, the work stays in that same installer: a **progress bar**, elapsed time, and a live tail of `$DEST/tabby-install.log`. Set `TABBY_INSTALL_VERBOSE=1` to print every command on the console instead.
 
@@ -48,7 +48,7 @@ From the live ISO, Simple does not show Omarchy and does not install it.
 Non-interactive (no menus):
 
 ```bash
-TABBY_INSTALL_ROOT="$HOME/tabby-stack" TABBY_CACHE="" TABBY_MODELS=core \
+TABBY_INSTALL_ROOT="$HOME/tabbyapi-stack" TABBY_CACHE="" TABBY_MODELS=core \
   TABBY_NETWORK_HOST=127.0.0.1 TABBY_NETWORK_PORT=5000 \
   COMFYUI_URL=http://127.0.0.1:8188 \
   TABBY_PUBLIC_BASE="" TABBY_SSH_REMOTE="" \
@@ -67,10 +67,10 @@ If a USB copy of this tree (or another folder with the model weights) is mounted
 sudo pacman -S --needed ntfs-3g
 sudo mkdir -p /mnt/usb
 sudo mount /dev/sdXN /mnt/usb
-# You should see /mnt/usb/tabby-stack/tabbyAPI
+# You should see /mnt/usb/tabbyapi-stack/tabbyAPI
 
 bash install.sh
-# Weights cache = /mnt/usb/tabby-stack
+# Weights cache = /mnt/usb/tabbyapi-stack
 ```
 
 Do not reuse Windows `venv` folders.
@@ -122,10 +122,10 @@ systemctl --user status tabbyapi
 - Health: `GET /health` on that origin
 - Management UI: `http://127.0.0.1:5000/v1/ui` — sign in with the Linux account that runs the stack (admin), or a Tabby-only account created on the Users page. Chat (no file tools), Code (browser IDE: Chat Completions plus Grep/Glob/Read/Write/Shell on a jailed workspace, Monaco, preview, per-chat container terminal), Status (occupancy, GPU, restart, Update git / Update all), Gallery, Logs, and Settings (`config.yml` and `tabby.env`, admin). Extra users cannot create accounts. Through an SSH forwarder use the same `/v1/ui` path under your API prefix.
 - OpenAI-compatible base URL for remote IDEs: `http://<gpu-host>:5000/v1` (model name **`gpt-4o`** — leave it)
-- Agent / IDE notes: `$HOME/tabby-stack/AGENTS.md` (copied by the installer)
+- Agent / IDE notes: `$HOME/tabbyapi-stack/AGENTS.md` (copied by the installer)
 - A public reverse tunnel is optional. Set `TABBY_PUBLIC_BASE` and `TABBY_SSH_REMOTE` in `deploy/arch/tabby.env` if you have one. Every env key is listed in [`tabby.env.example`](tabby.env.example).
 
-Do **not** run `start.bat`. On Arch use the unit above or `$HOME/tabby-stack/start.sh` at the install root.
+Do **not** run `start.bat`. On Arch use the unit above or `$HOME/tabbyapi-stack/start.sh` at the install root.
 
 Stop:
 
@@ -162,7 +162,7 @@ tsctl screensaver status
 - Needs `python-pygame`, `python-numpy`, `nvidia-drm.modeset=1`, and a connector on `/dev/dri/card*`.
 - Software SDL only (`SDL_VIDEODRIVER=kmsdrm`, `SDL_RENDER_DRIVER=software`) so it does not steal LLM VRAM.
 - Feed: `GET http://127.0.0.1:5000/v1/ui/saver/state` — localhost only; no usernames. The current LLM ask or Comfy prompt is included for the HUD.
-- Windowed probe: `/usr/bin/python "$HOME/tabby-stack/tabbyAPI/deploy/arch/tabby-saver.py" --window`
+- Windowed probe: `/usr/bin/python "$HOME/tabbyapi-stack/tabbyAPI/deploy/arch/tabby-saver.py" --window`
 - Stop: `tsctl screensaver disable`
 
 ### tsctl
@@ -192,7 +192,7 @@ journalctl -u tabby-gpu -e
 
 ## 4. IDE / agents
 
-Chat phrases, images, and mixed page+images: `$HOME/tabby-stack/AGENTS.md` (copied by the installer). Editor model name is **`gpt-4o`** (a label only).
+Chat phrases, images, and mixed page+images: `$HOME/tabbyapi-stack/AGENTS.md` (copied by the installer). Editor model name is **`gpt-4o`** (a label only).
 
 - One Chat Completions API, two clients. **Editor:** your disk and your tools at `/v1`. **Browser Code:** jailed project on this host; the page runs the tool loop. Do not send Tabby workspace tools from an editor.
 - Browser Chat and Code live at `/v1/ui`. Editor mixed page+images still follow AGENTS.md (your file tools, then one Shell curl of GPU URLs). Browser Code copies finished PNGs into the workspace.
@@ -203,16 +203,16 @@ Chat phrases, images, and mixed page+images: `$HOME/tabby-stack/AGENTS.md` (copi
 The install root is the git checkout. On the GPU host:
 
 ```bash
-bash "$HOME/tabby-stack/update.sh"
+bash "$HOME/tabbyapi-stack/update.sh"
 ```
 
 A dialog asks **Update git** vs **Update all** (or `--git` / `--all`). Update git is a pull only; at the end a **Restart** / **Skip** dialog can bounce the unit and wait until `GET /health` is healthy (~65s), including when the tree was already up to date. Pass `--restart` to skip that prompt and bounce the API, or `--no-restart` to leave it running. Update all then runs `install.sh --update` (pip -U, skip existing weights, rewrite systemd units), shows the same progress gauge as install, restarts `tabbyapi`, and waits for health. If `update.sh` changed in the pull, that new script is executed again with the same choice. It does not overwrite `config.yml` or `tabby.env`, and it does not run `pacman -Syu` (keep the OS updated yourself). Missing stack packages are installed only on Update all; already-installed ones are left alone. The Status page in `/v1/ui` can trigger the same Update git / Update all actions.
 
-- First run on an older rsync-only dest bootstraps `.git` from `https://github.com/styelz/tabby-stack-archlinux.git`.
+- First run on an older rsync-only dest bootstraps `.git` from `https://github.com/styelz/tabbyapi-stack-archlinux.git`.
 - `--comfy` also pulls ComfyUI and ComfyUI-GGUF. Leave that off unless you want image-gen to move with upstream.
 - Tracked copy-to-live files are moved aside under `.tabby-update-backup/` and origin wins. Untracked `venv/`, `models/`, and `ComfyUI/` are ignored.
 
-A leftover `tabby-stack-archlinux` clone next to the install is optional after this.
+A leftover `tabbyapi-stack-archlinux` clone next to the install is optional after this.
 
 ## 6. If something fails
 
@@ -220,7 +220,7 @@ A leftover `tabby-stack-archlinux` clone next to the install is optional after t
 |---|---|
 | `nvidia-smi` fails after a new driver | Standalone `install.sh` reboots once and resumes. `tsos-installer.sh` finishes `install.sh` in the ISO chroot and does not reboot on failure; after a successful reboot linger starts the API. If the driver still fails: `nvidia-smi` and `journalctl -k \| grep -i nvidia` |
 | `TabbyAPI venv check failed` on the ISO | Expected if an old `install.sh` required `torch.cuda.is_available()`. Current `install.sh` only requires CUDA-built wheels in the chroot. Re-run with this tree (`--tabby-local-src` or the script next to `install.sh`). |
-| `cannot open tty output` after Enter on the first install screen | `arch-chroot` + `su` has no `/dev/tty` for `dialog --stdout`. Current `install.sh` skips menus in a chroot. Copy this `install.sh` into `/mnt/home/USER/tabby-stack/` and run `cd ~/tabby-stack && ./install.sh`, or `runuser -u USER -- env TABBY_NONINTERACTIVE=1 TABBY_SKIP_NVIDIA_REBOOT=1 bash .../install.sh`. |
+| `cannot open tty output` after Enter on the first install screen | `arch-chroot` + `su` has no `/dev/tty` for `dialog --stdout`. Current `install.sh` skips menus in a chroot. Copy this `install.sh` into `/mnt/home/USER/tabbyapi-stack/` and run `cd ~/tabbyapi-stack && ./install.sh`, or `runuser -u USER -- env TABBY_NONINTERACTIVE=1 TABBY_SKIP_NVIDIA_REBOOT=1 bash .../install.sh`. |
 | USB NTFS read-only / dirty | `sudo ntfsfix /dev/sdXN` then remount |
 | Missing model folder | Re-run `install.sh`. It downloads from Hugging Face and skips files that already exist. |
 | Hugging Face 401/403 | Gated repo. `huggingface-cli login` or `export HF_TOKEN=...` then re-run. |
@@ -231,7 +231,7 @@ A leftover `tabby-stack-archlinux` clone next to the install is optional after t
 | Tabby dies when you log out of the shell | User units need linger. `sudo loginctl enable-linger $USER` then `loginctl show-user $USER -p Linger` should be `yes` |
 | No sudo / not in wheel | Re-run as your user; enter the root password when asked. The installer then writes passwordless sudo. Or: `su -c 'pacman -S sudo && usermod -aG wheel USER'` |
 | System Python is 3.13/3.14 | Expected. Re-run `install.sh` — it clones pyenv from GitHub and builds 3.12.5. Do not `pacman -S python312` (not in official repos). |
-| `curl: (6) Could not resolve host: pyenv.run` | The short domain often fails DNS in the live-ISO chroot. Current `install.sh` clones `github.com/pyenv/pyenv`. Do not re-run `tsos-installer.sh` (that wipes the disk). Resume: `tsos-installer.sh --resume-tabby`, or copy this `install.sh` into `/mnt/home/USER/tabby-stack/` and re-run `install.sh` in the chroot. |
+| `curl: (6) Could not resolve host: pyenv.run` | The short domain often fails DNS in the live-ISO chroot. Current `install.sh` clones `github.com/pyenv/pyenv`. Do not re-run `tsos-installer.sh` (that wipes the disk). Resume: `tsos-installer.sh --resume-tabby`, or copy this `install.sh` into `/mnt/home/USER/tabbyapi-stack/` and re-run `install.sh` in the chroot. |
 | `mkfs.btrfs: Device or resource busy` on the root partition | A previous tsos run in this live session left the kernel holding btrfs after umount (lsblk looks clean). Current tsos (1.0.46) unloads that. Copy the new `tsos-installer.sh` onto the ISO and run it again, or reboot the live USB once then install. Do not use `--resume-tabby` here — that is only after Arch is already mounted at `/mnt`. |
 | Interrupted download | Re-run `install.sh`; finished files are skipped |
 | Chat `switch to …` returns 500 / `creationflags is only supported on Windows` | Re-run `install.sh` (it patches the spawn), then `systemctl --user restart tabbyapi` |

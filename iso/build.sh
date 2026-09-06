@@ -16,7 +16,7 @@ need() { command -v "$1" >/dev/null || { echo "missing command: $1" >&2; exit 1;
 
 [[ ${EUID} -eq 0 ]] || { echo "run this builder as root" >&2; exit 1; }
 [[ -f "$ROOT/tsos-installer.sh" && -f "$ROOT/tabbyAPI/pyproject.toml" ]] || {
-  echo "run iso/build.sh from a tabby-stack checkout" >&2
+  echo "run iso/build.sh from a tabbyapi-stack checkout" >&2
   exit 1
 }
 
@@ -90,8 +90,8 @@ git clone "$PAYLOAD/bundles/ComfyUI-GGUF.bundle" "$GGUF"
 "$PY" -m pip download --dest "$PAYLOAD/wheels" -r "$GGUF/requirements.txt"
 disk
 
-log "Adding tabby-stack and Docker images"
-mkdir -p "$PAYLOAD/tabby-stack"
+log "Adding tabbyapi-stack and Docker images"
+mkdir -p "$PAYLOAD/tabbyapi-stack"
 rsync -a --delete \
   --exclude '.git/' --exclude '.iso-work/' --exclude 'out/' --exclude 'ComfyUI/' \
   --exclude '**/venv/' --exclude '**/models/' \
@@ -101,29 +101,29 @@ rsync -a --delete \
   --exclude '**/*.key' --exclude '**/*.pem' --exclude '**/id_ed25519*' \
   --exclude '**/id_rsa*' --exclude '**/.ssh/' --exclude '**/auth.json' \
   --exclude '**/logs/' --exclude '**/pasted-images/' \
-  "$ROOT/" "$PAYLOAD/tabby-stack/"
+  "$ROOT/" "$PAYLOAD/tabbyapi-stack/"
 if [[ -d "$ROOT/.git" ]]; then
   git -c "safe.directory=$ROOT" -C "$ROOT" \
-    bundle create "$PAYLOAD/bundles/tabby-stack.bundle" --all
+    bundle create "$PAYLOAD/bundles/tabbyapi-stack.bundle" --all
 else
-  SNAPSHOT_REPO="$WORK/tabby-stack-repo"
+  SNAPSHOT_REPO="$WORK/tabbyapi-stack-repo"
   mkdir -p "$SNAPSHOT_REPO"
-  rsync -a --exclude '.git/' "$PAYLOAD/tabby-stack/" "$SNAPSHOT_REPO/"
+  rsync -a --exclude '.git/' "$PAYLOAD/tabbyapi-stack/" "$SNAPSHOT_REPO/"
   git -C "$SNAPSHOT_REPO" init
   git -C "$SNAPSHOT_REPO" add -A
   GIT_AUTHOR_NAME=tsos GIT_AUTHOR_EMAIL=tsos@localhost \
   GIT_COMMITTER_NAME=tsos GIT_COMMITTER_EMAIL=tsos@localhost \
     git -C "$SNAPSHOT_REPO" commit -m "TSOS ISO source snapshot"
-  git -C "$SNAPSHOT_REPO" bundle create "$PAYLOAD/bundles/tabby-stack.bundle" --all
+  git -C "$SNAPSHOT_REPO" bundle create "$PAYLOAD/bundles/tabbyapi-stack.bundle" --all
   rm -rf "$SNAPSHOT_REPO"
 fi
 if [[ -n "${TSOS_DOCKER_TAR:-}" && -f "$TSOS_DOCKER_TAR" ]]; then
   cp "$TSOS_DOCKER_TAR" "$PAYLOAD/docker/codebox-images.tar"
 elif docker info >/dev/null 2>&1; then
   docker pull debian:bookworm-slim
-  docker build -t tabby-stack-code:local "$ROOT/tabbyAPI/ui/codebox"
+  docker build -t tabbyapi-stack-code:local "$ROOT/tabbyAPI/ui/codebox"
   docker save -o "$PAYLOAD/docker/codebox-images.tar" \
-    debian:bookworm-slim tabby-stack-code:local
+    debian:bookworm-slim tabbyapi-stack-code:local
 else
   echo "Docker daemon unavailable; set TSOS_DOCKER_TAR to a prebuilt docker save archive." >&2
   exit 1
@@ -139,7 +139,7 @@ install -m 0755 "$ROOT/tsos-installer.sh" \
   "$PROFILE/airootfs/usr/local/bin/tsos-installer.sh"
 cat >"$PROFILE/airootfs/etc/profile.d/tsos-iso.sh" <<'EOF'
 export TSOS_OFFLINE_ROOT=/opt/tsos
-export TABBY_LOCAL_SRC=/opt/tsos/tabby-stack
+export TABBY_LOCAL_SRC=/opt/tsos/tabbyapi-stack
 if [[ $- == *i* && $(id -u) -eq 0 && -z ${TSOS_ISO_BANNER_SHOWN:-} ]]; then
   export TSOS_ISO_BANNER_SHOWN=1
   printf '\nTSOS offline installer ISO\n  Run: tsos-installer.sh\n\n'
@@ -165,8 +165,8 @@ mkdir -p "$VERIFY"
 xorriso -osirrox on -indev "$OUT/tsos-archlinux.iso" \
   -extract /arch/x86_64/airootfs.sfs "$VERIFY/airootfs.sfs"
 unsquashfs -ll "$VERIFY/airootfs.sfs" >"$VERIFY/airootfs.list"
-grep -q 'squashfs-root/opt/tsos/tabby-stack/install.sh' "$VERIFY/airootfs.list" || {
-    echo "ISO verification failed: offline tabby-stack payload is missing" >&2
+grep -q 'squashfs-root/opt/tsos/tabbyapi-stack/install.sh' "$VERIFY/airootfs.list" || {
+    echo "ISO verification failed: offline tabbyapi-stack payload is missing" >&2
     exit 1
   }
 grep -q 'squashfs-root/opt/tsos/pacman/tsos.db' "$VERIFY/airootfs.list" || {

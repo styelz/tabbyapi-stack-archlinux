@@ -22,7 +22,7 @@ if [[ -n "$TSOS_OFFLINE_ROOT" && -d "$TSOS_OFFLINE_ROOT/wheels" ]]; then
   export PIP_FIND_LINKS="$TSOS_OFFLINE_ROOT/wheels"
 fi
 
-BACKTITLE="tabby-stack"
+BACKTITLE="tabbyapi-stack"
 TUI=""
 USE_TUI=0
 INTERACTIVE=1
@@ -38,7 +38,7 @@ Usage: $(basename "$0") [--update] [--simple|--advanced]
                 core models). Choose Advanced for cache, extra models,
                 tunnels, screensaver.
   --simple      Review menu: this PC vs LAN. Install root is
-                \$HOME/tabby-stack, models core, Hugging Face.
+                \$HOME/tabbyapi-stack, models core, Hugging Face.
   --advanced    Review menu for every setting
   --update      Apply code and deps after git pull. Prefer: bash update.sh
                 Reuses tabby.env; does not overwrite config.yml or tabby.env.
@@ -52,8 +52,8 @@ Usage: $(basename "$0") [--update] [--simple|--advanced]
     arch-chroot /mnt /usr/bin/runuser -u USER -- env \\
       HOME=/home/USER USER=USER LOGNAME=USER TERM=linux \\
       TABBY_ISO_CHROOT=1 TABBY_SKIP_NVIDIA_REBOOT=1 \\
-      TABBY_INSTALL_ROOT=/home/USER/tabby-stack TABBY_SAVER_ENABLED=1 \\
-      bash /home/USER/tabby-stack/install.sh
+      TABBY_INSTALL_ROOT=/home/USER/tabbyapi-stack TABBY_SAVER_ENABLED=1 \\
+      bash /home/USER/tabbyapi-stack/install.sh
 EOF
 }
 
@@ -967,8 +967,8 @@ watch_progress_ui() {
   local stop="$1"
   local pct heading last="" step_t=$SECONDS ticks=0 spin='|/-\' ch
   local info1 info2 t0=$SECONDS
-  info1="Installing tabby-stack in ${DEST:-tabby-stack}."
-  [[ "${UPDATE_MODE:-0}" -eq 1 ]] && info1="Updating tabby-stack in ${DEST:-tabby-stack}."
+  info1="Installing tabbyapi-stack in ${DEST:-tabbyapi-stack}."
+  [[ "${UPDATE_MODE:-0}" -eq 1 ]] && info1="Updating tabbyapi-stack in ${DEST:-tabbyapi-stack}."
   info2="Full log: ${INSTALL_LOG}   Ctrl+C cancels."
   while [[ ! -f "$stop" ]]; do
     pct=0
@@ -1016,14 +1016,14 @@ progress_start() {
   if [[ "${TABBY_NVIDIA_REBOOT_DONE:-}" == 1 && -f "$INSTALL_LOG" ]]; then
     {
       echo
-      echo "tabby-stack install resume $(date -Iseconds) (after NVIDIA reboot)"
+      echo "tabbyapi-stack install resume $(date -Iseconds) (after NVIDIA reboot)"
       echo "dest=$DEST tabby=$DEST_TABBY comfy=$DEST_COMFY"
       echo "cache=${WIN_ROOT:-} models=$MODEL_SET api=$API_URL"
       echo
     } >> "$INSTALL_LOG"
   else
     {
-      echo "tabby-stack install $(date -Iseconds)"
+      echo "tabbyapi-stack install $(date -Iseconds)"
       echo "dest=$DEST tabby=$DEST_TABBY comfy=$DEST_COMFY"
       echo "cache=${WIN_ROOT:-} models=$MODEL_SET api=$API_URL"
       echo
@@ -1046,8 +1046,8 @@ progress_start() {
   # The question screens ran in the TUI, so the work gets the install page:
   # painted by a background watcher on /dev/tty, same palette as the dialogs.
   if [[ "${USE_TUI:-0}" -eq 1 && -c /dev/tty ]] && { true >/dev/tty; } 2>/dev/null; then
-    PAGE_TITLE="Installing tabby-stack"
-    [[ "$UPDATE_MODE" -eq 1 ]] && PAGE_TITLE="Updating tabby-stack"
+    PAGE_TITLE="Installing tabbyapi-stack"
+    [[ "$UPDATE_MODE" -eq 1 ]] && PAGE_TITLE="Updating tabbyapi-stack"
     GAUGE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/tabby-gauge.XXXXXX")"
     printf '%s\n' 0 >"$GAUGE_DIR/pct"
     printf '%s\n' "Starting..." >"$GAUGE_DIR/heading"
@@ -1186,7 +1186,7 @@ run_quiet() {
   fi
 }
 
-RESUME_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/tabby-stack"
+RESUME_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/tabbyapi-stack"
 
 nvidia_smi_ok() {
   nvidia-smi >/dev/null 2>&1
@@ -1241,12 +1241,12 @@ write_resume_launch() {
   cat > "$RESUME_DIR/resume-launch.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-RESUME_ENV="${XDG_CONFIG_HOME:-$HOME/.config}/tabby-stack/install-resume.env"
-LOCK="${XDG_CONFIG_HOME:-$HOME/.config}/tabby-stack/install-resume.lock"
+RESUME_ENV="${XDG_CONFIG_HOME:-$HOME/.config}/tabbyapi-stack/install-resume.env"
+LOCK="${XDG_CONFIG_HOME:-$HOME/.config}/tabbyapi-stack/install-resume.lock"
 mkdir -p "$(dirname "$LOCK")"
 exec 9>"$LOCK"
 if ! flock -n 9; then
-  echo "tabby-stack install resume is already running."
+  echo "tabbyapi-stack install resume is already running."
   exit 0
 fi
 if [[ ! -f "$RESUME_ENV" ]]; then
@@ -1280,11 +1280,11 @@ install_resume_hooks() {
   write_resume_env "$DEST/tabby-install-resume.env"
   write_resume_launch
   mkdir -p "$HOME/.config/autostart"
-  cat > "$HOME/.config/autostart/tabby-stack-install-resume.desktop" <<EOF
+  cat > "$HOME/.config/autostart/tabbyapi-stack-install-resume.desktop" <<EOF
 [Desktop Entry]
 Type=Application
-Name=tabby-stack install resume
-Comment=Finish tabby-stack after the NVIDIA driver reboot
+Name=tabbyapi-stack install resume
+Comment=Finish tabbyapi-stack after the NVIDIA driver reboot
 Exec=$RESUME_DIR/resume-launch.sh
 X-GNOME-Autostart-enabled=true
 Terminal=false
@@ -1293,7 +1293,7 @@ EOF
   mkdir -p "$unit_dir"
   cat > "$unit_dir/tabby-install-resume.service" <<EOF
 [Unit]
-Description=Resume tabby-stack install after NVIDIA driver reboot
+Description=Resume tabbyapi-stack install after NVIDIA driver reboot
 After=network-online.target
 Wants=network-online.target
 ConditionPathExists=$RESUME_DIR/install-resume.env
@@ -1316,7 +1316,7 @@ EOF
 clear_install_resume() {
   # Whole directory, not named files: it also holds install-resume.lock.
   rm -rf "$RESUME_DIR"
-  rm -f "$HOME/.config/autostart/tabby-stack-install-resume.desktop" \
+  rm -f "$HOME/.config/autostart/tabbyapi-stack-install-resume.desktop" \
         "${DEST:-}/tabby-install-resume.env"
   if [[ -n "${XDG_RUNTIME_DIR:-}" ]] && need_cmd systemctl; then
     systemctl --user disable --now tabby-install-resume.service >/dev/null 2>&1 || true
@@ -1737,7 +1737,7 @@ if [[ "${EUID}" -eq 0 ]]; then
 fi
 if [[ ! -f "$TABBY_SRC/pyproject.toml" || ! -f "$TABBY_SRC/main.py" ]]; then
   echo "Cannot find TabbyAPI at $TABBY_SRC (missing pyproject.toml or main.py)."
-  echo "Run: bash install.sh  (from the tabby-stack root)"
+  echo "Run: bash install.sh  (from the tabbyapi-stack root)"
   exit 1
 fi
 if [[ ! -f "$CATALOG" || ! -f "$FETCH_MODELS" ]]; then
@@ -1747,14 +1747,14 @@ fi
 
 # Resume after an NVIDIA driver reboot (hooks or a manual re-run).
 # update.sh must not pick up a leftover resume env.
-if [[ "$UPDATE_MODE" -eq 0 && -z "${TABBY_NVIDIA_REBOOT_DONE:-}" && -f "${XDG_CONFIG_HOME:-$HOME/.config}/tabby-stack/install-resume.env" ]]; then
+if [[ "$UPDATE_MODE" -eq 0 && -z "${TABBY_NVIDIA_REBOOT_DONE:-}" && -f "${XDG_CONFIG_HOME:-$HOME/.config}/tabbyapi-stack/install-resume.env" ]]; then
   # shellcheck disable=SC1090
   set -a
-  . "${XDG_CONFIG_HOME:-$HOME/.config}/tabby-stack/install-resume.env"
+  . "${XDG_CONFIG_HOME:-$HOME/.config}/tabbyapi-stack/install-resume.env"
   set +a
 fi
 if [[ "${TABBY_NVIDIA_REBOOT_DONE:-}" == 1 ]]; then
-  echo "Resuming tabby-stack install after the NVIDIA driver reboot."
+  echo "Resuming tabbyapi-stack install after the NVIDIA driver reboot."
 fi
 
 # Env-driven install: skip menus when the three knobs are already set.
@@ -1968,7 +1968,7 @@ pick_install_mode() {
   local choice
   choice="$(ui_menu "Setup type" \
 "Simple (recommended) opens a review menu: this PC vs LAN,
-core models from Hugging Face into \$HOME/tabby-stack.
+core models from Hugging Face into \$HOME/tabbyapi-stack.
 
 Advanced lists every setting as a row you can open: install
 root, weights cache, models, bind address, public URL, SSH
@@ -1983,7 +1983,7 @@ You can re-run later and pick Advanced to change those." \
 
 prompt_simple_install() {
   ui_msg "Simple setup" \
-"tabby-stack: local OpenAI-compatible API for coding and agents,
+"tabbyapi-stack: local OpenAI-compatible API for coding and agents,
 plus ComfyUI image generation on Arch.
 
 Simple setup installs into:
@@ -2064,7 +2064,7 @@ Esc aborts." \
   ${DEST}
 
 That is your home directory or a system folder. Pick a dedicated
-folder such as ${HOME}/tabby-stack or /data/tabby-stack."
+folder such as ${HOME}/tabbyapi-stack or /data/tabbyapi-stack."
           return 1
         fi
         API_URL="http://${TABBY_NETWORK_HOST}:${TABBY_NETWORK_PORT}"
@@ -2203,7 +2203,7 @@ cache_on_dest() {
 }
 
 # True when PATH looks like it already holds installer weights (any layout
-# fetch_models.py will search: tabby-stack tree, models/, or weight files).
+# fetch_models.py will search: tabbyapi-stack tree, models/, or weight files).
 cache_has_any_weights() {
   local root="${1:-}"
   local hit=""
@@ -2323,13 +2323,13 @@ inst_edit_dest() {
 "Linux disk folder that will contain tabbyAPI/ and ComfyUI/.
 
 Examples
-  ${HOME}/tabby-stack  →  ${HOME}/tabby-stack/tabbyAPI  and  ${HOME}/tabby-stack/ComfyUI
-  /data/tabby-stack    →  /data/tabby-stack/tabbyAPI   and  /data/tabby-stack/ComfyUI
+  ${HOME}/tabbyapi-stack  →  ${HOME}/tabbyapi-stack/tabbyAPI  and  ${HOME}/tabbyapi-stack/ComfyUI
+  /data/tabbyapi-stack    →  /data/tabbyapi-stack/tabbyAPI   and  /data/tabbyapi-stack/ComfyUI
 
 Do NOT use a USB or other removable mount as the install root.
 Those mounts are only a weights cache on a later row.
 
-Default is \$HOME/tabby-stack." \
+Default is \$HOME/tabbyapi-stack." \
 "${TABBY_INSTALL_ROOT:-$DEFAULT_DEST}") || return 0
   DEST="${v:-$DEFAULT_DEST}"
 }
@@ -2341,7 +2341,7 @@ inst_edit_weights() {
 
 Hugging Face — download models that fit this NVIDIA GPU.
 A local path — search that folder for weights you already have
-(USB copy, old tabby-stack, or a folder of model dirs). Missing
+(USB copy, old tabbyapi-stack, or a folder of model dirs). Missing
 pieces still download.
 
 Mount a USB first if you want that option:
@@ -2349,17 +2349,17 @@ Mount a USB first if you want that option:
   sudo mkdir -p /mnt/usb
   sudo mount /dev/sdXN /mnt/usb" \
       hf "Hugging Face (models that fit this GPU)" \
-      usb "Use /mnt/usb/tabby-stack (USB copy)" \
+      usb "Use /mnt/usb/tabbyapi-stack (USB copy)" \
       custom "Type another path") || return 0
   case "$cache_choice" in
     hf|none) WIN_ROOT="" ;;
-    usb) WIN_ROOT="/mnt/usb/tabby-stack" ;;
+    usb) WIN_ROOT="/mnt/usb/tabbyapi-stack" ;;
     custom)
       v=$(ui_input "Weights cache path" \
 "Folder to search for existing weights. Any of these work:
 
-  /mnt/usb/tabby-stack          (full tree: tabbyAPI/ + ComfyUI/)
-  /mnt/usb/tabby-stack/tabbyAPI/models
+  /mnt/usb/tabbyapi-stack          (full tree: tabbyAPI/ + ComfyUI/)
+  /mnt/usb/tabbyapi-stack/tabbyAPI/models
   /data/weights                 (model dirs / .safetensors / .gguf)
 
 The installer lists what it finds next. Blank = Hugging Face." \
@@ -2616,7 +2616,7 @@ prompt) before the screensaver returns. Default 10." \
 
 prompt_advanced_install() {
   if [[ "${TABBY_ISO_CHROOT:-}" == 1 ]]; then
-    ui_msg "tabby-stack" \
+    ui_msg "tabbyapi-stack" \
 "Arch is on the disk. Dest is already
   ${TABBY_INSTALL_ROOT:-$DEFAULT_DEST}
 The weights cache was set before the wipe (or Hugging Face).
@@ -2628,7 +2628,7 @@ URL / SSH, and screensaver. Open a row to change it."
     WIN_ROOT="${TABBY_CACHE:-}"
   else
     ui_msg "What this installer does" \
-"tabby-stack: local OpenAI-compatible API for coding and agents,
+"tabbyapi-stack: local OpenAI-compatible API for coding and agents,
 plus ComfyUI image generation on Arch. Any client that speaks /v1
 works — Cursor is one example.
 
@@ -2718,7 +2718,7 @@ Esc aborts. The next screen is a progress bar and the live log." \
   ${DEST}
 
 That is your home directory or a system folder. Pick a dedicated
-folder such as ${HOME}/tabby-stack or /data/tabby-stack."
+folder such as ${HOME}/tabbyapi-stack or /data/tabbyapi-stack."
           continue
         fi
         if cache_on_dest; then
@@ -2728,7 +2728,7 @@ folder such as ${HOME}/tabby-stack or /data/tabby-stack."
   Cache:     ${WIN_ROOT}
   Arch dest: ${DEST}
 
-Use the Linux disk, for example ${HOME}/tabby-stack or /data/tabby-stack."
+Use the Linux disk, for example ${HOME}/tabbyapi-stack or /data/tabbyapi-stack."
           continue
         fi
         API_URL="http://${TABBY_NETWORK_HOST}:${TABBY_NETWORK_PORT}"
@@ -2739,7 +2739,7 @@ Use the Linux disk, for example ${HOME}/tabby-stack or /data/tabby-stack."
   done
 }
 
-DEFAULT_DEST="$HOME/tabby-stack"
+DEFAULT_DEST="$HOME/tabbyapi-stack"
 
 if [[ "$INTERACTIVE" -eq 0 ]]; then
   if [[ "$UPDATE_MODE" -eq 1 ]]; then
@@ -2770,12 +2770,12 @@ if [[ "$INTERACTIVE" -eq 0 ]]; then
     exit 1
   fi
   if ! dest_is_sane; then
-    echo "Refusing to install into $DEST. Pick a dedicated folder, e.g. $HOME/tabby-stack."
+    echo "Refusing to install into $DEST. Pick a dedicated folder, e.g. $HOME/tabbyapi-stack."
     exit 1
   fi
   if [[ "$UPDATE_MODE" -eq 1 && ! -x "$DEST_TABBY/venv/bin/python" ]]; then
     echo "No TabbyAPI venv at $DEST_TABBY."
-    echo "Run bash update.sh from the install root (default \$HOME/tabby-stack),"
+    echo "Run bash update.sh from the install root (default \$HOME/tabbyapi-stack),"
     echo "not from a source checkout that has not been installed."
     exit 1
   fi
@@ -2783,7 +2783,7 @@ if [[ "$INTERACTIVE" -eq 0 ]]; then
     echo "Arch dest must not be the weights cache mount."
     echo "  Cache:     $WIN_ROOT"
     echo "  Arch dest: $DEST"
-    echo "Use the Arch disk, e.g. $HOME/tabby-stack or /data/tabby-stack"
+    echo "Use the Arch disk, e.g. $HOME/tabbyapi-stack or /data/tabbyapi-stack"
     exit 1
   fi
 else
@@ -3035,18 +3035,18 @@ build_codebox_image() {
   local dir="$DEST_TABBY/ui/codebox"
   [[ -f "$df" ]] || return 0
   [[ -f /var/lib/tsos/offline-docker-loaded ]] && return 0
-  if sudo -n docker image inspect tabby-stack-code:local >/dev/null 2>&1; then
+  if sudo -n docker image inspect tabbyapi-stack-code:local >/dev/null 2>&1; then
     return 0
   fi
-  if sudo -n docker build -t tabby-stack-code:local -f "$df" "$dir" >>"$INSTALL_LOG" 2>&1; then
+  if sudo -n docker build -t tabbyapi-stack-code:local -f "$df" "$dir" >>"$INSTALL_LOG" 2>&1; then
     drop_codebox_containers
     return 0
   fi
-  if need_cmd docker && docker build -t tabby-stack-code:local -f "$df" "$dir" >>"$INSTALL_LOG" 2>&1; then
+  if need_cmd docker && docker build -t tabbyapi-stack-code:local -f "$df" "$dir" >>"$INSTALL_LOG" 2>&1; then
     drop_codebox_containers
     return 0
   fi
-  echo "WARNING: tabby-stack-code image build failed" >> "$INSTALL_LOG"
+  echo "WARNING: tabbyapi-stack-code image build failed" >> "$INSTALL_LOG"
 }
 
 enable_docker
@@ -3089,7 +3089,7 @@ if [[ "$PY_VER" != "3.12" ]]; then
   progress_fail 1
 fi
 
-progress 22 "Syncing tabby-stack sources"
+progress 22 "Syncing tabbyapi-stack sources"
 run_quiet sync_tabby_sources_to_dest
 if need_cmd dos2unix; then
   run_quiet find "$DEST_TABBY" -type f -name '*.sh' -exec dos2unix -q {} +
@@ -3182,7 +3182,7 @@ fi
 # a key on this account — generate one when nothing was copied.
 if [[ ! -f "$HOME/.ssh/$SSH_KEY_NAME" ]]; then
   if need_cmd ssh-keygen; then
-    comment="${USER}@$(hostname -s 2>/dev/null || echo tsos)-tabby-stack"
+    comment="${USER}@$(hostname -s 2>/dev/null || echo tsos)-tabbyapi-stack"
     ssh-keygen -q -t ed25519 -N '' -f "$HOME/.ssh/$SSH_KEY_NAME" -C "$comment"
     chmod 600 "$HOME/.ssh/$SSH_KEY_NAME"
     [[ -f "$HOME/.ssh/${SSH_KEY_NAME}.pub" ]] && chmod 644 "$HOME/.ssh/${SSH_KEY_NAME}.pub"
@@ -3513,7 +3513,7 @@ mkdir -p "$WANTS_DIR"
 ln -sfn ../tabbyapi.service "$WANTS_DIR/tabbyapi.service"
 echo "Enabled tabbyapi via $WANTS_DIR/tabbyapi.service" >> "$INSTALL_LOG"
 
-# Refresh the TSOS login banner when this is a tabby-stack OS install.
+# Refresh the TSOS login banner when this is a tabbyapi-stack OS install.
 if [[ -f "$DEST_TABBY/deploy/arch/tsos-motd" ]] && \
    { [[ -e /usr/local/bin/tsos-motd ]] || [[ -d /etc/tsos ]]; }; then
   if sudo -n install -D -m 0755 "$DEST_TABBY/deploy/arch/tsos-motd" /usr/local/bin/tsos-motd \

@@ -131,7 +131,7 @@ class GpuModeTests(unittest.TestCase):
         root, python = comfy_paths(Path("/data/ComfyUI"), windows=False)
         self.assertEqual(root, Path("/data/ComfyUI"))
         self.assertEqual(python, Path("/data/ComfyUI/venv/bin/python"))
-        root, python = comfy_paths(Path(r"D:\tabby-stack\ComfyUI"), windows=True)
+        root, python = comfy_paths(Path(r"D:\tabbyapi-stack\ComfyUI"), windows=True)
         self.assertEqual(python.name, "python.exe")
         self.assertIn("Scripts", python.parts)
 

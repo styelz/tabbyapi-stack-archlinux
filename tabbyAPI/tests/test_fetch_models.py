@@ -161,9 +161,15 @@ class FetchModelsTests(unittest.TestCase):
 
             usb = root / "usb"
             snap = ready_snap(
-                usb / "tabby-stack" / "tabbyAPI" / "models" / "Qwen3.5-9B-exl3-4.00bpw"
+                usb / "tabbyapi-stack" / "tabbyAPI" / "models" / "Qwen3.5-9B-exl3-4.00bpw"
             )
             self.assertEqual(find_cache(snap_item, usb), snap.resolve())
+
+            old_usb = root / "old-usb"
+            snap = ready_snap(
+                old_usb / "tabby-stack" / "tabbyAPI" / "models" / "Qwen3.5-9B-exl3-4.00bpw"
+            )
+            self.assertEqual(find_cache(snap_item, old_usb), snap.resolve())
 
             self.assertEqual(find_cache(snap_item, snap), snap.resolve())
 

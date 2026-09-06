@@ -45,7 +45,7 @@ class ShellJailTests(unittest.TestCase):
         self.assertIn("GIT_CONFIG_VALUE_0=store --file=/etc/tabby-git-credentials", cmd)
         self.assertIn("--cap-drop", cmd)
         self.assertIn("ALL", cmd)
-        self.assertIn("tabby-stack-code:local", cmd)
+        self.assertIn("tabbyapi-stack-code:local", cmd)
         self.assertIn(
             "alice:x:1000:1000:alice:/work:/bin/bash",
             (root.parent / "c.codebox" / "passwd").read_text(),

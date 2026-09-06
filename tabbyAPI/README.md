@@ -1,12 +1,12 @@
-# TabbyAPI (tabby-stack-archlinux)
+# TabbyAPI (tabbyapi-stack-archlinux)
 
-This directory is the customized [TabbyAPI](https://github.com/theroyallab/tabbyAPI) tree used by **tabby-stack-archlinux**.
+This directory is the customized [TabbyAPI](https://github.com/theroyallab/tabbyAPI) tree used by **tabbyapi-stack-archlinux**.
 
 Install from the **repository root**, not from here:
 
 ```bash
-git clone https://github.com/styelz/tabby-stack-archlinux.git "$HOME/tabby-stack"
-cd "$HOME/tabby-stack"
+git clone https://github.com/styelz/tabbyapi-stack-archlinux.git "$HOME/tabbyapi-stack"
+cd "$HOME/tabbyapi-stack"
 bash install.sh
 ```
 
