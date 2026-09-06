@@ -1,9 +1,9 @@
 # TSOS Arch Linux ISO
 
 The ISO workflow builds a bootable Arch live installer named
-`tsos-archlinux.iso`. It is a **small** image: the live system plus
-tabbyapi-stack. Arch packages, Python, PyTorch, ComfyUI, Docker, and model
-weights download when you run `tsos-installer.sh`.
+`tsos-archlinux.iso`. Boot it and the installer starts on the first console,
+like Debian: it installs Arch Linux and tabbyapi-stack. Arch packages, Python,
+PyTorch, ComfyUI, Docker, and model weights download during that install.
 
 The only frozen 3rd-party source is **ComfyUI-GGUF**, which is small and not
 as durable as Arch, python.org, PyPI, or the official ComfyUI repo.
@@ -48,11 +48,12 @@ sudo dd if=tsos-archlinux.iso of=/dev/sdX bs=4M status=progress oflag=sync
 
 Alternatively, copy the ISO to a Ventoy USB.
 
-Boot the USB with Secure Boot disabled, connect to the network, and run:
+Boot the USB with Secure Boot disabled. The installer starts on tty1.
+Connect Ethernet (or configure Wi-Fi from Alt+F2 with `iwctl`) when asked.
+It installs Arch and tabbyapi-stack, then offers a reboot.
 
-```bash
-tsos-installer.sh
-```
+If you leave the installer, a root shell remains. Run `tsos-installer.sh`
+to start again.
 
 ## What is on the ISO
 

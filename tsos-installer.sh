@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # tsos-installer.sh
 #
-# Install Arch Linux from the official live ISO, then install tabbyapi-stack in
-# the chroot (venvs, weights) so first boot only starts the API (linger).
+# Install Arch Linux from the official live ISO or the TSOS installer ISO,
+# then install tabbyapi-stack in the chroot (venvs, weights) so first boot
+# only starts the API (linger). The TSOS ISO autologins tty1 into this script.
 #
 # Run as root from the Arch Linux live ISO. The target disk is wiped
 # unless you pass --resume-tabby (finish install.sh on an already-mounted /mnt).

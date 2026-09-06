@@ -56,17 +56,17 @@ jobs:
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
         run: |
           cat > "$RUNNER_TEMP/release-notes.md" <<'EOF'
-          Bootable TSOS Arch Linux installer. This ISO is small: Arch packages,
-          Python, PyTorch, ComfyUI, Docker images, and model weights download
-          during `tsos-installer.sh`. The image includes tabbyapi-stack and a
-          frozen ComfyUI-GGUF git bundle.
+          Bootable TSOS installer. After boot the first console starts the
+          installer (Arch Linux plus tabbyapi-stack). Packages, Python,
+          PyTorch, ComfyUI, Docker images, and model weights download during
+          that install. ComfyUI-GGUF is frozen in the image.
 
           Write directly (replace `/dev/sdX` with the whole USB device):
 
               sudo dd if=tsos-archlinux.iso of=/dev/sdX bs=4M status=progress oflag=sync
 
-          Boot with Secure Boot disabled, connect to the network, then run
-          `tsos-installer.sh`.
+          Boot with Secure Boot disabled. Use Ethernet or Alt+F2 + `iwctl`
+          for Wi-Fi. Esc/Ctrl+C leaves a root shell.
           EOF
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" out/* --clobber

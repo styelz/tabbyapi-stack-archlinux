@@ -6,6 +6,7 @@ Stack overview lives in the [repository root README](../../../README.md).
 
 To preserve installer dependencies against disappearing upstream downloads,
 the repository can build a [bootable TSOS ISO](../../../iso/README.md).
+Boot that USB and the installer starts on tty1 (Arch plus tabbyapi-stack).
 New builds are small (network install). Older frozen 9 GiB releases remain
 usable. Model weights remain a separate USB cache; Omarchy remains
 network-only.

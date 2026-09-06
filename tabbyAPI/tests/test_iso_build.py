@@ -10,6 +10,8 @@ WORKFLOW = ROOT / ".github" / "workflows" / "iso.yml"
 class IsoBuildSmallTests(unittest.TestCase):
     def test_build_does_not_freeze_long_lived_downloads(self):
         src = BUILD.read_text(encoding="utf-8")
+        self.assertIn("tsos-live-install", src)
+        self.assertIn("TSOS_INSTALLER_STARTED", src)
         self.assertIn("city96/ComfyUI-GGUF", src)
         self.assertIn("tabbyapi-stack", src)
         self.assertNotIn("pacman -Sw", src)
@@ -26,5 +28,4 @@ class IsoBuildSmallTests(unittest.TestCase):
         self.assertIn("name: Build TSOS ISO", src)
         self.assertNotIn("codebox-images.tar", src)
         self.assertNotIn("split -b 1900M", src)
-        self.assertIn("small", src)
-        self.assertIn("tsos-installer.sh", src)
+        self.assertIn("first console starts the", src)
