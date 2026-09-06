@@ -125,3 +125,15 @@ class UpdateShFfPullTests(unittest.TestCase):
             self.assertEqual(data["no_label"], "Skip")
             self.assertTrue(data["pulled"])
             self.assertTrue(data.get("text"))
+
+
+INSTALL_SH = Path(__file__).resolve().parents[2] / "install.sh"
+
+
+class InstallShHeadlessUpdateTests(unittest.TestCase):
+    def test_text_gauge_requires_writable_tty(self):
+        src = INSTALL_SH.read_text()
+        self.assertIn("tty_writable()", src)
+        self.assertIn('if tty_writable; then\n    GAUGE_MODE="text"', src)
+        self.assertNotIn('if [[ -c /dev/tty ]]; then\n    GAUGE_MODE="text"', src)
+        self.assertIn(">/dev/tty 2>/dev/null || true", src)

@@ -153,7 +153,7 @@ progress() {
       printf '\r\033[K[%s%s] %3d%%  %s' \
         "$(printf '%*s' "$fill" '' | tr ' ' '#')" \
         "$(printf '%*s' $((50 - fill)) '')" \
-        "$pct" "$msg" >/dev/tty
+        "$pct" "$msg" >/dev/tty 2>/dev/null || true
       ;;
     verbose)
       echo "==> $msg"

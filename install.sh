@@ -141,6 +141,12 @@ fit_text() {
   printf '%s' "$text"
 }
 
+# /dev/tty often exists as a node under systemd-run with no controlling
+# terminal. Opening it then fails with ENXIO ("No such device or address").
+tty_writable() {
+  [[ -c /dev/tty ]] && { true >/dev/tty; } 2>/dev/null
+}
+
 # dialog draws the widget on stdout and returns the typed value on stderr.
 # Callers use DIALOG_OUT. The widget must go to /dev/tty (not a pipe).
 dialog_read() {
@@ -148,7 +154,7 @@ dialog_read() {
   DIALOG_OUT=""
   tmp=$(mktemp "${TMPDIR:-/tmp}/tabby-dialog.XXXXXX") || return 1
   set +e
-  if [[ -c /dev/tty ]] && { true >/dev/tty; } 2>/dev/null; then
+  if tty_writable; then
     dialog --backtitle "$BACKTITLE" "$@" 2> "$tmp" >/dev/tty
   else
     dialog --backtitle "$BACKTITLE" "$@" 2> "$tmp"
@@ -254,7 +260,7 @@ ensure_dialog() {
 }
 
 dialog_tty() {
-  if [[ -c /dev/tty ]] && { true >/dev/tty; } 2>/dev/null; then
+  if tty_writable; then
     dialog "$@" >/dev/tty
   else
     dialog "$@"
@@ -1056,7 +1062,7 @@ progress_start() {
 
   # The question screens ran in the TUI, so the work gets the install page:
   # painted by a background watcher on /dev/tty, same palette as the dialogs.
-  if [[ "${USE_TUI:-0}" -eq 1 && -c /dev/tty ]] && { true >/dev/tty; } 2>/dev/null; then
+  if [[ "${USE_TUI:-0}" -eq 1 ]] && tty_writable; then
     PAGE_TITLE="Installing tabbyapi-stack"
     [[ "$UPDATE_MODE" -eq 1 ]] && PAGE_TITLE="Updating tabbyapi-stack"
     GAUGE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/tabby-gauge.XXXXXX")"
@@ -1068,7 +1074,7 @@ progress_start() {
     GAUGE_MODE="page"
     return 0
   fi
-  if [[ -c /dev/tty ]]; then
+  if tty_writable; then
     GAUGE_MODE="text"
     return 0
   fi
@@ -1099,7 +1105,7 @@ progress() {
       printf '\r\033[K[%s%s] %3d%%  %s' \
         "$(printf '%*s' "$fill" '' | tr ' ' '#')" \
         "$(printf '%*s' $((50 - fill)) '')" \
-        "$pct" "$msg" >/dev/tty
+        "$pct" "$msg" >/dev/tty 2>/dev/null || true
       ;;
     verbose)
       echo "==> [$pct%] $msg"
