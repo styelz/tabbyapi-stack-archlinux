@@ -717,7 +717,6 @@ function mountChat(root) {
   const HEX_RENDER_MAX_BYTES = 256 * 1024;
   const ATTACH_TEXT_LIMIT = 80_000;
   const MAX_ATTACH = 12;
-  const STORAGE_KEY = "tabby-ui-chat-store";
   const SIDEBAR_W_MIN = 180;
   const SIDEBAR_W_MAX = 520;
   const SIDEBAR_W_DEFAULT = 268;
@@ -1290,14 +1289,6 @@ function mountChat(root) {
       chats.unshift(emptyChat("code", root.id));
     });
     return { version: 1, activeId, chats, lastByMode };
-  }
-
-  function readLegacyStore() {
-    try {
-      return normalizeStore(JSON.parse(localStorage.getItem(STORAGE_KEY) || "null"));
-    } catch {
-      return normalizeStore(null);
-    }
   }
 
   function wipeClientUiStorage() {
@@ -14697,29 +14688,13 @@ function mountChat(root) {
     } catch {
       incoming = null;
     }
-    const serverEmpty = !incoming || !Array.isArray(incoming.chats) || !incoming.chats.some(hasUserTurn);
-    let imported = false;
-    if (serverEmpty) {
-      const legacy = readLegacyStore();
-      if (legacy.chats.some(hasUserTurn)) {
-        incoming = legacy;
-        imported = true;
-      }
-    }
+    // Never copy browser leftovers onto the server. A fresh ISO at the same
+    // LAN URL used to re-import the previous machine's chats from localStorage.
     store = normalizeStore(incoming);
     messages = cloneMessages(store.chats.find((chat) => chat.id === store.activeId).messages);
     persistReady = true;
-    if (imported) {
-      try {
-        await TabbyUI.api("chats", { method: "PUT", body: store });
-        wipeClientUiStorage();
-      } catch {
-        /* Keep the browser copy until a later save lands on the server. */
-      }
-    } else {
-      wipeClientUiStorage();
-      if (fetched) persist();
-    }
+    wipeClientUiStorage();
+    if (fetched) persist();
     renderLog();
     paintToolbar();
     renderSidebar();

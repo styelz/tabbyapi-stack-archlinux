@@ -245,7 +245,8 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
         self.assertIn("await Promise.all(", self.src.split("async function clearHistory")[1].split("function hideHistoryMenu")[0])
         self.assertNotIn("function mergeChatStores", self.src)
         self.assertIn("function wipeClientUiStorage(", self.src)
-        self.assertIn("function readLegacyStore(", self.src)
+        self.assertNotIn("function readLegacyStore(", self.src)
+        self.assertNotIn("readLegacyStore()", self.src)
         self.assertIn('id="chat-tabs"', self.src)
         self.assertIn("chat-editor-col", self.src)
         self.assertIn("Boolean(tab) && !previewAsTab", self.src)
@@ -388,6 +389,7 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
         self.assertNotIn("localStorage", utils_src)
         self.assertNotIn("sessionStorage", utils_src)
         self.assertNotIn("localStorage.setItem", self.src)
+        self.assertNotIn("localStorage.getItem", self.src)
         self.assertNotIn("sessionStorage", self.src.split("function wipeClientUiStorage")[0])
         self.assertIn('api("prefs"', utils_src)
         self.assertIn("function patchPrefs(", utils_src)
@@ -395,7 +397,12 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
         self.assertIn("patchPrefs({ layout })", self.src)
         self.assertIn("patchPrefs({ codeAgent })", self.src)
         self.assertIn("wipeClientUiStorage()", self.src)
-        self.assertIn("readLegacyStore()", self.src)
+        self.assertNotIn("readLegacyStore()", self.src)
+        load_store = self.src.split("async function loadStore()")[1].split(
+            'window.addEventListener("tabby-gpu-status"'
+        )[0]
+        self.assertIn("wipeClientUiStorage()", load_store)
+        self.assertNotIn("imported", load_store)
         self.assertIn("TabbyUI.flushPrefs", app_src)
 
 

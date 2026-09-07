@@ -5464,6 +5464,18 @@ overlay_local_tabby_sources() {
       --exclude 'ComfyUI/' \
       --exclude 'tabby-install.log' \
       --exclude '.tabby-update-backup/' \
+      --exclude '.cursor/' \
+      --exclude '**/pasted-images/' \
+      --exclude '**/ui_chats/' \
+      --exclude '**/ui_workspaces/' \
+      --exclude '**/ui_prefs/' \
+      --exclude '**/config.yml' \
+      --exclude '**/api_tokens.yml' \
+      --exclude '**/tabby.env' \
+      --exclude '**/.env' \
+      --exclude '**/ui_users.json' \
+      --exclude '**/ui_sessions.json' \
+      --exclude '**/logs/' \
       "$src/" "$dest/"
   else
     local name
@@ -5472,7 +5484,11 @@ overlay_local_tabby_sources() {
     done
     mkdir -p "$dest/tabbyAPI"
     cp -a "$src/tabbyAPI/." "$dest/tabbyAPI/"
-    rm -rf "$dest/tabbyAPI/venv" "$dest/tabbyAPI/models"
+    rm -rf "$dest/tabbyAPI/venv" "$dest/tabbyAPI/models" "$dest/tabbyAPI/pasted-images" \
+      "$dest/tabbyAPI/logs"
+    rm -f "$dest/tabbyAPI/config.yml" "$dest/tabbyAPI/api_tokens.yml" \
+      "$dest/tabbyAPI/ui_users.json" "$dest/tabbyAPI/ui_sessions.json" \
+      "$dest/tabbyAPI/deploy/arch/tabby.env" "$dest/tabbyAPI/.env"
   fi
   chown_target_user_tree "/home/${TARGET_USER}/tabbyapi-stack"
 }

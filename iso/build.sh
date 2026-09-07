@@ -47,6 +47,8 @@ rsync -a --delete \
   --exclude '**/*.key' --exclude '**/*.pem' --exclude '**/id_ed25519*' \
   --exclude '**/id_rsa*' --exclude '**/.ssh/' --exclude '**/auth.json' \
   --exclude '**/logs/' --exclude '**/pasted-images/' \
+  --exclude '**/ui_chats/' --exclude '**/ui_workspaces/' --exclude '**/ui_prefs/' \
+  --exclude '.cursor/' --exclude 'tabby-install.log' \
   "$ROOT/" "$PAYLOAD/tabbyapi-stack/"
 if [[ -d "$ROOT/.git" ]]; then
   git -c "safe.directory=$ROOT" -C "$ROOT" \
@@ -298,6 +300,10 @@ if grep -q 'squashfs-root/opt/tsos/pacman/tsos.db' "$VERIFY/airootfs.list"; then
 fi
 if grep -q 'squashfs-root/opt/tsos/wheels/' "$VERIFY/airootfs.list"; then
   echo "ISO verification failed: Python wheels should not be on the small ISO" >&2
+  exit 1
+fi
+if grep -qE 'tabbyapi-stack/.*/pasted-images(/|$)' "$VERIFY/airootfs.list"; then
+  echo "ISO verification failed: pasted-images (chats/workspaces) must not ship on the ISO" >&2
   exit 1
 fi
 (cd "$OUT" && sha256sum tsos-archlinux.iso >SHA256SUMS)

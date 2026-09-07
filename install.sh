@@ -1377,6 +1377,16 @@ RSYNC_EXCLUDES=(
   --exclude 'tabbyAPI/ui_sessions.json'
 )
 
+# A first-time install must not keep chats, Code workspaces, prefs, gallery,
+# or extra UI users copied from an ISO overlay or a leftover tree at DEST.
+# Stack backup extras are copied back afterwards when restoring.
+clear_fresh_install_ui_state() {
+  [[ "${UPDATE_MODE:-0}" -eq 0 ]] || return 0
+  [[ -n "${DEST_TABBY:-}" ]] || return 0
+  rm -rf "$DEST_TABBY/pasted-images"
+  rm -f "$DEST_TABBY/ui_users.json" "$DEST_TABBY/ui_sessions.json"
+}
+
 # Copy the git tree (including .git when present) to the install root so the
 # live copy can git pull. Skip when dest is already this checkout.
 # Runtime dirs and secrets listed above are left alone.
@@ -1397,6 +1407,7 @@ sync_tabby_sources_to_dest() {
       install -m 755 "$STACK_ROOT/$script" "$DEST/$script"
     fi
   done
+  clear_fresh_install_ui_state
 }
 
 schedule_nvidia_reboot() {

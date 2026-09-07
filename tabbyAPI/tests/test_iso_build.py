@@ -50,6 +50,11 @@ class IsoBuildSmallTests(unittest.TestCase):
         self.assertNotIn("bundle_repo https://github.com/pyenv/pyenv.git", src)
         self.assertNotIn("comfyanonymous/ComfyUI.git", src)
         self.assertIn("frozen pacman repo should not be on the small ISO", src)
+        self.assertIn("pasted-images (chats/workspaces) must not ship on the ISO", src)
+        self.assertIn("--exclude '**/pasted-images/'", src)
+        self.assertIn("--exclude '**/ui_chats/'", src)
+        self.assertIn("--exclude '**/ui_workspaces/'", src)
+        self.assertIn("--exclude '**/ui_prefs/'", src)
 
     def test_mk_splash_writes_logo_and_spinner(self):
         spec = importlib.util.spec_from_file_location("mk_splash", MK_SPLASH)
@@ -116,3 +121,19 @@ class IsoBuildSmallTests(unittest.TestCase):
         self.assertIn("After choosing one, you can edit the path", src)
         self.assertIn("-name manifest.json", src)
         self.assertIn("-maxdepth 5", src)
+
+    def test_iso_and_install_drop_runtime_ui_data(self):
+        overlay = INSTALLER.read_text(encoding="utf-8").split(
+            "overlay_local_tabby_sources()"
+        )[1].split("chown_target_user_tree()")[0]
+        self.assertIn("--exclude '**/pasted-images/'", overlay)
+        self.assertIn("--exclude '**/ui_chats/'", overlay)
+        self.assertIn("--exclude '**/ui_workspaces/'", overlay)
+        self.assertIn("--exclude '**/ui_users.json'", overlay)
+        self.assertIn('rm -rf "$dest/tabbyAPI/venv" "$dest/tabbyAPI/models" "$dest/tabbyAPI/pasted-images"', overlay)
+        install = ROOT / "install.sh"
+        src = install.read_text(encoding="utf-8")
+        self.assertIn("clear_fresh_install_ui_state()", src)
+        self.assertIn('rm -rf "$DEST_TABBY/pasted-images"', src)
+        self.assertIn('[[ "${UPDATE_MODE:-0}" -eq 0 ]] || return 0', src)
+        self.assertIn("--exclude 'pasted-images/'", src)
