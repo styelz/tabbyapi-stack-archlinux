@@ -50,7 +50,7 @@ fun refresh_callback() {
 }
 
 fun message_callback(text) {
-    img = Image.Text(text, 0.80, 0.91, 1.00, 1.0, "Sans Bold 20", "center");
+    img = Image.Text(text, 0.80, 0.91, 1.00, 1.0, "Sans Bold 28", "center");
     max_width = Window.GetWidth() - 48;
     if (img.GetWidth() > max_width) {
         scale = max_width / img.GetWidth();

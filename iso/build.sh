@@ -140,7 +140,14 @@ find "$PROFILE/syslinux" "$PROFILE/grub" "$PROFILE/efiboot" \
 if [[ -f "$PROFILE/efiboot/loader/loader.conf" ]]; then
   sed -i -e 's/^timeout .*/timeout 5/' -e 's/^beep on/beep off/' \
     "$PROFILE/efiboot/loader/loader.conf"
+  grep -q '^console-mode ' "$PROFILE/efiboot/loader/loader.conf" \
+    && sed -i 's/^console-mode .*/console-mode keep/' "$PROFILE/efiboot/loader/loader.conf" \
+    || printf '%s\n' 'console-mode keep' >> "$PROFILE/efiboot/loader/loader.conf"
 fi
+for entry in "$PROFILE/efiboot/loader/entries/"*.conf; do
+  [[ -f "$entry" ]] || continue
+  sed -i 's/^title TSOS installer$/title TSOS installer - Loading, please wait/' "$entry"
+done
 if [[ -f "$PROFILE/syslinux/archiso_sys.cfg" ]]; then
   sed -i 's/^TIMEOUT .*/TIMEOUT 50/' "$PROFILE/syslinux/archiso_sys.cfg"
 fi

@@ -28,6 +28,8 @@ class IsoBuildSmallTests(unittest.TestCase):
         self.assertIn("themes/tsos", src)
         self.assertIn("loading.png", src)
         self.assertIn("please-wait.png", src)
+        self.assertIn("console-mode keep", src)
+        self.assertIn("Loading, please wait", src)
         self.assertIn("city96/ComfyUI-GGUF", src)
         self.assertIn("tabbyapi-stack", src)
         self.assertNotIn("pacman -Sw", src)
@@ -58,12 +60,23 @@ class IsoBuildSmallTests(unittest.TestCase):
                 self.assertGreater(len(data), 200, name)
             for ch in "ARCH LINUX + TABBYAPI-STACK":
                 self.assertIn(ch, mod.FONT, ch)
+            logo = mod.build_logo()
+            self.assertEqual(len(logo), 100)
+            self.assertEqual(len(logo[0]), 320)
+            visible_x = [
+                x
+                for row in logo
+                for x, pixel in enumerate(row)
+                if pixel != mod.BG
+            ]
+            visible_center = (min(visible_x) + max(visible_x)) / 2
+            self.assertEqual(visible_center, (len(logo[0]) - 1) / 2)
 
     def test_splash_layout_and_early_wait_hook(self):
         theme = PLYMOUTH_SCRIPT.read_text(encoding="utf-8")
         self.assertIn("column_height", theme)
         self.assertIn("spin_slot_y", theme)
-        self.assertIn('"Sans Bold 20"', theme)
+        self.assertIn('"Sans Bold 28"', theme)
         hook = INITCPIO_HOOK.read_text(encoding="utf-8")
         self.assertIn("LOADING", hook)
         self.assertIn("PLEASE WAIT", hook)

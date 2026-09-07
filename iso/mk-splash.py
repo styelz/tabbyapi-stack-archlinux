@@ -166,11 +166,14 @@ def build_splash() -> list[list[tuple[int, int, int]]]:
 
 
 def build_logo() -> list[list[tuple[int, int, int]]]:
-    w, h = 560, 180
+    # Keep the canvas tight around the visible mark. Plymouth centers the
+    # image rectangle, not its non-background pixels; the old 560px canvas
+    # had ~240px of navy padding on the right, visibly shifting the logo left.
+    w, h = 320, 100
     pixels = canvas(w, h)
-    stack_mark(pixels, 24, 54, 88, 88)
-    blit_text(pixels, 136, 58, "TSOS", FG, 8)
-    blit_text(pixels, 140, 130, "TABBYAPI-STACK", ACCENT, 2)
+    stack_mark(pixels, 16, 6, 88, 88)
+    blit_text(pixels, 120, 8, "TSOS", FG, 8)
+    blit_text(pixels, 124, 78, "TABBYAPI-STACK", ACCENT, 2)
     return pixels
 
 
