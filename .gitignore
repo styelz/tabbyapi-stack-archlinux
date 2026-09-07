@@ -26,6 +26,10 @@ Thumbs.db
 /harbor/
 /spacediner/
 
+# Generated ISO build artifacts
+/.iso-work/
+/out/
+
 # Runtime and secrets (also ignored inside tabbyAPI/)
 **/venv/
 tabbyAPI/ui/static/vs/

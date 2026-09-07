@@ -1,11 +1,39 @@
 #!/usr/bin/ash
 
-# Start Plymouth before udev's early hook. simpledrm is built into the Arch
-# kernel, so the UEFI GOP DRM device is already available through devtmpfs.
-# Waiting for udev here was the source of the visible black boot interval.
+# udev's early hook starts udevd immediately before this hook. Trigger only
+# display devices now so their seat metadata and device nodes exist before
+# Plymouth chooses a renderer. Starting Plymouth before udev works in QEMU but
+# makes some physical UEFI systems permanently select Plymouth's "..." text
+# renderer instead of the TSOS DRM theme.
+graphics_ready() {
+    local device
+    for device in /dev/dri/card* /dev/fb0; do
+        [ -e "$device" ] && return 0
+    done
+    return 1
+}
+
 run_earlyhook() {
+    local i
     [ -x /usr/bin/plymouthd ] && [ -x /usr/bin/plymouth ] || return 0
     /usr/bin/plymouth --ping >/dev/null 2>&1 && return 0
+
+    if command -v udevadm >/dev/null 2>&1; then
+        udevadm trigger --action=add --attr-match=class=0x030000 \
+            >/dev/null 2>&1 || true
+        udevadm trigger --action=add \
+            --subsystem-match=drm --subsystem-match=graphics \
+            >/dev/null 2>&1 || true
+        udevadm settle --timeout=5 >/dev/null 2>&1 || true
+    fi
+    i=0
+    while ! graphics_ready && [ "$i" -lt 50 ]; do
+        sleep 0.1
+        i=$((i + 1))
+    done
+    # Never start Plymouth without graphics: that is the three large dots
+    # seen on hardware where DRM appears later. run_hook paints a tty fallback.
+    graphics_ready || return 0
 
     mkdir -p /run/plymouth /dev/pts
     mountpoint -q /dev/pts 2>/dev/null ||
@@ -39,4 +67,16 @@ run_hook() {
         printf '\033[17;35HPLEASE WAIT'
         printf '\033[0m'
     } >"$tty"
+}
+
+# Keep the initramfs Plymouth daemon connected after switch-root. These are
+# normally supplied by Arch's runtime hook, which TSOS replaces so it can
+# control exactly when the daemon starts.
+run_latehook() {
+    /usr/bin/plymouth update-root-fs --new-root-dir=/new_root \
+        >/dev/null 2>&1 || true
+}
+
+run_emergencyhook() {
+    /usr/bin/plymouth --wait quit >/dev/null 2>&1 || true
 }

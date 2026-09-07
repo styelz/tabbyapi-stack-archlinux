@@ -25,11 +25,12 @@ Ventoy works too. Disable Secure Boot.
 
 After the boot menu, the live initramfs uses fast Zstd decompression to shorten
 the kernel handoff where no userspace can draw. Plymouth then starts on the
-UEFI SimpleDRM framebuffer from the first initramfs hook, before udev enumerates
-hardware, so the centered TSOS logo and spinner cover early userspace. They
-stay up until the first installer question. Plug in Ethernet (or set up Wi-Fi
-from Alt+F2 with `iwctl`). The first menu is Simple, Advanced, or Restore from
-backup (a Status
+UEFI framebuffer as soon as udev has prepared the display device, before the
+rest of the hardware is enumerated. This avoids Plymouth's three-dot text
+fallback on physical GPUs while keeping the centered TSOS logo and spinner over
+early userspace. They stay up until the first installer question. Plug in
+Ethernet (or set up Wi-Fi from Alt+F2 with `iwctl`). The first menu is Simple,
+Advanced, or Restore from backup (a Status
 / `tsctl` folder on USB). Choose **Mount a drive or device** there to mount a
 backup or model-weight filesystem under `/run/media/tsos`, then return to the
 setup menu. The weights picker lists mounted storage and likely model folders,

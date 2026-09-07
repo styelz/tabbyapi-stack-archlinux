@@ -183,15 +183,16 @@ archiso_hooks="$PROFILE/airootfs/etc/mkinitcpio.conf.d/archiso.conf"
 }
 # simpledrm is built into the Arch kernel, so there is no module file to add to
 # MODULES. tsos_wait's build hook imports Plymouth's packaged files and theme
-# without its late, unconditional runtime daemon start. The TSOS runtime hook
-# starts Plymouth on the UEFI framebuffer before udev enumeration and KMS.
+# without its late, unconditional runtime daemon start. udevd must start first
+# so physical GPUs receive their seat metadata before Plymouth picks a renderer;
+# tsos_wait then triggers display devices without waiting for all hardware.
 sed -i -E \
   -e 's/[[:space:]]+tsos_wait//g' \
   -e 's/[[:space:]]+plymouth//g' \
-  -e 's/\budev\b/tsos_wait udev/' \
+  -e 's/\budev\b/udev tsos_wait/' \
   "$archiso_hooks"
-grep -qE '\btsos_wait udev\b.*\bkms\b' "$archiso_hooks" || {
-  echo "could not order early Plymouth before udev and kms" >&2
+grep -qE '\budev tsos_wait\b.*\bkms\b' "$archiso_hooks" || {
+  echo "could not order udev and early Plymouth before kms" >&2
   exit 1
 }
 # The bootloader hands off a black framebuffer while the kernel decompresses
@@ -299,6 +300,6 @@ if grep -q 'squashfs-root/opt/tsos/wheels/' "$VERIFY/airootfs.list"; then
   echo "ISO verification failed: Python wheels should not be on the small ISO" >&2
   exit 1
 fi
-sha256sum "$OUT/tsos-archlinux.iso" >"$OUT/SHA256SUMS"
+(cd "$OUT" && sha256sum tsos-archlinux.iso >SHA256SUMS)
 log "Built $OUT/tsos-archlinux.iso"
 disk
