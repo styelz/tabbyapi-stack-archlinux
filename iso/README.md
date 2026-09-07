@@ -29,7 +29,10 @@ installer question. Plug in Ethernet (or set up Wi-Fi from Alt+F2 with
 `iwctl`). The first menu is Simple, Advanced, or Restore from backup (a Status
 / `tsctl` folder on USB). Choose **Mount a drive or device** there to mount a
 backup or model-weight filesystem under `/run/media/tsos`, then return to the
-setup menu. When it finishes, reboot.
+setup menu. The weights picker lists mounted storage and likely model folders,
+then opens the selected path for editing. Restore searches mounted storage for
+valid stack backup manifests, including backups in dated subfolders. When it
+finishes, reboot.
 
 If you quit it, a root shell is left; run `tsos-installer.sh` to start again.
 

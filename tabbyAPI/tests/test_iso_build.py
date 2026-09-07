@@ -10,6 +10,7 @@ WORKFLOW = ROOT / ".github" / "workflows" / "iso.yml"
 MK_SPLASH = ROOT / "iso" / "mk-splash.py"
 PLYMOUTH_SCRIPT = ROOT / "iso" / "plymouth" / "tsos.script"
 INITCPIO_HOOK = ROOT / "iso" / "initcpio" / "hooks" / "tsos_wait"
+INSTALLER = ROOT / "tsos-installer.sh"
 
 
 class IsoBuildSmallTests(unittest.TestCase):
@@ -87,3 +88,11 @@ class IsoBuildSmallTests(unittest.TestCase):
         self.assertNotIn("codebox-images.tar", src)
         self.assertNotIn("split -b 1900M", src)
         self.assertIn("first console starts the", src)
+
+    def test_installer_discovers_mounted_weights_and_backups(self):
+        src = INSTALLER.read_text(encoding="utf-8")
+        self.assertIn("list_mounted_storage()", src)
+        self.assertIn("list_weight_sources()", src)
+        self.assertIn("After choosing one, you can edit the path", src)
+        self.assertIn("-name manifest.json", src)
+        self.assertIn("-maxdepth 5", src)

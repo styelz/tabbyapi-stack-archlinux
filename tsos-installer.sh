@@ -25,7 +25,7 @@ SCRIPT_NAME="${0##*/}"
 if [[ "$SCRIPT_NAME" == "bash" || "$SCRIPT_NAME" == "-bash" || "$SCRIPT_NAME" == "sh" || "$SCRIPT_NAME" == "-sh" ]]; then
   SCRIPT_NAME="tsos-installer.sh"
 fi
-SCRIPT_VERSION="1.0.58"
+SCRIPT_VERSION="1.0.59"
 
 # Generic defaults. Do not default TARGET_HOSTNAME from $HOSTNAME — the live
 # ISO sets HOSTNAME=archiso.
@@ -1744,28 +1744,37 @@ linux_user_from_install_root() {
 }
 
 list_stack_backups() {
-  local dir candidate
+  local dir candidate manifest
   (
     shopt -s nullglob
-    for dir in \
-      /run/media/usb/tabby-backup \
-      /mnt/usb/tabby-backup \
-      /run/media/usb \
-      /mnt/usb \
-      /run/media/* \
-      /run/media/*/* \
-      /media/* \
-      /mnt/*
-    do
+    {
+      printf '%s\n' /run/media/usb /mnt/usb
+      while IFS=$'\t' read -r dir _description; do
+        [[ -n "$dir" ]] && printf '%s\n' "$dir"
+      done < <(list_mounted_storage)
+    } | awk 'NF && !seen[$0]++' | while IFS= read -r dir; do
       [[ -d "$dir" ]] || continue
       if is_stack_backup "$dir"; then
         printf '%s\n' "$dir"
       fi
-      for candidate in "$dir/tabby-backup" "$dir/tabbyapi-stack"; do
+      for candidate in \
+        "$dir/tabby-backup" \
+        "$dir/tabbyapi-stack-backup" \
+        "$dir/backups/tabby-backup" \
+        "$dir/tabbyapi-stack"
+      do
         if is_stack_backup "$candidate"; then
           printf '%s\n' "$candidate"
         fi
       done
+      # Backups are folders, not one fixed filename. Search mounted storage
+      # a few levels deep for their identifying manifest so dated/nested
+      # backup folders are discovered without walking an entire disk.
+      while IFS= read -r -d '' manifest; do
+        candidate=${manifest%/manifest.json}
+        is_stack_backup "$candidate" && printf '%s\n' "$candidate"
+      done < <(find "$dir" -xdev -mindepth 1 -maxdepth 5 -type f \
+        -name manifest.json -print0 2>/dev/null)
     done
   ) | awk 'NF && !seen[$0]++'
 }
@@ -1908,7 +1917,7 @@ show_restore_summary() {
 }
 
 prompt_backup_source() {
-  local cache_choice found path
+  local cache_choice found path mounted_default _description
   if [[ -n "${BACKUP_FROM_CLI:-}" && -n "${TABBY_BACKUP:-}" ]]; then
     apply_backup_settings "$TABBY_BACKUP" && return 0
     die "Not a stack backup (missing manifest.json): $TABBY_BACKUP"
@@ -1919,6 +1928,11 @@ prompt_backup_source() {
   fi
 
   mapfile -t found < <(list_stack_backups)
+  while IFS=$'\t' read -r path _description; do
+    [[ -n "$path" ]] || continue
+    mounted_default=$path
+    break
+  done < <(list_mounted_storage)
   if ((USE_TUI)); then
     local -a args=()
     local item
@@ -1945,7 +1959,7 @@ Mount the USB first if you copied the backup there
 "Folder created by Status or: tsctl backup PATH --config --users --chats
 
 It must contain manifest.json." \
-          "${TABBY_BACKUP:-/run/media/usb/tabby-backup}") || return 1
+          "${TABBY_BACKUP:-${found[0]:-${mounted_default:-/run/media/usb/tabby-backup}}}") || return 1
         ;;
       *) path=$cache_choice ;;
     esac
@@ -1960,7 +1974,8 @@ It must contain manifest.json." \
     fi
     printf '%s\n' >/dev/tty \
 "Backup folder from Status or tsctl (manifest.json + models)."
-    path=$(ask "Backup path" "${TABBY_BACKUP:-${found[0]:-/run/media/usb/tabby-backup}}")
+    path=$(ask "Backup path" \
+      "${TABBY_BACKUP:-${found[0]:-${mounted_default:-/run/media/usb/tabby-backup}}}")
   fi
   path=${path%/}
   if ! is_stack_backup "$path"; then
@@ -2115,40 +2130,58 @@ Examples: Australia/Sydney  America/New_York  Europe/London  UTC"
 # Hugging Face, a USB copy, or a typed folder. --tabby-cache skips the ask.
 prompt_weights_source() {
   local title="${1:-Weights source}"
-  local cache_choice
+  local cache_choice path description edit_default first_local
   if [[ -z "${CACHE_FROM_CLI:-}" ]]; then
     if ((USE_TUI)); then
+      local -a args=(
+        hf "Hugging Face (models that fit this GPU)"
+      )
+      while IFS=$'\t' read -r path description; do
+        [[ -n "$path" ]] || continue
+        [[ -n "$first_local" ]] || first_local=$path
+        args+=("$path" "$description")
+      done < <(list_weight_sources)
+      args+=(
+        usb "Legacy path: /run/media/usb/tabbyapi-stack"
+        custom "Type or edit another path"
+      )
       cache_choice=$(ui_menu "$title" \
 "Where should the installer get model weights?
 
 Hugging Face — download models that fit this NVIDIA GPU.
-A local path — search that folder (USB copy, old tabbyapi-stack,
-or model dirs). Name it now; the new root mounts at /mnt next.
+A mounted filesystem or likely weights folder is listed below.
+After choosing one, you can edit the path to select a subfolder.
 
-Mount the USB first if you want that option (not under /mnt)." \
-        hf "Hugging Face (models that fit this GPU)" \
-        usb "Use /run/media/usb/tabbyapi-stack" \
-        custom "Type another path") || return 1
+Mount storage from the Setup type page first (not under /mnt)." \
+        "${args[@]}") || return 1
       case "$cache_choice" in
         hf|none) TABBY_CACHE="" ;;
-        usb) TABBY_CACHE="/run/media/usb/tabbyapi-stack" ;;
-        custom)
+        usb) edit_default="/run/media/usb/tabbyapi-stack" ;;
+        custom) edit_default="${TABBY_CACHE:-${first_local:-/run/media/tsos}}" ;;
+        *) edit_default="$cache_choice" ;;
+      esac
+      if [[ -n "$edit_default" ]]; then
           TABBY_CACHE=$(ui_input "Weights cache path" \
 "Folder to search for existing weights. Any of these work:
 
   /run/media/usb/tabbyapi-stack
   /run/media/usb/tabbyapi-stack/tabbyAPI/models
-  /tmp/tabby-weights
+  /run/media/tsos/my-drive/models
 
-The installer lists what it finds next. Blank = Hugging Face." \
-            "$TABBY_CACHE") || return 1
-          ;;
-        *) TABBY_CACHE="$cache_choice" ;;
-      esac
+The selected path is editable. Blank = Hugging Face." \
+            "$edit_default") || return 1
+      fi
     else
-      printf '%s\n' >/dev/tty \
-"Weights: hf = Hugging Face, usb = /run/media/usb/tabbyapi-stack, or type a folder path."
-      cache_choice=$(ask "Weights source (hf / usb / path)" "${TABBY_CACHE:-hf}")
+      printf '%s\n' "Mounted weight sources:" >/dev/tty
+      while IFS=$'\t' read -r path description; do
+        [[ -n "$path" ]] || continue
+        [[ -n "$first_local" ]] || first_local=$path
+        printf '  %s — %s\n' "$path" "$description" >/dev/tty
+      done < <(list_weight_sources)
+      printf '%s\n' \
+"Use hf for Hugging Face, usb for the legacy USB path, or enter/edit a folder path." >/dev/tty
+      cache_choice=$(ask "Weights source (hf / usb / path)" \
+        "${TABBY_CACHE:-${first_local:-hf}}")
       case "$cache_choice" in
         hf|HF|"") TABBY_CACHE="" ;;
         usb|USB) TABBY_CACHE="/run/media/usb/tabbyapi-stack" ;;
@@ -2190,6 +2223,40 @@ list_mountable_devices() {
     [[ -n "$target" ]] && description+="  (mounted: ${target})"
     printf '%s\t%s\n' "$path" "$description"
   done < <(lsblk -lnp -o NAME 2>/dev/null | sort -u)
+}
+
+list_mounted_storage() {
+  local path description target
+  while IFS=$'\t' read -r path description; do
+    [[ -n "$path" ]] || continue
+    target=$(findmnt -rn -S "$path" -o TARGET 2>/dev/null | head -n1 || true)
+    [[ -n "$target" && -d "$target" ]] || continue
+    case "$target" in
+      /run/media/*|/media/*|/mnt/usb|/mnt/usb/*) ;;
+      *) continue ;;
+    esac
+    printf '%s\t%s\n' "$target" "$path  ${description%%  (mounted:*}"
+  done < <(list_mountable_devices) | awk -F '\t' 'NF && !seen[$1]++'
+}
+
+list_weight_sources() {
+  local mount description candidate kind
+  while IFS=$'\t' read -r mount description; do
+    [[ -n "$mount" && -d "$mount" ]] || continue
+    printf '%s\tMounted filesystem — %s\n' "$mount" "$description"
+    for candidate in \
+      "$mount/tabbyapi-stack" \
+      "$mount/tabbyapi-stack/tabbyAPI/models" \
+      "$mount/tabbyAPI/models" \
+      "$mount/models" \
+      "$mount/tabby-backup"
+    do
+      [[ -d "$candidate" ]] || continue
+      kind="possible weights folder"
+      is_stack_backup "$candidate" && kind="stack backup with model weights"
+      printf '%s\t%s\n' "$candidate" "$kind"
+    done
+  done < <(list_mounted_storage) | awk -F '\t' 'NF && !seen[$1]++'
 }
 
 mount_device_from_start() {
