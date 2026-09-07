@@ -25,7 +25,7 @@ SCRIPT_NAME="${0##*/}"
 if [[ "$SCRIPT_NAME" == "bash" || "$SCRIPT_NAME" == "-bash" || "$SCRIPT_NAME" == "sh" || "$SCRIPT_NAME" == "-sh" ]]; then
   SCRIPT_NAME="tsos-installer.sh"
 fi
-SCRIPT_VERSION="1.0.59"
+SCRIPT_VERSION="1.0.60"
 
 # Generic defaults. Do not default TARGET_HOSTNAME from $HOSTNAME — the live
 # ISO sets HOSTNAME=archiso.
@@ -3704,6 +3704,24 @@ ENV
   TSOS_LOG=$saved_log
   rm -rf "$gdir"
 
+  local splash_root saved_target
+  splash_root=$(mktemp -d)
+  saved_target=$TARGET
+  TARGET=$splash_root
+  if stage_target_boot_splash \
+    && [[ -f "$TARGET/usr/share/plymouth/themes/tsos/spinner.png" ]] \
+    && [[ -f "$TARGET/usr/share/plymouth/themes/tsos/logo.png" ]] \
+    && [[ -f "$TARGET/usr/lib/initcpio/hooks/tsos_wait" ]] \
+    && [[ -f "$TARGET/usr/lib/initcpio/install/tsos_wait" ]] \
+    && grep -q '^Theme=tsos$' "$TARGET/etc/plymouth/plymouthd.conf"; then
+    printf 'ok   stage_target_boot_splash\n'
+  else
+    printf 'FAIL stage_target_boot_splash\n' >&2
+    failed=1
+  fi
+  TARGET=$saved_target
+  rm -rf "$splash_root"
+
   if ((failed)); then
     die "self-test failed"
   fi
@@ -4840,6 +4858,7 @@ install_base() {
     sudo git curl wget
     iproute2 inetutils   # ip + hostname for the login MOTD
     limine
+    plymouth
     vim nano man-db
     pipewire pipewire-pulse pipewire-alsa wireplumber
     nvidia-utils
@@ -4862,6 +4881,92 @@ install_base() {
   enable_target_offline_repo
 }
 
+# Checkout that ships iso/plymouth and iso/initcpio (TSOS ISO payload or
+# a local tabbyapi-stack tree). Empty when curl | bash has no overlay.
+tsos_source_tree() {
+  local candidate script
+  for candidate in \
+    "${TABBY_LOCAL_SRC:-}" \
+    "${TSOS_PAYLOAD_ROOT:-}/tabbyapi-stack" \
+    "${TSOS_OFFLINE_ROOT:-}/tabbyapi-stack" \
+    /opt/tsos/tabbyapi-stack
+  do
+    [[ -n "$candidate" && -f "$candidate/iso/plymouth/tsos.script" \
+      && -f "$candidate/iso/initcpio/hooks/tsos_wait" ]] || continue
+    printf '%s\n' "$candidate"
+    return 0
+  done
+  if script=$(installer_self_path); then
+    candidate="$(cd "$(dirname "$script")" && pwd)"
+    if [[ -f "$candidate/iso/plymouth/tsos.script" \
+      && -f "$candidate/iso/initcpio/hooks/tsos_wait" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+# Same Plymouth theme + early-wait hook as the live ISO, so the installed
+# system keeps the TSOS logo and spinner from kernel start until login.
+stage_target_boot_splash() {
+  local dest_theme="$TARGET/usr/share/plymouth/themes/tsos"
+  local tree="" live_theme=/usr/share/plymouth/themes/tsos
+  local live_hook=/usr/lib/initcpio/hooks/tsos_wait
+  local live_install=/usr/lib/initcpio/install/tsos_wait
+  local tmp=""
+
+  install -d "$dest_theme" "$TARGET/etc/plymouth" \
+    "$TARGET/usr/lib/initcpio/hooks" "$TARGET/usr/lib/initcpio/install"
+
+  tree=$(tsos_source_tree || true)
+  if [[ -n "$tree" ]]; then
+    install -m 0644 "$tree/iso/initcpio/hooks/tsos_wait" \
+      "$TARGET/usr/lib/initcpio/hooks/tsos_wait"
+    install -m 0644 "$tree/iso/initcpio/install/tsos_wait" \
+      "$TARGET/usr/lib/initcpio/install/tsos_wait"
+    install -m 0644 "$tree/iso/plymouth/tsos.plymouth" "$dest_theme/tsos.plymouth"
+    install -m 0644 "$tree/iso/plymouth/tsos.script" "$dest_theme/tsos.script"
+  elif [[ -f "$live_hook" && -f "$live_install" \
+    && -f "$live_theme/tsos.plymouth" && -f "$live_theme/tsos.script" ]]; then
+    install -m 0644 "$live_hook" "$TARGET/usr/lib/initcpio/hooks/tsos_wait"
+    install -m 0644 "$live_install" "$TARGET/usr/lib/initcpio/install/tsos_wait"
+    install -m 0644 "$live_theme/tsos.plymouth" "$dest_theme/tsos.plymouth"
+    install -m 0644 "$live_theme/tsos.script" "$dest_theme/tsos.script"
+  fi
+
+  if [[ -f "$live_theme/spinner.png" && -f "$live_theme/logo.png" \
+    && -f "$live_theme/loading.png" && -f "$live_theme/please-wait.png" ]]; then
+    install -m 0644 "$live_theme/logo.png" "$dest_theme/logo.png"
+    install -m 0644 "$live_theme/spinner.png" "$dest_theme/spinner.png"
+    install -m 0644 "$live_theme/loading.png" "$dest_theme/loading.png"
+    install -m 0644 "$live_theme/please-wait.png" "$dest_theme/please-wait.png"
+  elif [[ -n "$tree" && -f "$tree/iso/mk-splash.py" ]] && command -v python3 >/dev/null; then
+    tmp=$(mktemp -d)
+    if python3 "$tree/iso/mk-splash.py" "$tmp"; then
+      install -m 0644 "$tmp/logo.png" "$dest_theme/logo.png"
+      install -m 0644 "$tmp/spinner.png" "$dest_theme/spinner.png"
+      install -m 0644 "$tmp/loading.png" "$dest_theme/loading.png"
+      install -m 0644 "$tmp/please-wait.png" "$dest_theme/please-wait.png"
+    fi
+    rm -rf "$tmp"
+  fi
+
+  if [[ -f "$dest_theme/spinner.png" && -f "$dest_theme/tsos.script" \
+    && -f "$TARGET/usr/lib/initcpio/hooks/tsos_wait" ]]; then
+    cat >"$TARGET/etc/plymouth/plymouthd.conf" <<'EOF'
+[Daemon]
+Theme=tsos
+ShowDelay=0
+UseSimpledrm=true
+EOF
+    log "TSOS boot splash staged for the installed system"
+    return 0
+  fi
+  log "TSOS boot splash was not staged; the installed system will boot in text"
+  return 1
+}
+
 write_chroot_files() {
   local luks_uuid="" root_uuid=""
   if ((ENCRYPT)); then
@@ -4874,6 +4979,7 @@ write_chroot_files() {
   fi
 
   install -d "$TARGET/root"
+  stage_target_boot_splash || true
 
   {
     printf 'TARGET_HOSTNAME=%q\n' "$TARGET_HOSTNAME"
@@ -4957,18 +5063,25 @@ install -d -m 0755 /var/lib/systemd/linger
 touch "/var/lib/systemd/linger/${TARGET_USER}"
 loginctl enable-linger "$TARGET_USER" || true
 
+splash_hook=""
+SPLASH_CMDLINE=""
+# Same early Plymouth as the live ISO: start after udev has a DRM/fb device,
+# before kms and (when used) encrypt, so the spinner is up for LUKS too.
+if [[ -x /usr/bin/plymouthd && -f /usr/lib/initcpio/install/plymouth \
+  && -f /usr/lib/initcpio/install/tsos_wait \
+  && -f /usr/share/plymouth/themes/tsos/spinner.png ]]; then
+  splash_hook=" tsos_wait"
+  SPLASH_CMDLINE=" quiet splash plymouth.use-simpledrm=1 loglevel=3 systemd.show_status=false rd.udev.log_level=3 vt.global_cursor_default=0"
+fi
 if [[ "$ENCRYPT" == "1" ]]; then
-  if grep -q '^HOOKS=' /etc/mkinitcpio.conf; then
-    sed -i 's/^HOOKS=.*/HOOKS=(base udev autodetect microcode modconf kms keyboard keymap consolefont block encrypt filesystems fsck)/' /etc/mkinitcpio.conf
-  else
-    printf '%s\n' 'HOOKS=(base udev autodetect microcode modconf kms keyboard keymap consolefont block encrypt filesystems fsck)' >>/etc/mkinitcpio.conf
-  fi
+  hooks="base udev${splash_hook} autodetect microcode modconf kms keyboard keymap consolefont block encrypt filesystems fsck"
 else
-  if grep -q '^HOOKS=' /etc/mkinitcpio.conf; then
-    sed -i 's/^HOOKS=.*/HOOKS=(base udev autodetect microcode modconf kms keyboard keymap consolefont block filesystems fsck)/' /etc/mkinitcpio.conf
-  else
-    printf '%s\n' 'HOOKS=(base udev autodetect microcode modconf kms keyboard keymap consolefont block filesystems fsck)' >>/etc/mkinitcpio.conf
-  fi
+  hooks="base udev${splash_hook} autodetect microcode modconf kms keyboard keymap consolefont block filesystems fsck"
+fi
+if grep -q '^HOOKS=' /etc/mkinitcpio.conf; then
+  sed -i "s/^HOOKS=.*/HOOKS=(${hooks})/" /etc/mkinitcpio.conf
+else
+  printf '%s\n' "HOOKS=(${hooks})" >>/etc/mkinitcpio.conf
 fi
 if grep -q '^MODULES=' /etc/mkinitcpio.conf; then
   sed -i 's/^MODULES=.*/MODULES=(btrfs)/' /etc/mkinitcpio.conf
@@ -4979,9 +5092,9 @@ mkinitcpio -P
 
 # nvidia-drm.modeset=1 is required for the TTY KMS screensaver.
 if [[ "$ENCRYPT" == "1" ]]; then
-  CMDLINE="cryptdevice=UUID=${LUKS_UUID}:${CRYPT_NAME} root=/dev/mapper/${CRYPT_NAME} rw rootfstype=btrfs rootflags=subvol=@ nvidia-drm.modeset=1"
+  CMDLINE="cryptdevice=UUID=${LUKS_UUID}:${CRYPT_NAME} root=/dev/mapper/${CRYPT_NAME} rw rootfstype=btrfs rootflags=subvol=@ nvidia-drm.modeset=1${SPLASH_CMDLINE}"
 else
-  CMDLINE="root=UUID=${ROOT_UUID} rw rootfstype=btrfs rootflags=subvol=@ nvidia-drm.modeset=1"
+  CMDLINE="root=UUID=${ROOT_UUID} rw rootfstype=btrfs rootflags=subvol=@ nvidia-drm.modeset=1${SPLASH_CMDLINE}"
 fi
 install -d /etc/modprobe.d
 printf '%s\n' 'options nvidia_drm modeset=1' >/etc/modprobe.d/nvidia-drm.conf

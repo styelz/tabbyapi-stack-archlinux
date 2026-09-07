@@ -122,6 +122,26 @@ class IsoBuildSmallTests(unittest.TestCase):
         self.assertIn("-name manifest.json", src)
         self.assertIn("-maxdepth 5", src)
 
+    def test_installer_installs_plymouth_on_full_arch(self):
+        src = INSTALLER.read_text(encoding="utf-8")
+        self.assertIn("stage_target_boot_splash()", src)
+        self.assertIn("tsos_source_tree()", src)
+        self.assertRegex(
+            src, r"(?m)^\s+plymouth$", msg="plymouth must be pacstrapped"
+        )
+        self.assertIn("splash_hook=\" tsos_wait\"", src)
+        self.assertIn(
+            "quiet splash plymouth.use-simpledrm=1 loglevel=3 systemd.show_status=false",
+            src,
+        )
+        self.assertIn("UseSimpledrm=true", src)
+        chroot = src.split('cat >"$TARGET/root/configure-arch.sh"')[1].split(
+            "CHROOT\n"
+        )[0]
+        self.assertIn("udev${splash_hook}", chroot)
+        self.assertIn("nvidia-drm.modeset=1${SPLASH_CMDLINE}", chroot)
+        self.assertNotIn("plymouth-quit.service", chroot)
+
     def test_iso_and_install_drop_runtime_ui_data(self):
         overlay = INSTALLER.read_text(encoding="utf-8").split(
             "overlay_local_tabby_sources()"

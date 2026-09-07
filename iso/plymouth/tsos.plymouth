@@ -1,6 +1,6 @@
 [Plymouth Theme]
 Name=TSOS
-Description=TSOS installer logo and spinner
+Description=TSOS logo and spinner
 ModuleName=script
 
 [script]

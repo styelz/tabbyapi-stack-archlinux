@@ -28,7 +28,9 @@ the kernel handoff where no userspace can draw. Plymouth then starts on the
 UEFI framebuffer as soon as udev has prepared the display device, before the
 rest of the hardware is enumerated. This avoids Plymouth's three-dot text
 fallback on physical GPUs while keeping the centered TSOS logo and spinner over
-early userspace. They stay up until the first installer question. Plug in
+early userspace. They stay up until the first installer question. The same
+Plymouth theme is copied onto the installed Arch system, so reboot shows the
+TSOS logo and spinner until login (Plymouth then quits for the getty). Plug in
 Ethernet (or set up Wi-Fi from Alt+F2 with `iwctl`). The first menu is Simple,
 Advanced, or Restore from backup (a Status
 / `tsctl` folder on USB). Choose **Mount a drive or device** there to mount a
