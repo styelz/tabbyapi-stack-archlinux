@@ -182,13 +182,29 @@ archiso_hooks="$PROFILE/airootfs/etc/mkinitcpio.conf.d/archiso.conf"
   exit 1
 }
 # simpledrm is built into the Arch kernel, so there is no module file to add to
-# MODULES. Start the text wait hook and Plymouth after udev, before full GPU KMS.
+# MODULES. tsos_wait's build hook imports Plymouth's packaged files and theme
+# without its late, unconditional runtime daemon start. The TSOS runtime hook
+# starts Plymouth on the UEFI framebuffer before udev enumeration and KMS.
 sed -i -E \
-  -e 's/[[:space:]]+(tsos_wait|plymouth)([[:space:]]|\))/\2/g' \
-  -e 's/\budev\b/udev tsos_wait plymouth/' \
+  -e 's/[[:space:]]+tsos_wait//g' \
+  -e 's/[[:space:]]+plymouth//g' \
+  -e 's/\budev\b/tsos_wait udev/' \
   "$archiso_hooks"
-grep -qE '\budev tsos_wait plymouth\b.*\bkms\b' "$archiso_hooks" || {
-  echo "could not order tsos_wait and plymouth before kms" >&2
+grep -qE '\btsos_wait udev\b.*\bkms\b' "$archiso_hooks" || {
+  echo "could not order early Plymouth before udev and kms" >&2
+  exit 1
+}
+# The bootloader hands off a black framebuffer while the kernel decompresses
+# the initramfs; no userspace splash can run during that interval. Arch releng
+# defaults to maximum XZ compression, which takes several visible seconds even
+# on a fast machine. Zstd trades a modest ISO-size increase for much faster
+# decompression so Plymouth's first hook can paint almost immediately.
+sed -i -E \
+  -e 's/^COMPRESSION=.*/COMPRESSION="zstd"/' \
+  -e 's/^COMPRESSION_OPTIONS=.*/COMPRESSION_OPTIONS=(-19 -T0)/' \
+  "$archiso_hooks"
+grep -q '^COMPRESSION="zstd"$' "$archiso_hooks" || {
+  echo "could not select fast Zstd initramfs compression" >&2
   exit 1
 }
 # Blank the Arch getty banner. tty1 autologins, then tsos-live-install paints.
@@ -200,7 +216,7 @@ mkdir -p "$PROFILE/airootfs/etc/systemd/system/getty@tty1.service.d"
 cat >"$PROFILE/airootfs/etc/systemd/system/getty@tty1.service.d/autologin.conf" <<'EOF'
 [Service]
 ExecStart=
-ExecStart=-/usr/bin/agetty --noissue --autologin root - linux
+ExecStart=-/usr/bin/agetty --noclear --noissue --autologin root - linux
 EOF
 for package in dialog rsync git plymouth; do
   grep -qxF "$package" "$PROFILE/packages.x86_64" || echo "$package" >>"$PROFILE/packages.x86_64"
@@ -229,8 +245,9 @@ fi
 
 log "Building ISO"
 disk
+rm -f "$OUT/tsos-archlinux.iso" "$OUT/SHA256SUMS"
 mkarchiso -v -w "$WORK/mkarchiso" -o "$OUT" "$PROFILE"
-iso="$(find "$OUT" -maxdepth 1 -type f -name '*.iso' -print -quit)"
+iso="$(find "$OUT" -maxdepth 1 -type f -name 'tsos-archlinux-*-x86_64.iso' -print -quit)"
 [[ -n "$iso" ]] || { echo "mkarchiso produced no ISO" >&2; exit 1; }
 mv "$iso" "$OUT/tsos-archlinux.iso"
 VERIFY="$WORK/verify"

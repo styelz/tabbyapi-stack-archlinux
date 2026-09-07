@@ -10,6 +10,7 @@ WORKFLOW = ROOT / ".github" / "workflows" / "iso.yml"
 MK_SPLASH = ROOT / "iso" / "mk-splash.py"
 PLYMOUTH_SCRIPT = ROOT / "iso" / "plymouth" / "tsos.script"
 INITCPIO_HOOK = ROOT / "iso" / "initcpio" / "hooks" / "tsos_wait"
+INITCPIO_INSTALL = ROOT / "iso" / "initcpio" / "install" / "tsos_wait"
 INSTALLER = ROOT / "tsos-installer.sh"
 
 
@@ -18,13 +19,18 @@ class IsoBuildSmallTests(unittest.TestCase):
         src = BUILD.read_text(encoding="utf-8")
         self.assertIn("tsos-live-install", src)
         self.assertIn("TSOS_INSTALLER_STARTED", src)
-        self.assertIn("ExecStart=-/usr/bin/agetty --noissue --autologin root - linux", src)
+        self.assertIn(
+            "ExecStart=-/usr/bin/agetty --noclear --noissue --autologin root - linux",
+            src,
+        )
         self.assertNotIn("agetty --noreset --clear", src)
         self.assertIn("plymouth", src)
         self.assertIn("quiet splash", src)
         self.assertIn("plymouth.use-simpledrm=1", src)
         self.assertIn("UseSimpledrm=true", src)
-        self.assertIn("udev tsos_wait plymouth", src)
+        self.assertIn("tsos_wait udev", src)
+        self.assertIn('COMPRESSION="zstd"', src)
+        self.assertIn("COMPRESSION_OPTIONS=(-19 -T0)", src)
         self.assertIn("tsos-boot-splash", src)
         self.assertIn("themes/tsos", src)
         self.assertIn("loading.png", src)
@@ -33,6 +39,8 @@ class IsoBuildSmallTests(unittest.TestCase):
         self.assertIn("Loading, please wait", src)
         self.assertIn("city96/ComfyUI-GGUF", src)
         self.assertIn("tabbyapi-stack", src)
+        self.assertIn('rm -f "$OUT/tsos-archlinux.iso" "$OUT/SHA256SUMS"', src)
+        self.assertIn("-name 'tsos-archlinux-*-x86_64.iso'", src)
         self.assertNotIn("pacman -Sw", src)
         self.assertNotIn("pip download", src)
         self.assertNotIn("download.pytorch.org", src)
@@ -79,8 +87,14 @@ class IsoBuildSmallTests(unittest.TestCase):
         self.assertIn("spin_slot_y", theme)
         self.assertIn('"Sans Bold 28"', theme)
         hook = INITCPIO_HOOK.read_text(encoding="utf-8")
+        self.assertIn("run_earlyhook()", hook)
+        self.assertIn("/usr/bin/plymouthd", hook)
+        self.assertIn("/usr/bin/plymouth --show-splash", hook)
         self.assertIn("LOADING", hook)
         self.assertIn("PLEASE WAIT", hook)
+        install_hook = INITCPIO_INSTALL.read_text(encoding="utf-8")
+        self.assertIn("source /usr/lib/initcpio/install/plymouth", install_hook)
+        self.assertIn("add_runscript() { :; }", install_hook)
 
     def test_workflow_is_small_network_iso(self):
         src = WORKFLOW.read_text(encoding="utf-8")

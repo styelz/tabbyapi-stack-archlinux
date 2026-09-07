@@ -1,11 +1,34 @@
 #!/usr/bin/ash
 
+# Start Plymouth before udev's early hook. simpledrm is built into the Arch
+# kernel, so the UEFI GOP DRM device is already available through devtmpfs.
+# Waiting for udev here was the source of the visible black boot interval.
+run_earlyhook() {
+    [ -x /usr/bin/plymouthd ] && [ -x /usr/bin/plymouth ] || return 0
+    /usr/bin/plymouth --ping >/dev/null 2>&1 && return 0
+
+    mkdir -p /run/plymouth /dev/pts
+    mountpoint -q /dev/pts 2>/dev/null ||
+        mount -t devpts -o noexec,nosuid,gid=5,mode=0620 devpts /dev/pts 2>/dev/null ||
+        true
+    /usr/bin/plymouthd --mode=boot \
+        --pid-file=/run/plymouth/pid --attach-to-session >/dev/null 2>&1 || true
+    /usr/bin/plymouth --show-splash >/dev/null 2>&1 || true
+}
+
 run_hook() {
     local tty=/dev/tty0
+
+    # The early start succeeded. Reassert the splash after the remaining
+    # early hooks without overwriting its framebuffer from the text console.
+    if /usr/bin/plymouth --ping >/dev/null 2>&1; then
+        /usr/bin/plymouth --show-splash >/dev/null 2>&1 || true
+        return 0
+    fi
+
     [ -w "$tty" ] || return 0
 
-    # The firmware framebuffer is already exposed through built-in simpledrm
-    # on UEFI systems. Paint immediately while Plymouth acquires that device.
+    # BIOS/no-DRM fallback once a text console exists.
     {
         printf '\033[?25l\033[2J\033[H'
         printf '\033[44;97m'

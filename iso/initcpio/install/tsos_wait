@@ -2,11 +2,22 @@
 
 build() {
     add_runscript
+
+    # Import the distro Plymouth build hook so its daemon, client, renderers,
+    # fonts, configuration, udev rule, and selected TSOS theme are included.
+    # Suppress only its runtime script: that script unconditionally starts a
+    # second daemon, while tsos_wait starts the splash before udev.
+    local original_add_runscript
+    original_add_runscript=$(declare -f add_runscript)
+    source /usr/lib/initcpio/install/plymouth
+    add_runscript() { :; }
+    build
+    eval "$original_add_runscript"
 }
 
 help() {
     cat <<'EOF'
-Paint a TSOS "Loading / Please wait" message before Plymouth acquires a DRM
-device. This prevents a silent black interval during live-ISO startup.
+Start Plymouth on SimpleDRM before udev enumeration. This prevents a silent
+black interval during live-ISO startup.
 EOF
 }

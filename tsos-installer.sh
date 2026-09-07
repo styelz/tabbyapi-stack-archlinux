@@ -2130,7 +2130,9 @@ Examples: Australia/Sydney  America/New_York  Europe/London  UTC"
 # Hugging Face, a USB copy, or a typed folder. --tabby-cache skips the ask.
 prompt_weights_source() {
   local title="${1:-Weights source}"
-  local cache_choice path description edit_default first_local
+  local cache_choice="" path="" description="" edit_default="" first_local=""
+  local source_index=0 selected_index=""
+  local -a source_paths=()
   if [[ -z "${CACHE_FROM_CLI:-}" ]]; then
     if ((USE_TUI)); then
       local -a args=(
@@ -2139,7 +2141,9 @@ prompt_weights_source() {
       while IFS=$'\t' read -r path description; do
         [[ -n "$path" ]] || continue
         [[ -n "$first_local" ]] || first_local=$path
-        args+=("$path" "$description")
+        source_paths+=("$path")
+        args+=("src${source_index}" "$description — $path")
+        source_index=$((source_index + 1))
       done < <(list_weight_sources)
       args+=(
         usb "Legacy path: /run/media/usb/tabbyapi-stack"
@@ -2158,7 +2162,20 @@ Mount storage from the Setup type page first (not under /mnt)." \
         hf|none) TABBY_CACHE="" ;;
         usb) edit_default="/run/media/usb/tabbyapi-stack" ;;
         custom) edit_default="${TABBY_CACHE:-${first_local:-/run/media/tsos}}" ;;
-        *) edit_default="$cache_choice" ;;
+        src*)
+          selected_index=${cache_choice#src}
+          if [[ "$selected_index" =~ ^[0-9]+$ ]] &&
+             ((selected_index < ${#source_paths[@]})); then
+            edit_default=${source_paths[$selected_index]}
+          else
+            ui_msg "Weights source unavailable" \
+"The selected weights source is no longer available.
+
+Choose the weights row again to refresh mounted storage." || true
+            return 1
+          fi
+          ;;
+        *) return 1 ;;
       esac
       if [[ -n "$edit_default" ]]; then
           TABBY_CACHE=$(ui_input "Weights cache path" \
@@ -3491,6 +3508,30 @@ self_test() {
     printf 'FAIL mount target must stay directly under /run/media/tsos\n' >&2
     failed=1
   fi
+  local weights_test got
+  got=$(
+    USE_TUI=1
+    CACHE_FROM_CLI=""
+    TABBY_CACHE=/stale/cache
+    list_weight_sources() { :; }
+    ui_menu() { printf '%s' hf; }
+    prompt_weights_source
+    printf '%s' "$TABBY_CACHE"
+  )
+  check "$got" "" "weights Hugging Face survives nounset"
+  weights_test=$(mktemp -d)
+  got=$(
+    USE_TUI=1
+    CACHE_FROM_CLI=""
+    TABBY_CACHE=""
+    list_weight_sources() { printf '%s\t%s\n' "$weights_test" "Test weights"; }
+    ui_menu() { printf '%s' src0; }
+    ui_input() { printf '%s' "$3"; }
+    prompt_weights_source
+    printf '%s' "$TABBY_CACHE"
+  )
+  check "$got" "$weights_test" "mounted weights selection survives nounset"
+  rm -rf "$weights_test"
   check "$(linux_user_from_install_root /home/studio/tabbyapi-stack)" studio \
     "user from TABBY_INSTALL_ROOT"
   on=0
