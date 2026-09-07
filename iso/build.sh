@@ -142,14 +142,16 @@ python3 "$ROOT/iso/mk-splash.py" "$PROFILE/syslinux/splash.png"
   echo "boot splash PNG was not written" >&2
   exit 1
 }
-# Blank the Arch getty banner. tty1 clears, then tsos-live-install paints.
+# Blank the Arch getty banner. tty1 autologins, then tsos-live-install paints.
+# agetty has --noclear and --noissue. An unknown flag makes getty exit
+# immediately and systemd restart it forever (blank screen + cursor).
 : >"$PROFILE/airootfs/etc/motd"
 printf '\n' >"$PROFILE/airootfs/etc/issue"
 mkdir -p "$PROFILE/airootfs/etc/systemd/system/getty@tty1.service.d"
 cat >"$PROFILE/airootfs/etc/systemd/system/getty@tty1.service.d/autologin.conf" <<'EOF'
 [Service]
 ExecStart=
-ExecStart=-/usr/bin/agetty --noreset --clear --noissue --autologin root - ${TERM}
+ExecStart=-/usr/bin/agetty --noissue --autologin root - linux
 EOF
 for package in dialog rsync git; do
   grep -qxF "$package" "$PROFILE/packages.x86_64" || echo "$package" >>"$PROFILE/packages.x86_64"

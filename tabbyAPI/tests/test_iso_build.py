@@ -12,6 +12,8 @@ class IsoBuildSmallTests(unittest.TestCase):
         src = BUILD.read_text(encoding="utf-8")
         self.assertIn("tsos-live-install", src)
         self.assertIn("TSOS_INSTALLER_STARTED", src)
+        self.assertIn("ExecStart=-/usr/bin/agetty --noissue --autologin root - linux", src)
+        self.assertNotIn("agetty --noreset --clear", src)
         self.assertIn("city96/ComfyUI-GGUF", src)
         self.assertIn("tabbyapi-stack", src)
         self.assertNotIn("pacman -Sw", src)
