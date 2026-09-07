@@ -50,4 +50,10 @@ On Arch, as root, from a tabbyapi-stack checkout:
 sudo iso/build.sh
 ```
 
-The image lands in `out/`. Releases are also built from the **Build TSOS ISO** Action.
+On Ubuntu (or any host with Docker), the same build as the **Build TSOS ISO** Action:
+
+```bash
+./iso/build-docker.sh
+```
+
+The image lands in `out/`. Releases are also built from that Action.
