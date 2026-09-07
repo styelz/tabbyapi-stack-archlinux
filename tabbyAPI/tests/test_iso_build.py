@@ -1,13 +1,15 @@
+import importlib.util
 import tempfile
 import unittest
 from pathlib import Path
-import importlib.util
 
 
 ROOT = Path(__file__).resolve().parents[2]
 BUILD = ROOT / "iso" / "build.sh"
 WORKFLOW = ROOT / ".github" / "workflows" / "iso.yml"
 MK_SPLASH = ROOT / "iso" / "mk-splash.py"
+PLYMOUTH_SCRIPT = ROOT / "iso" / "plymouth" / "tsos.script"
+INITCPIO_HOOK = ROOT / "iso" / "initcpio" / "hooks" / "tsos_wait"
 
 
 class IsoBuildSmallTests(unittest.TestCase):
@@ -19,8 +21,13 @@ class IsoBuildSmallTests(unittest.TestCase):
         self.assertNotIn("agetty --noreset --clear", src)
         self.assertIn("plymouth", src)
         self.assertIn("quiet splash", src)
+        self.assertIn("plymouth.use-simpledrm=1", src)
+        self.assertIn("UseSimpledrm=true", src)
+        self.assertIn("udev tsos_wait plymouth", src)
         self.assertIn("tsos-boot-splash", src)
         self.assertIn("themes/tsos", src)
+        self.assertIn("loading.png", src)
+        self.assertIn("please-wait.png", src)
         self.assertIn("city96/ComfyUI-GGUF", src)
         self.assertIn("tabbyapi-stack", src)
         self.assertNotIn("pacman -Sw", src)
@@ -39,12 +46,27 @@ class IsoBuildSmallTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             dest = Path(tmp)
             self.assertEqual(mod.main([str(dest)]), 0)
-            for name in ("splash.png", "logo.png", "spinner.png"):
+            for name in (
+                "splash.png",
+                "logo.png",
+                "spinner.png",
+                "loading.png",
+                "please-wait.png",
+            ):
                 data = (dest / name).read_bytes()
                 self.assertTrue(data.startswith(b"\x89PNG\r\n\x1a\n"), name)
                 self.assertGreater(len(data), 200, name)
             for ch in "ARCH LINUX + TABBYAPI-STACK":
                 self.assertIn(ch, mod.FONT, ch)
+
+    def test_splash_layout_and_early_wait_hook(self):
+        theme = PLYMOUTH_SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("column_height", theme)
+        self.assertIn("spin_slot_y", theme)
+        self.assertIn('"Sans Bold 20"', theme)
+        hook = INITCPIO_HOOK.read_text(encoding="utf-8")
+        self.assertIn("LOADING", hook)
+        self.assertIn("PLEASE WAIT", hook)
 
     def test_workflow_is_small_network_iso(self):
         src = WORKFLOW.read_text(encoding="utf-8")

@@ -69,7 +69,9 @@ mkdir -p \
   "$PROFILE/airootfs/opt/tsos" \
   "$PROFILE/airootfs/usr/local/bin" \
   "$PROFILE/airootfs/etc/profile.d" \
-  "$PROFILE/airootfs/root"
+  "$PROFILE/airootfs/root" \
+  "$PROFILE/airootfs/usr/lib/initcpio/hooks" \
+  "$PROFILE/airootfs/usr/lib/initcpio/install"
 mv "$PAYLOAD"/* "$PROFILE/airootfs/opt/tsos/"
 install -m 0755 "$ROOT/tsos-installer.sh" \
   "$PROFILE/airootfs/usr/local/bin/tsos-installer.sh"
@@ -77,6 +79,10 @@ install -m 0755 "$ROOT/iso/tsos-live-install.sh" \
   "$PROFILE/airootfs/usr/local/bin/tsos-live-install"
 install -m 0755 "$ROOT/iso/tsos-boot-splash.sh" \
   "$PROFILE/airootfs/usr/local/bin/tsos-boot-splash"
+install -m 0644 "$ROOT/iso/initcpio/hooks/tsos_wait" \
+  "$PROFILE/airootfs/usr/lib/initcpio/hooks/tsos_wait"
+install -m 0644 "$ROOT/iso/initcpio/install/tsos_wait" \
+  "$PROFILE/airootfs/usr/lib/initcpio/install/tsos_wait"
 cat >"$PROFILE/airootfs/etc/profile.d/tsos-iso.sh" <<'EOF'
 export TABBY_LOCAL_SRC=/opt/tsos/tabbyapi-stack
 EOF
@@ -130,7 +136,7 @@ find "$PROFILE/syslinux" "$PROFILE/grub" "$PROFILE/efiboot" \
   \( -name '*.cfg' -o -name '*.conf' \) -type f -print0 2>/dev/null |
   xargs -0 -r sed -i \
     -e '/archisobasedir=/ s/[[:space:]]quiet\b//g' \
-    -e '/archisobasedir=/ s/$/ quiet splash loglevel=3 systemd.show_status=false rd.udev.log_level=3 vt.global_cursor_default=0/'
+    -e '/archisobasedir=/ s/$/ quiet splash plymouth.use-simpledrm=1 loglevel=3 systemd.show_status=false rd.udev.log_level=3 vt.global_cursor_default=0/'
 if [[ -f "$PROFILE/efiboot/loader/loader.conf" ]]; then
   sed -i -e 's/^timeout .*/timeout 5/' -e 's/^beep on/beep off/' \
     "$PROFILE/efiboot/loader/loader.conf"
@@ -151,10 +157,13 @@ install -m 0644 "$ROOT/iso/plymouth/tsos.plymouth" "$THEME/tsos.plymouth"
 install -m 0644 "$ROOT/iso/plymouth/tsos.script" "$THEME/tsos.script"
 install -m 0644 "$WORK/splash-assets/logo.png" "$THEME/logo.png"
 install -m 0644 "$WORK/splash-assets/spinner.png" "$THEME/spinner.png"
+install -m 0644 "$WORK/splash-assets/loading.png" "$THEME/loading.png"
+install -m 0644 "$WORK/splash-assets/please-wait.png" "$THEME/please-wait.png"
 cat >"$PROFILE/airootfs/etc/plymouth/plymouthd.conf" <<'EOF'
 [Daemon]
 Theme=tsos
 ShowDelay=0
+UseSimpledrm=true
 EOF
 # Keep Plymouth up until the installer is ready for a question. Other
 # consoles (Alt+F2) still get a getty.
@@ -165,11 +174,14 @@ archiso_hooks="$PROFILE/airootfs/etc/mkinitcpio.conf.d/archiso.conf"
   echo "missing archiso mkinitcpio hooks: $archiso_hooks" >&2
   exit 1
 }
-if ! grep -qE '\bplymouth\b' "$archiso_hooks"; then
-  sed -i -E 's/\bkms\b/kms plymouth/' "$archiso_hooks"
-fi
-grep -qE '\bplymouth\b' "$archiso_hooks" || {
-  echo "could not add the plymouth mkinitcpio hook" >&2
+# simpledrm is built into the Arch kernel, so there is no module file to add to
+# MODULES. Start the text wait hook and Plymouth after udev, before full GPU KMS.
+sed -i -E \
+  -e 's/[[:space:]]+(tsos_wait|plymouth)([[:space:]]|\))/\2/g' \
+  -e 's/\budev\b/udev tsos_wait plymouth/' \
+  "$archiso_hooks"
+grep -qE '\budev tsos_wait plymouth\b.*\bkms\b' "$archiso_hooks" || {
+  echo "could not order tsos_wait and plymouth before kms" >&2
   exit 1
 }
 # Blank the Arch getty banner. tty1 autologins, then tsos-live-install paints.
@@ -233,6 +245,18 @@ grep -qE '^-rwx.*squashfs-root/usr/local/bin/tsos-boot-splash$' "$VERIFY/airootf
 }
 grep -q 'squashfs-root/usr/share/plymouth/themes/tsos/logo.png' "$VERIFY/airootfs.list" || {
   echo "ISO verification failed: Plymouth TSOS logo is missing" >&2
+  exit 1
+}
+grep -q 'squashfs-root/usr/share/plymouth/themes/tsos/loading.png' "$VERIFY/airootfs.list" || {
+  echo "ISO verification failed: Plymouth loading caption is missing" >&2
+  exit 1
+}
+grep -q 'squashfs-root/usr/share/plymouth/themes/tsos/please-wait.png' "$VERIFY/airootfs.list" || {
+  echo "ISO verification failed: Plymouth wait caption is missing" >&2
+  exit 1
+}
+grep -q 'squashfs-root/usr/lib/initcpio/hooks/tsos_wait' "$VERIFY/airootfs.list" || {
+  echo "ISO verification failed: early wait hook is missing" >&2
   exit 1
 }
 grep -qE '^-rwx.*squashfs-root/usr/local/bin/tsos-installer.sh$' "$VERIFY/airootfs.list" || {

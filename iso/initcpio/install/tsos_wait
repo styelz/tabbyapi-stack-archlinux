@@ -1,0 +1,12 @@
+#!/bin/bash
+
+build() {
+    add_runscript
+}
+
+help() {
+    cat <<'EOF'
+Paint a TSOS "Loading / Please wait" message before Plymouth acquires a DRM
+device. This prevents a silent black interval during live-ISO startup.
+EOF
+}

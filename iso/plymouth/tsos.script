@@ -5,37 +5,65 @@ Window.SetBackgroundBottomColor(0.043, 0.110, 0.227);
 
 logo.image = Image("logo.png");
 spin.image = Image("spinner.png");
+loading.image = Image("loading.png");
+wait.image = Image("please-wait.png");
 logo.sprite = Sprite(logo.image);
 spin.sprite = Sprite();
-msg.sprite = Sprite();
+loading.sprite = Sprite(loading.image);
+wait.sprite = Sprite(wait.image);
+status.sprite = Sprite();
 angle = 0;
 
 fun center_x(img) {
     return Window.GetWidth() / 2 - img.GetWidth() / 2;
 }
 
-fun place_logo() {
+logo_gap = 22;
+spin_gap = 22;
+caption_gap = 12;
+caption_height = loading.image.GetHeight() + caption_gap + wait.image.GetHeight();
+column_height = logo.image.GetHeight() + logo_gap + spin.image.GetHeight() + spin_gap + caption_height;
+column_top = Window.GetHeight() / 2 - column_height / 2;
+spin_slot_y = column_top + logo.image.GetHeight() + logo_gap;
+caption_y = spin_slot_y + spin.image.GetHeight() + spin_gap;
+
+fun place_column() {
     logo.sprite.SetImage(logo.image);
     logo.sprite.SetX(center_x(logo.image));
-    logo.sprite.SetY(Window.GetHeight() / 2 - logo.image.GetHeight() / 2 - 36);
+    logo.sprite.SetY(column_top);
+
+    loading.sprite.SetImage(loading.image);
+    loading.sprite.SetX(center_x(loading.image));
+    loading.sprite.SetY(caption_y);
+
+    wait.sprite.SetImage(wait.image);
+    wait.sprite.SetX(center_x(wait.image));
+    wait.sprite.SetY(caption_y + loading.image.GetHeight() + caption_gap);
 }
 
 fun refresh_callback() {
     angle = angle + 0.14;
     rotated = spin.image.Rotate(angle);
     spin.sprite.SetImage(rotated);
-    spin.sprite.SetX(center_x(rotated));
-    spin.sprite.SetY(Window.GetHeight() / 2 + logo.image.GetHeight() / 2 + 8);
+    spin.sprite.SetX(Window.GetWidth() / 2 - rotated.GetWidth() / 2);
+    spin.sprite.SetY(spin_slot_y + spin.image.GetHeight() / 2 - rotated.GetHeight() / 2);
 }
 
 fun message_callback(text) {
-    img = Image.Text(text, 0.80, 0.91, 1.00);
-    msg.sprite.SetImage(img);
-    msg.sprite.SetX(center_x(img));
-    msg.sprite.SetY(Window.GetHeight() / 2 + logo.image.GetHeight() / 2 + 88);
+    img = Image.Text(text, 0.80, 0.91, 1.00, 1.0, "Sans Bold 20", "center");
+    max_width = Window.GetWidth() - 48;
+    if (img.GetWidth() > max_width) {
+        scale = max_width / img.GetWidth();
+        img = img.Scale(max_width, img.GetHeight() * scale);
+    }
+    loading.sprite.SetOpacity(0);
+    wait.sprite.SetOpacity(0);
+    status.sprite.SetImage(img);
+    status.sprite.SetX(center_x(img));
+    status.sprite.SetY(caption_y + caption_height / 2 - img.GetHeight() / 2);
 }
 
-place_logo();
+place_column();
 Plymouth.SetRefreshFunction(refresh_callback);
 Plymouth.SetDisplayMessageFunction(message_callback);
 Plymouth.SetUpdateStatusFunction(message_callback);

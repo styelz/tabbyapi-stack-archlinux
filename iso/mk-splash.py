@@ -183,6 +183,14 @@ def build_spinner() -> list[list[tuple[int, int, int]]]:
     return pixels
 
 
+def build_caption(text: str, scale: int, color) -> list[list[tuple[int, int, int]]]:
+    width = len(text) * 6 * scale
+    height = 7 * scale
+    pixels = canvas(width, height)
+    blit_text(pixels, 0, 0, text, color, scale)
+    return pixels
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -201,6 +209,8 @@ def main(argv: list[str] | None = None) -> int:
     write_png(splash_path, build_splash())
     write_png(out_dir / "logo.png", build_logo())
     write_png(out_dir / "spinner.png", build_spinner())
+    write_png(out_dir / "loading.png", build_caption("LOADING", 4, FG))
+    write_png(out_dir / "please-wait.png", build_caption("PLEASE WAIT", 3, ACCENT))
     if not splash_path.stat().st_size:
         print("boot splash PNG was not written", file=sys.stderr)
         return 1

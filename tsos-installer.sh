@@ -25,7 +25,7 @@ SCRIPT_NAME="${0##*/}"
 if [[ "$SCRIPT_NAME" == "bash" || "$SCRIPT_NAME" == "-bash" || "$SCRIPT_NAME" == "sh" || "$SCRIPT_NAME" == "-sh" ]]; then
   SCRIPT_NAME="tsos-installer.sh"
 fi
-SCRIPT_VERSION="1.0.57"
+SCRIPT_VERSION="1.0.58"
 
 # Generic defaults. Do not default TARGET_HOSTNAME from $HOSTNAME — the live
 # ISO sets HOSTNAME=archiso.
@@ -1687,6 +1687,10 @@ valid_install_mode() {
   [[ "$1" == simple || "$1" == advanced || "$1" == restore ]]
 }
 
+valid_mount_target() {
+  [[ "$1" =~ ^/run/media/tsos/[A-Za-z0-9._-]+$ ]]
+}
+
 is_stack_backup() {
   local path=${1:-}
   [[ -n "$path" && -d "$path" && -f "$path/manifest.json" ]] || return 1
@@ -2170,14 +2174,124 @@ No = leave the path (install will download anything missing)." 1; then
   fi
 }
 
+list_mountable_devices() {
+  local path type fstype size label target description
+  while IFS= read -r path; do
+    [[ -b "$path" ]] || continue
+    type=$(lsblk -dn -o TYPE "$path" 2>/dev/null | tr -d ' ')
+    [[ "$type" == part || "$type" == disk || "$type" == crypt || "$type" == lvm ]] || continue
+    fstype=$(lsblk -dn -o FSTYPE "$path" 2>/dev/null | tr -d ' ')
+    [[ -n "$fstype" && "$fstype" != swap ]] || continue
+    size=$(lsblk -dn -o SIZE "$path" 2>/dev/null | tr -d ' ')
+    label=$(lsblk -dn -o LABEL "$path" 2>/dev/null | sed 's/[[:space:]]*$//')
+    target=$(findmnt -rn -S "$path" -o TARGET 2>/dev/null | head -n1 || true)
+    description="${size:-?}  ${fstype}"
+    [[ -n "$label" ]] && description+="  ${label}"
+    [[ -n "$target" ]] && description+="  (mounted: ${target})"
+    printf '%s\t%s\n' "$path" "$description"
+  done < <(lsblk -lnp -o NAME 2>/dev/null | sort -u)
+}
+
+mount_device_from_start() {
+  local -a args=()
+  local path description choice current label leaf target err old_allow
+  while IFS=$'\t' read -r path description; do
+    [[ -n "$path" ]] || continue
+    args+=("$path" "$description")
+  done < <(list_mountable_devices)
+
+  old_allow=${UI_ALLOW_BACK:-0}
+  UI_ALLOW_BACK=1
+  if ((${#args[@]} == 0)); then
+    ui_msg "Mount a drive" \
+"No mountable filesystems were found.
+
+Attach the USB drive or storage device, wait a moment, then choose
+Mount a drive or device again." || true
+    UI_ALLOW_BACK=$old_allow
+    return 0
+  fi
+
+  args+=(back "Return to Setup type")
+  choice=$(ui_menu "Mount a drive or device" \
+"Choose a filesystem to make available to the installer.
+
+Mounted devices can be used for Restore from backup or as a model
+weights source. Mounting does not select it as the install target." \
+    "${args[@]}") || {
+      UI_ALLOW_BACK=$old_allow
+      return 0
+    }
+  if [[ "$choice" == back ]]; then
+    UI_ALLOW_BACK=$old_allow
+    return 0
+  fi
+
+  current=$(findmnt -rn -S "$choice" -o TARGET 2>/dev/null | head -n1 || true)
+  if [[ -n "$current" ]]; then
+    ui_msg "Already mounted" "$choice is already available at:
+
+  $current" || true
+    UI_ALLOW_BACK=$old_allow
+    return 0
+  fi
+
+  label=$(lsblk -dn -o LABEL "$choice" 2>/dev/null | sed 's/[^A-Za-z0-9._-]/-/g; s/^-*//; s/-*$//')
+  leaf=${label:-${choice##*/}}
+  target="/run/media/tsos/$leaf"
+  target=$(ui_input "Mount location" \
+"Choose a location under /run/media/tsos.
+
+The default is safe to use for backups and model weights. The new
+system will later use /mnt, so devices are not mounted there." \
+    "$target") || {
+      UI_ALLOW_BACK=$old_allow
+      return 0
+    }
+  if ! valid_mount_target "$target"; then
+    ui_msg "Invalid mount location" \
+"Use one folder directly under /run/media/tsos, for example:
+
+  /run/media/tsos/backup" || true
+    UI_ALLOW_BACK=$old_allow
+    return 0
+  fi
+  if mountpoint -q "$target" 2>/dev/null ||
+     { [[ -d "$target" ]] && [[ -n "$(find "$target" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]]; }; then
+    ui_msg "Mount location in use" \
+"Choose an empty location. This path already contains files or is mounted:
+
+  $target" || true
+    UI_ALLOW_BACK=$old_allow
+    return 0
+  fi
+
+  mkdir -p "$target"
+  if ! err=$(mount "$choice" "$target" 2>&1); then
+    rmdir "$target" 2>/dev/null || true
+    ui_msg "Mount failed" "Could not mount $choice:
+
+  $err" || true
+    UI_ALLOW_BACK=$old_allow
+    return 0
+  fi
+  ui_msg "Drive mounted" "$choice is now available at:
+
+  $target
+
+Choose Restore from backup or use this path as the weights source." || true
+  UI_ALLOW_BACK=$old_allow
+}
+
 pick_install_mode() {
   if [[ -n "${INSTALL_MODE:-}" ]]; then
     valid_install_mode "$INSTALL_MODE" || die "invalid INSTALL_MODE: $INSTALL_MODE (simple, advanced, or restore)"
     return 0
   fi
   local choice
-  if ((USE_TUI)); then
-    choice=$(ui_menu "Setup type" \
+  while true; do
+    if ((USE_TUI)); then
+      choice=$(ui_menu "Setup type" \
 "Simple (recommended) opens a review menu: disk, hostname,
 username, timezone, weights source, and whether other computers
 on your network can connect. Open a row to change it.
@@ -2189,18 +2303,32 @@ Restore from backup reuses a Status / tsctl stack backup
 (models plus any saved config, users, and chats) and only
 asks which disk to wipe.
 
+Mount makes another USB drive or filesystem available before setup.
 Omarchy is not installed in Simple or Restore." \
-      simple "Simple — disk, hostname, user, timezone, weights, this PC vs LAN" \
-      advanced "Advanced — every setting" \
-      restore "Restore from backup — models, config, and saved extras")
-  else
-    printf '\n' >/dev/tty
-    printf '%s\n' "Simple (recommended): disk, hostname, user, timezone, weights, this PC vs LAN." >/dev/tty
-    printf '%s\n' "Advanced: encryption, Omarchy, full model control, tunnel." >/dev/tty
-    printf '%s\n' "Restore: stack backup (models, config, extras); only asks for the disk." >/dev/tty
-    printf '%s\n' "Omarchy is not installed in Simple or Restore." >/dev/tty
-    choice=$(ask_until "Setup type (simple / advanced / restore)" "simple" valid_install_mode)
-  fi
+        simple "Simple — disk, hostname, user, timezone, weights, this PC vs LAN" \
+        advanced "Advanced — every setting" \
+        restore "Restore from backup — models, config, and saved extras" \
+        mount "Mount a drive or device — backups or model weights")
+    else
+      printf '\n' >/dev/tty
+      printf '%s\n' "Simple (recommended): disk, hostname, user, timezone, weights, this PC vs LAN." >/dev/tty
+      printf '%s\n' "Advanced: encryption, Omarchy, full model control, tunnel." >/dev/tty
+      printf '%s\n' "Restore: stack backup (models, config, extras); only asks for the disk." >/dev/tty
+      printf '%s\n' "Mount: mount a drive or device, then return to this page." >/dev/tty
+      printf '%s\n' "Omarchy is not installed in Simple or Restore." >/dev/tty
+      choice=$(ask "Setup type (simple / advanced / restore / mount)" "simple")
+    fi
+    if [[ "$choice" == mount ]]; then
+      mount_device_from_start
+      continue
+    fi
+    valid_install_mode "$choice" && break
+    if ((USE_TUI)); then
+      ui_msg "Invalid setup type" "Choose Simple, Advanced, Restore, or Mount." || true
+    else
+      printf 'invalid setup type: %s\n' "$choice" >/dev/tty
+    fi
+  done
   INSTALL_MODE="${choice:-simple}"
   valid_install_mode "$INSTALL_MODE" || INSTALL_MODE=simple
 }
@@ -3286,6 +3414,14 @@ self_test() {
     printf 'ok   install mode simple/advanced/restore\n'
   else
     printf 'FAIL install mode should accept restore\n' >&2
+    failed=1
+  fi
+  if valid_mount_target /run/media/tsos/backup &&
+     ! valid_mount_target /mnt/backup &&
+     ! valid_mount_target /run/media/tsos/../backup; then
+    printf 'ok   safe device mount target\n'
+  else
+    printf 'FAIL mount target must stay directly under /run/media/tsos\n' >&2
     failed=1
   fi
   check "$(linux_user_from_install_root /home/studio/tabbyapi-stack)" studio \

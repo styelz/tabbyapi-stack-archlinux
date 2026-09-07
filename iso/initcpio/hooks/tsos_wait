@@ -1,0 +1,19 @@
+#!/usr/bin/ash
+
+run_hook() {
+    local tty=/dev/tty0
+    [ -w "$tty" ] || return 0
+
+    # The firmware framebuffer is already exposed through built-in simpledrm
+    # on UEFI systems. Paint immediately while Plymouth acquires that device.
+    {
+        printf '\033[?25l\033[2J\033[H'
+        printf '\033[44;97m'
+        printf '\033[10;34H+---------+'
+        printf '\033[11;34H|  TSOS   |'
+        printf '\033[12;34H+---------+'
+        printf '\033[15;37HLOADING'
+        printf '\033[17;35HPLEASE WAIT'
+        printf '\033[0m'
+    } >"$tty"
+}

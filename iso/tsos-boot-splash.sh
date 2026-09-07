@@ -53,20 +53,41 @@ tick=$((tick + 1))
 printf '%s\n' "$tick" >"$TICK_FILE"
 frame=${FRAMES:$((tick % ${#FRAMES})):1}
 
-# Truecolor navy field, wordmark, spinner. Falls back to a blue screen if
-# the console cannot do 24-bit colour (the logo still reads).
+# Center the fallback from the actual console size instead of assuming 80x24.
+cols=$(tput cols 2>/dev/null || echo 80)
+rows=$(tput lines 2>/dev/null || echo 24)
+[[ "$cols" =~ ^[0-9]+$ ]] || cols=80
+[[ "$rows" =~ ^[0-9]+$ ]] || rows=24
+((cols >= 40)) || cols=80
+((rows >= 16)) || rows=24
+
+center_col() {
+  local text=$1
+  local col=$(((cols - ${#text}) / 2 + 1))
+  ((col > 0)) || col=1
+  printf '%s' "$col"
+}
+
+top=$((rows / 2 - 6))
+((top > 1)) || top=2
+
+# Truecolor navy field, centered wordmark, spinner, and readable status.
+# It falls back to a blue screen if the console cannot do 24-bit colour.
 printf '\033[?25l\033[H'
 printf '%b' "$NAVY"
 printf '\033[2J\033[H'
 printf '%b' "$CYAN"
-cat <<'EOF'
-
-                         ╭─────────╮
-                         │  TSOS   │
-                         ╰─────────╯
-EOF
+for line in '╭─────────╮' '│  TSOS   │' '╰─────────╯'; do
+  printf '\033[%d;%dH%s' "$top" "$(center_col "$line")" "$line"
+  top=$((top + 1))
+done
 printf '%b' "$WHITE"
-printf '\n                    tabbyapi-stack\n\n'
-printf '                         %b%s%b\n' "$CYAN" "$frame" "$WHITE"
-printf '\n%b                    %s\n' "$MUTED" "$MSG"
+printf '\033[%d;%dH%s' "$((top + 1))" "$(center_col 'tabbyapi-stack')" 'tabbyapi-stack'
+printf '\033[%d;%dH%b%s%b' "$((top + 3))" "$(center_col "$frame")" "$CYAN" "$frame" "$WHITE"
+if [[ "$MSG" == "Starting TSOS..." ]]; then
+  printf '\033[%d;%dH%b%s%b' "$((top + 5))" "$(center_col 'LOADING')" "$WHITE" 'LOADING' "$RESET"
+  printf '\033[%d;%dH%b%s%b' "$((top + 7))" "$(center_col 'PLEASE WAIT')" "$MUTED" 'PLEASE WAIT' "$RESET"
+else
+  printf '\033[%d;%dH%b%s%b' "$((top + 6))" "$(center_col "$MSG")" "$MUTED" "$MSG" "$RESET"
+fi
 printf '%b' "$RESET"
