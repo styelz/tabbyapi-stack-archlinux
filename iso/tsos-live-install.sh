@@ -20,34 +20,22 @@ find_installer() {
 }
 
 INSTALLER="$(find_installer || true)"
+SPLASH=/usr/local/bin/tsos-boot-splash
 
 have_route() {
   ip -4 route show default 2>/dev/null | grep -q .
 }
 
-write_splash_dialogrc() {
-  local f="${TMPDIR:-/tmp}/tsos-splash-dialogrc"
-  cat >"$f" <<'EOF'
-use_shadow = ON
-use_colors = ON
-screen_color = (CYAN,BLUE,ON)
-dialog_color = (BLACK,WHITE,OFF)
-title_color = (BLUE,WHITE,ON)
-border_color = (WHITE,WHITE,ON)
-border2_color = (BLACK,WHITE,OFF)
-EOF
-  export DIALOGRC="$f"
-}
-
 show_splash() {
   local msg=$1
-  if command -v dialog >/dev/null && [[ -t 1 ]]; then
-    write_splash_dialogrc
-    dialog --backtitle "tsos  ·  tabbyapi-stack" --title "TSOS installer" \
-      --infobox "$msg" 10 56
+  if [[ -x "$SPLASH" ]]; then
+    bash "$SPLASH" "$msg" || true
     return 0
   fi
-  clear
+  if command -v plymouth >/dev/null 2>&1 && plymouth --ping >/dev/null 2>&1; then
+    plymouth display-message --text="$msg" >/dev/null 2>&1 || true
+    return 0
+  fi
   printf '\n  TSOS installer\n\n  %s\n' "$msg"
 }
 
@@ -55,27 +43,13 @@ wait_for_network() {
   local i
   for i in $(seq 1 30); do
     if have_route; then
-      show_splash "
-
-  Network is up.
-  Starting the installer..."
+      show_splash "Network is up. Starting the installer..."
       return 0
     fi
-    show_splash "
-
-  Waiting for network (DHCP)...  ${i}s
-
-  Ethernet: plug in a cable.
-  Wi-Fi: Alt+F2, then iwctl."
+    show_splash "Waiting for network (DHCP)... ${i}s    Ethernet or Alt+F2 + iwctl"
     sleep 1
   done
-  show_splash "
-
-  No default route yet.
-  Ethernet: plug in a cable and wait.
-  Wi-Fi: Alt+F2, login as root, then:
-    iwctl station wlan0 connect 'SSID'
-  Return here with Alt+F1, then press Enter."
+  show_splash "No network yet. Alt+F2, then: iwctl station wlan0 connect 'SSID'    Return here and press Enter."
   read -r _ || true
 }
 
@@ -87,16 +61,16 @@ if [[ -z "$INSTALLER" ]]; then
   exit 1
 fi
 
-show_splash "
-
-  Starting TSOS...
-  Preparing the installer."
+show_splash "Starting TSOS..."
 wait_for_network
 # tsos-installer.sh checks GitHub for a newer copy of itself once HTTPS works.
 set +e
 bash "$INSTALLER"
 status=$?
 set -e
+if [[ -x "$SPLASH" ]]; then
+  bash "$SPLASH" --quit || true
+fi
 printf '\n'
 if ((status != 0)); then
   printf 'Installer exited with status %s.\n' "$status"

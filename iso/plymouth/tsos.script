@@ -1,0 +1,41 @@
+# TSOS live-ISO splash: navy field, logo, rotating spinner, status text.
+
+Window.SetBackgroundTopColor(0.043, 0.110, 0.227);
+Window.SetBackgroundBottomColor(0.043, 0.110, 0.227);
+
+logo.image = Image("logo.png");
+spin.image = Image("spinner.png");
+logo.sprite = Sprite(logo.image);
+spin.sprite = Sprite();
+msg.sprite = Sprite();
+angle = 0;
+
+fun center_x(img) {
+    return Window.GetWidth() / 2 - img.GetWidth() / 2;
+}
+
+fun place_logo() {
+    logo.sprite.SetImage(logo.image);
+    logo.sprite.SetX(center_x(logo.image));
+    logo.sprite.SetY(Window.GetHeight() / 2 - logo.image.GetHeight() / 2 - 36);
+}
+
+fun refresh_callback() {
+    angle = angle + 0.14;
+    rotated = spin.image.Rotate(angle);
+    spin.sprite.SetImage(rotated);
+    spin.sprite.SetX(center_x(rotated));
+    spin.sprite.SetY(Window.GetHeight() / 2 + logo.image.GetHeight() / 2 + 8);
+}
+
+fun message_callback(text) {
+    img = Image.Text(text, 0.80, 0.91, 1.00);
+    msg.sprite.SetImage(img);
+    msg.sprite.SetX(center_x(img));
+    msg.sprite.SetY(Window.GetHeight() / 2 + logo.image.GetHeight() / 2 + 88);
+}
+
+place_logo();
+Plymouth.SetRefreshFunction(refresh_callback);
+Plymouth.SetDisplayMessageFunction(message_callback);
+Plymouth.SetUpdateStatusFunction(message_callback);

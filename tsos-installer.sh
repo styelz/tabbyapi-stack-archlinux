@@ -3899,11 +3899,24 @@ installer_self_path() {
   printf '%s\n' "$script"
 }
 
-# Full-screen wait page from live boot until the first question.
+# Logo + spinner from live boot until the first question.
+have_plymouth() {
+  command -v plymouth >/dev/null 2>&1 && plymouth --ping >/dev/null 2>&1
+}
+
 boot_splash() {
   local msg=${1:-Starting the installer...}
   TSOS_SPLASH=1
   quiet_kernel_console
+  if [[ -x /usr/local/bin/tsos-boot-splash ]]; then
+    bash /usr/local/bin/tsos-boot-splash "$msg" >/dev/tty 2>/dev/null || \
+      bash /usr/local/bin/tsos-boot-splash "$msg" || true
+    return 0
+  fi
+  if have_plymouth; then
+    plymouth display-message --text="$msg" >/dev/null 2>&1 || true
+    return 0
+  fi
   if ! have_console; then
     return 0
   fi
@@ -3916,6 +3929,15 @@ boot_splash() {
     return 0
   fi
   printf '\n  TSOS installer\n\n  %s\n' "$msg" >/dev/tty
+}
+
+end_boot_splash() {
+  if [[ -x /usr/local/bin/tsos-boot-splash ]]; then
+    bash /usr/local/bin/tsos-boot-splash --quit >/dev/null 2>&1 || true
+  elif have_plymouth; then
+    plymouth quit >/dev/null 2>&1 || true
+  fi
+  restore_tty
 }
 
 self_update_say() {
@@ -5717,6 +5739,7 @@ main() {
     resume_tabby_install
     exit 0
   fi
+  end_boot_splash
   if ((CONFIG_PROVIDED == 0)) || [[ -z "$DISK" ]]; then
     ensure_dialog
     enable_tui_if_possible

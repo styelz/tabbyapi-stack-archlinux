@@ -23,7 +23,7 @@ Ventoy works too. Disable Secure Boot.
 
 ## Install
 
-The boot menu and first console show a TSOS splash until the installer is ready for input. Plug in Ethernet (or set up Wi-Fi from Alt+F2 with `iwctl`). The first menu is Simple, Advanced, or Restore from backup (a Status / `tsctl` folder on USB). When it finishes, reboot.
+After the boot menu, a TSOS logo and spinner stay up until the first installer question. Plug in Ethernet (or set up Wi-Fi from Alt+F2 with `iwctl`). The first menu is Simple, Advanced, or Restore from backup (a Status / `tsctl` folder on USB). When it finishes, reboot.
 
 If you quit it, a root shell is left; run `tsos-installer.sh` to start again.
 

@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=TSOS
+Description=TSOS installer logo and spinner
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/tsos
+ScriptFile=/usr/share/plymouth/themes/tsos/tsos.script

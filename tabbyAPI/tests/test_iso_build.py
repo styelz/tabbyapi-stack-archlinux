@@ -1,10 +1,13 @@
+import tempfile
 import unittest
 from pathlib import Path
+import importlib.util
 
 
 ROOT = Path(__file__).resolve().parents[2]
 BUILD = ROOT / "iso" / "build.sh"
 WORKFLOW = ROOT / ".github" / "workflows" / "iso.yml"
+MK_SPLASH = ROOT / "iso" / "mk-splash.py"
 
 
 class IsoBuildSmallTests(unittest.TestCase):
@@ -14,6 +17,10 @@ class IsoBuildSmallTests(unittest.TestCase):
         self.assertIn("TSOS_INSTALLER_STARTED", src)
         self.assertIn("ExecStart=-/usr/bin/agetty --noissue --autologin root - linux", src)
         self.assertNotIn("agetty --noreset --clear", src)
+        self.assertIn("plymouth", src)
+        self.assertIn("quiet splash", src)
+        self.assertIn("tsos-boot-splash", src)
+        self.assertIn("themes/tsos", src)
         self.assertIn("city96/ComfyUI-GGUF", src)
         self.assertIn("tabbyapi-stack", src)
         self.assertNotIn("pacman -Sw", src)
@@ -24,6 +31,20 @@ class IsoBuildSmallTests(unittest.TestCase):
         self.assertNotIn("bundle_repo https://github.com/pyenv/pyenv.git", src)
         self.assertNotIn("comfyanonymous/ComfyUI.git", src)
         self.assertIn("frozen pacman repo should not be on the small ISO", src)
+
+    def test_mk_splash_writes_logo_and_spinner(self):
+        spec = importlib.util.spec_from_file_location("mk_splash", MK_SPLASH)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = Path(tmp)
+            self.assertEqual(mod.main([str(dest)]), 0)
+            for name in ("splash.png", "logo.png", "spinner.png"):
+                data = (dest / name).read_bytes()
+                self.assertTrue(data.startswith(b"\x89PNG\r\n\x1a\n"), name)
+                self.assertGreater(len(data), 200, name)
+            for ch in "ARCH LINUX + TABBYAPI-STACK":
+                self.assertIn(ch, mod.FONT, ch)
 
     def test_workflow_is_small_network_iso(self):
         src = WORKFLOW.read_text(encoding="utf-8")

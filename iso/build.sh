@@ -75,6 +75,8 @@ install -m 0755 "$ROOT/tsos-installer.sh" \
   "$PROFILE/airootfs/usr/local/bin/tsos-installer.sh"
 install -m 0755 "$ROOT/iso/tsos-live-install.sh" \
   "$PROFILE/airootfs/usr/local/bin/tsos-live-install"
+install -m 0755 "$ROOT/iso/tsos-boot-splash.sh" \
+  "$PROFILE/airootfs/usr/local/bin/tsos-boot-splash"
 cat >"$PROFILE/airootfs/etc/profile.d/tsos-iso.sh" <<'EOF'
 export TABBY_LOCAL_SRC=/opt/tsos/tabbyapi-stack
 EOF
@@ -123,12 +125,12 @@ find "$PROFILE/syslinux" "$PROFILE/grub" "$PROFILE/efiboot" \
     -e 's/Boot the Arch Linux install medium/Boot the TSOS installer/g' \
     -e 's/^MENU TITLE .*/MENU TITLE TSOS installer/' \
     -e 's/^title Arch Linux.*/title TSOS installer/'
-# Hide kernel/systemd noise after the boot menu so the splash stays up.
+# Hide kernel/systemd noise; Plymouth (splash) keeps the logo up instead.
 find "$PROFILE/syslinux" "$PROFILE/grub" "$PROFILE/efiboot" \
   \( -name '*.cfg' -o -name '*.conf' \) -type f -print0 2>/dev/null |
   xargs -0 -r sed -i \
     -e '/archisobasedir=/ s/[[:space:]]quiet\b//g' \
-    -e '/archisobasedir=/ s/$/ quiet loglevel=3 systemd.show_status=false rd.udev.log_level=3/'
+    -e '/archisobasedir=/ s/$/ quiet splash loglevel=3 systemd.show_status=false rd.udev.log_level=3 vt.global_cursor_default=0/'
 if [[ -f "$PROFILE/efiboot/loader/loader.conf" ]]; then
   sed -i -e 's/^timeout .*/timeout 5/' -e 's/^beep on/beep off/' \
     "$PROFILE/efiboot/loader/loader.conf"
@@ -136,10 +138,38 @@ fi
 if [[ -f "$PROFILE/syslinux/archiso_sys.cfg" ]]; then
   sed -i 's/^TIMEOUT .*/TIMEOUT 50/' "$PROFILE/syslinux/archiso_sys.cfg"
 fi
-log "Writing boot splash"
-python3 "$ROOT/iso/mk-splash.py" "$PROFILE/syslinux/splash.png"
+log "Writing boot splash and Plymouth theme"
+python3 "$ROOT/iso/mk-splash.py" "$WORK/splash-assets"
+install -m 0644 "$WORK/splash-assets/splash.png" "$PROFILE/syslinux/splash.png"
 [[ -s "$PROFILE/syslinux/splash.png" ]] || {
   echo "boot splash PNG was not written" >&2
+  exit 1
+}
+THEME="$PROFILE/airootfs/usr/share/plymouth/themes/tsos"
+mkdir -p "$THEME" "$PROFILE/airootfs/etc/plymouth" "$PROFILE/airootfs/etc/systemd/system"
+install -m 0644 "$ROOT/iso/plymouth/tsos.plymouth" "$THEME/tsos.plymouth"
+install -m 0644 "$ROOT/iso/plymouth/tsos.script" "$THEME/tsos.script"
+install -m 0644 "$WORK/splash-assets/logo.png" "$THEME/logo.png"
+install -m 0644 "$WORK/splash-assets/spinner.png" "$THEME/spinner.png"
+cat >"$PROFILE/airootfs/etc/plymouth/plymouthd.conf" <<'EOF'
+[Daemon]
+Theme=tsos
+ShowDelay=0
+EOF
+# Keep Plymouth up until the installer is ready for a question. Other
+# consoles (Alt+F2) still get a getty.
+ln -sfn /dev/null "$PROFILE/airootfs/etc/systemd/system/plymouth-quit.service"
+ln -sfn /dev/null "$PROFILE/airootfs/etc/systemd/system/plymouth-quit-wait.service"
+archiso_hooks="$PROFILE/airootfs/etc/mkinitcpio.conf.d/archiso.conf"
+[[ -f "$archiso_hooks" ]] || {
+  echo "missing archiso mkinitcpio hooks: $archiso_hooks" >&2
+  exit 1
+}
+if ! grep -qE '\bplymouth\b' "$archiso_hooks"; then
+  sed -i -E 's/\bkms\b/kms plymouth/' "$archiso_hooks"
+fi
+grep -qE '\bplymouth\b' "$archiso_hooks" || {
+  echo "could not add the plymouth mkinitcpio hook" >&2
   exit 1
 }
 # Blank the Arch getty banner. tty1 autologins, then tsos-live-install paints.
@@ -153,7 +183,7 @@ cat >"$PROFILE/airootfs/etc/systemd/system/getty@tty1.service.d/autologin.conf" 
 ExecStart=
 ExecStart=-/usr/bin/agetty --noissue --autologin root - linux
 EOF
-for package in dialog rsync git; do
+for package in dialog rsync git plymouth; do
   grep -qxF "$package" "$PROFILE/packages.x86_64" || echo "$package" >>"$PROFILE/packages.x86_64"
 done
 sed -i \
@@ -165,12 +195,14 @@ sed -i \
 if grep -q 'file_permissions=(' "$PROFILE/profiledef.sh"; then
   sed -i '/file_permissions=(/a\
   ["/usr/local/bin/tsos-live-install"]="0:0:755"\
+  ["/usr/local/bin/tsos-boot-splash"]="0:0:755"\
   ["/usr/local/bin/tsos-installer.sh"]="0:0:755"
 ' "$PROFILE/profiledef.sh"
 else
   cat >>"$PROFILE/profiledef.sh" <<'EOF'
 file_permissions+=(
   ["/usr/local/bin/tsos-live-install"]="0:0:755"
+  ["/usr/local/bin/tsos-boot-splash"]="0:0:755"
   ["/usr/local/bin/tsos-installer.sh"]="0:0:755"
 )
 EOF
@@ -193,6 +225,14 @@ grep -q 'squashfs-root/opt/tsos/tabbyapi-stack/install.sh' "$VERIFY/airootfs.lis
 }
 grep -qE '^-rwx.*squashfs-root/usr/local/bin/tsos-live-install$' "$VERIFY/airootfs.list" || {
   echo "ISO verification failed: tsos-live-install is missing or not executable" >&2
+  exit 1
+}
+grep -qE '^-rwx.*squashfs-root/usr/local/bin/tsos-boot-splash$' "$VERIFY/airootfs.list" || {
+  echo "ISO verification failed: tsos-boot-splash is missing or not executable" >&2
+  exit 1
+}
+grep -q 'squashfs-root/usr/share/plymouth/themes/tsos/logo.png' "$VERIFY/airootfs.list" || {
+  echo "ISO verification failed: Plymouth TSOS logo is missing" >&2
   exit 1
 }
 grep -qE '^-rwx.*squashfs-root/usr/local/bin/tsos-installer.sh$' "$VERIFY/airootfs.list" || {
