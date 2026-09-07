@@ -30,6 +30,9 @@ Thumbs.db
 /.iso-work/
 /out/
 
+# Host-only ISO builder (Ubuntu + Docker). Same recipe as iso.yml.
+/iso/build-docker.sh
+
 # Runtime and secrets (also ignored inside tabbyAPI/)
 **/venv/
 tabbyAPI/ui/static/vs/
