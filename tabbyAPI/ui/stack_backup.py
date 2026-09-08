@@ -414,6 +414,8 @@ def _load_manifest(source: Path) -> dict[str, Any]:
         raise StackBackupError(f"Invalid or missing backup manifest: {path}") from exc
     if data.get("format") != FORMAT or int(data.get("version") or 0) != VERSION:
         raise StackBackupError("Unsupported stack backup format or version")
+    if not data.get("complete"):
+        raise StackBackupError("Backup is incomplete")
     return data
 
 
@@ -522,6 +524,13 @@ def run_restore(
         )
         _copy_one(job["source"], job["target"], on_progress)
         copied += int(job["bytes"])
+        if job["target"].name == "tabby.env":
+            try:
+                from ui.settings import scrub_env_file
+
+                scrub_env_file(job["target"])
+            except Exception:
+                pass
     _emit(on_progress, f"Restore complete: {format_bytes(plan['bytes'])}")
     return {
         **public_plan(plan),

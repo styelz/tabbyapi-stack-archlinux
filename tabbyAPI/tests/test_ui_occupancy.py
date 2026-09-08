@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -116,7 +117,18 @@ class OccupancySnapshotTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(snap["busy"])
         occupancy._occupant = None
 
-    async def test_image_job_fills_snapshot_without_occupant(self):
+    async def test_reclaim_skips_age_while_llm_job_runs(self):
+        with (
+            mock.patch("ui.occupancy._image_job", return_value=None),
+            mock.patch("ui.occupancy._switch_busy", return_value=False),
+            mock.patch("ui.occupancy._llm_jobs_active", return_value=False),
+        ):
+            oid = await occupancy.try_acquire("alice", kind="chat")
+        occupancy._occupant.started_at = time.time() - occupancy._LEASE_MAX_S - 1
+        with mock.patch("ui.occupancy._lease_work_live", return_value=True):
+            self.assertFalse(occupancy._reclaim_stale())
+        self.assertEqual(occupancy._occupant.id, oid)
+        occupancy._occupant = None
         job = SimpleNamespace(
             status="running", phase="generating", owner="alice", chat_id="c1"
         )
@@ -320,6 +332,24 @@ class GatedGpuSwitchTests(unittest.IsolatedAsyncioTestCase):
             result = handle_if_requested(data, defer_switch=True)
         start.assert_not_called()
         self.assertIsNone(result)
+
+    def test_defer_restart_does_not_start_restart(self):
+        from common.phrase_switch import handle_if_requested
+        from endpoints.OAI.types.chat_completion import ChatCompletionMessage, ChatCompletionRequest
+
+        data = ChatCompletionRequest(
+            messages=[ChatCompletionMessage(role="user", content="restart")]
+        )
+        with mock.patch("common.phrase_switch.start_restart") as restart:
+            result = handle_if_requested(data, defer_switch=True)
+        restart.assert_not_called()
+        self.assertIsNone(result)
+
+    def test_oai_router_defers_phrase_switch(self):
+        src = Path(__file__).resolve().parents[1] / "endpoints" / "OAI" / "router.py"
+        text = src.read_text(encoding="utf-8")
+        self.assertIn("defer_switch=True", text)
+        self.assertIn("start_switch(name)", text)
 
 
 if __name__ == "__main__":

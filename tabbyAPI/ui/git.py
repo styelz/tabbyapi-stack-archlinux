@@ -324,6 +324,7 @@ def _run_git(
     *,
     timeout: float | None = None,
     max_bytes: int | None = None,
+    network: bool = False,
 ) -> tuple[int, str]:
     from ui import codebox
 
@@ -334,6 +335,7 @@ def _run_git(
             _git_cmd(repo_rel, args),
             timeout=timeout,
             max_bytes=max_bytes,
+            network=network,
         )
     except codebox.CodeboxError as exc:
         raise GitError(str(exc)) from exc
@@ -603,7 +605,7 @@ def git_fetch(username: str, chat_id: str) -> dict[str, Any]:
     if code == 0 and str(shallow or "").strip() == "true":
         args = ["fetch", "--unshallow", "--prune"]
     code, output = _run_git(
-        username, chat_id, repo_rel, args, timeout=CLONE_TIMEOUT_S
+        username, chat_id, repo_rel, args, timeout=CLONE_TIMEOUT_S, network=True
     )
     if code:
         _raise_git(output, "git fetch failed", auth=not has_creds(username, chat_id))
@@ -624,6 +626,7 @@ def git_pull(username: str, chat_id: str) -> dict[str, Any]:
             repo_rel,
             ["fetch", "--unshallow", "--prune"],
             timeout=CLONE_TIMEOUT_S,
+            network=True,
         )
         if fetch_code:
             _raise_git(
@@ -632,7 +635,7 @@ def git_pull(username: str, chat_id: str) -> dict[str, Any]:
                 auth=not has_creds(username, chat_id),
             )
     code, output = _run_git(
-        username, chat_id, repo_rel, args, timeout=CLONE_TIMEOUT_S
+        username, chat_id, repo_rel, args, timeout=CLONE_TIMEOUT_S, network=True
     )
     if code:
         _raise_git(output, "git pull failed", auth=not has_creds(username, chat_id))
@@ -644,7 +647,7 @@ def git_push(username: str, chat_id: str) -> dict[str, Any]:
     _ensure_https_origin(username, chat_id, repo_rel)
     args = ["push", "-u", "origin", "HEAD"]
     code, output = _run_git(
-        username, chat_id, repo_rel, args, timeout=CLONE_TIMEOUT_S
+        username, chat_id, repo_rel, args, timeout=CLONE_TIMEOUT_S, network=True
     )
     if code:
         _raise_git(output, "git push failed", auth=not has_creds(username, chat_id))

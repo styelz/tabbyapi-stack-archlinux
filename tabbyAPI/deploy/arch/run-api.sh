@@ -5,12 +5,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 PY="$ROOT/venv/bin/python"
 ENV_FILE="$ROOT/deploy/arch/tabby.env"
-if [[ -f "$ENV_FILE" ]]; then
-  set -a
-  # shellcheck disable=SC1090
-  . "$ENV_FILE"
-  set +a
-fi
+# shellcheck source=load-env.sh
+. "$ROOT/deploy/arch/load-env.sh"
+load_tabby_env_file "$ENV_FILE"
 # systemd 256+ needs these for `systemctl --user` / `systemd-run --user`
 # from inside the service (sg/sudo also drop the login session bus).
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"

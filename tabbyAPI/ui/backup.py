@@ -329,6 +329,7 @@ def _extract_zip(
         else:
             _emit(on_progress, f"Extracting {files} files ({format_bytes(total)})")
         written = 0
+        actual = 0
         for info in infos:
             name = str(info.filename or "").replace("\\", "/")
             if info.is_dir() or name.endswith("/"):
@@ -336,7 +337,14 @@ def _extract_zip(
             dest = _safe_extract_path(staging, name)
             dest.parent.mkdir(parents=True, exist_ok=True)
             with zf.open(info, "r") as src_fh, open(dest, "wb") as out:
-                shutil.copyfileobj(src_fh, out)
+                while True:
+                    chunk = src_fh.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    actual += len(chunk)
+                    if actual > UNCOMPRESSED_MAX:
+                        raise BackupError("Backup is too large")
+                    out.write(chunk)
             written += 1
             if written % 50 == 0:
                 _emit(on_progress, f"Extracted {written}/{files} files")

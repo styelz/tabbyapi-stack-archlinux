@@ -1598,6 +1598,8 @@ def handle_if_requested(
     if is_list_request(data):
         return text_response(data, list_text())
     if is_restart_request(data):
+        if defer_switch:
+            return None
         if not start_restart():
             return text_response(
                 data,

@@ -24,7 +24,18 @@ from endpoints.OAI.types.embedding import EmbeddingsRequest, EmbeddingsResponse
 from common.agent_loop import inject_loop_break, inject_zero_change_hint
 from common.gpu_mode import public_api_base
 from common.pasted_images import latest_turn_image, materialize_pasted_images
-from common.phrase_switch import handle_if_requested, inject_clipboard_save_hint, last_user_text
+from common.phrase_switch import (
+    handle_if_requested,
+    inject_clipboard_save_hint,
+    is_restart_request,
+    last_user_text,
+    requested_profile,
+    restart_reply_text,
+    start_restart,
+    start_switch,
+    switch_reply_text,
+    text_response,
+)
 from endpoints.OAI.utils.common_ import load_inline_model
 from endpoints.OAI.utils.pipeline import load_lock, run_chat_completion_turn
 from endpoints.OAI.utils.completion import (
@@ -118,12 +129,14 @@ async def chat_completion_request(
 
     api_base = public_api_base(request)
     materialize_pasted_images(data)
-    switch_response = handle_if_requested(data, api_base=api_base)
-    if switch_response is not None:
-        return switch_response
-    inject_clipboard_save_hint(data, api_base=api_base)
-    inject_zero_change_hint(data)
-    inject_loop_break(data)
+    early = handle_if_requested(data, api_base=api_base, defer_switch=True)
+    if early is not None:
+        return early
+    switching = is_restart_request(data) or bool(requested_profile(data))
+    if not switching:
+        inject_clipboard_save_hint(data, api_base=api_base)
+        inject_zero_change_hint(data)
+        inject_loop_break(data)
 
     # Only an image attached on this turn may seed img2img. Clients resend the
     # whole history, so an older one turned a later unrelated image prompt into
@@ -142,6 +155,17 @@ async def chat_completion_request(
     handed_off = False
     try:
         await gate.wait_until_acquired(disconnect_handler)
+        if is_restart_request(data):
+            if not start_restart():
+                return text_response(
+                    data,
+                    "Restart is not available on this host. Send help for the chat phrases.",
+                )
+            return text_response(data, restart_reply_text())
+        name = requested_profile(data)
+        if name:
+            start_switch(name)
+            return text_response(data, switch_reply_text(name))
         result = await run_chat_completion_turn(
             request,
             data,

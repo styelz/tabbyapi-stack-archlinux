@@ -83,12 +83,25 @@ def _llm_jobs_active() -> bool:
         return False
 
 
-def _externally_busy() -> bool:
+def _lease_work_live() -> bool:
     if _image_job() is not None:
         return True
     if _switch_busy():
         return True
-    return _llm_jobs_active()
+    if _llm_jobs_active():
+        return True
+    try:
+        from ui.flight import iter_live_flights
+
+        if iter_live_flights():
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _externally_busy() -> bool:
+    return _lease_work_live()
 
 
 def _reclaim_stale() -> bool:
@@ -98,6 +111,8 @@ def _reclaim_stale() -> bool:
     if occupant is None:
         return False
     if time.time() - occupant.started_at > _LEASE_MAX_S:
+        if _lease_work_live():
+            return False
         _occupant = None
         return True
     task = occupant.task
@@ -105,15 +120,8 @@ def _reclaim_stale() -> bool:
         return False
     # Streaming hands the HTTP task off to an SSE generator. The acquire task
     # looks done while the GPU job is still running — do not drop that lease.
-    if _llm_jobs_active():
+    if _lease_work_live():
         return False
-    try:
-        from ui.flight import iter_live_flights
-
-        if iter_live_flights():
-            return False
-    except Exception:
-        pass
     _occupant = None
     return True
 
@@ -350,9 +358,10 @@ async def wait_tick(timeout: float = 1.0) -> None:
 
 
 def reset_for_tests() -> None:
-    global _occupant
+    global _occupant, _cond
     _occupant = None
     _waiters.clear()
+    _cond = asyncio.Condition()
     from ui.flight import reset_for_tests as reset_flights
 
     reset_flights()

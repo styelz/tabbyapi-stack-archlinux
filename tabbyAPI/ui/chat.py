@@ -18,9 +18,12 @@ from common.phrase_switch import (
     comfy_chat_suggest_text,
     gpu_is_comfy,
     handle_if_requested,
+    is_restart_request,
     last_user_text,
     looks_like_chat_not_image,
     requested_profile,
+    restart_reply_text,
+    start_restart,
     start_switch,
     stream_text,
     switch_reply_text,
@@ -159,6 +162,13 @@ async def _run_console_work(
     agent: str = "agent",
 ):
     await disconnect_handler.poll()
+    if is_restart_request(data):
+        if not start_restart():
+            return text_response(
+                data,
+                "Restart is not available on this host. Send help for the chat phrases.",
+            )
+        return text_response(data, restart_reply_text())
     name = requested_profile(data)
     if name:
         start_switch(name)

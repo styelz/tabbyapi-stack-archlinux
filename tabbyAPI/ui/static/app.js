@@ -12,7 +12,7 @@
 
   function currentName() {
     const hash = (location.hash || "#chat").replace("#", "");
-    if ((hash === "users" || hash === "settings") && !isAdmin) return "chat";
+    if ((hash === "users" || hash === "settings" || hash === "logs") && !isAdmin) return "chat";
     return pages[hash] ? hash : "chat";
   }
 
@@ -801,15 +801,17 @@
       const chip = document.getElementById("user-chip");
       if (chip && name) chip.setAttribute("aria-label", name);
       isAdmin = Boolean(data.is_admin);
+      const logsTab = document.getElementById("tab-logs");
       const usersTab = document.getElementById("tab-users");
       const settingsTab = document.getElementById("tab-settings");
+      if (logsTab) logsTab.hidden = !isAdmin;
       if (usersTab) usersTab.hidden = !isAdmin;
       if (settingsTab) settingsTab.hidden = !isAdmin;
       if (settingsBtn) settingsBtn.hidden = !isAdmin;
       if (settingsItem) settingsItem.hidden = !isAdmin;
       if (restartItem) restartItem.hidden = !isAdmin;
       const hash = (location.hash || "").replace("#", "");
-      if (!isAdmin && (hash === "users" || hash === "settings")) {
+      if (!isAdmin && (hash === "users" || hash === "settings" || hash === "logs")) {
         location.hash = "#chat";
       }
       show(currentName());
@@ -843,7 +845,7 @@
 
   window.addEventListener("hashchange", () => {
     const hash = (location.hash || "").replace("#", "");
-    if (!isAdmin && (hash === "users" || hash === "settings")) {
+    if (!isAdmin && (hash === "users" || hash === "settings" || hash === "logs")) {
       location.hash = "#chat";
       return;
     }

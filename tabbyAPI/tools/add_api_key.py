@@ -48,6 +48,10 @@ def main():
         with os.fdopen(fd, "w", encoding="utf8") as temp_file:
             yaml.dump(auth_keys, temp_file)
         os.replace(temp_path, AUTH_FILE)
+        try:
+            os.chmod(AUTH_FILE, 0o600)
+        except OSError:
+            pass
     except BaseException:
         os.unlink(temp_path)
         raise

@@ -21,12 +21,9 @@ if command -v systemctl >/dev/null 2>&1 && systemctl --user is-active --quiet ta
 fi
 
 cd "$TABBY"
-if [[ -f "$ENV_FILE" ]]; then
-  set -a
-  # shellcheck disable=SC1090
-  . "$ENV_FILE"
-  set +a
-fi
+# shellcheck source=load-env.sh
+. "$TABBY/deploy/arch/load-env.sh"
+load_tabby_env_file "$ENV_FILE"
 export TABBY_LOG_CONSOLE_WIDTH="${TABBY_LOG_CONSOLE_WIDTH:-256}"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then

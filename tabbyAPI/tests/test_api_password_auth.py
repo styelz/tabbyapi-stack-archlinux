@@ -73,7 +73,22 @@ class ApiPasswordAuthTests(unittest.TestCase):
 
         asyncio.run(_check())
 
-    def test_password_reset_invalidates_cache(self):
+    def test_linux_password_change_invalidates_cache(self):
+        stamp = ["a"]
+        auth.set_authenticator(lambda user, password: user == "tabby" and password == "pbp")
+        with mock.patch.object(api_auth, "_linux_auth_stamp", side_effect=lambda: stamp[0]):
+            with mock.patch.object(auth, "stack_username", return_value="tabby"):
+                self.assertEqual(api_auth.permission_for_token("pbp"), "admin")
+                stamp[0] = "b"
+                auth.set_authenticator(lambda user, password: False)
+                self.assertIsNone(api_auth.permission_for_token("pbp"))
+
+    def test_yaml_keys_are_not_logged(self):
+        keys = api_auth.AuthKeys(api_key="super-secret-api", admin_key="super-secret-admin")
+        formatted = api_auth._format_api_keys(keys)
+        self.assertNotIn("super-secret-api", formatted)
+        self.assertNotIn("super-secret-admin", formatted)
+        self.assertIn("1 extra API key", formatted)
         with mock.patch.object(auth, "stack_username", return_value="tabby"):
             users.create_user("alice", "secret123")
             self.assertEqual(api_auth.permission_for_token("secret123"), "api")

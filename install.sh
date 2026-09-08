@@ -8,6 +8,8 @@ set -euo pipefail
 STACK_ROOT="$(cd "$(dirname "$0")" && pwd)"
 TABBY_SRC="$STACK_ROOT/tabbyAPI"
 SCRIPT_DIR="$TABBY_SRC/deploy/arch"
+# shellcheck source=tabbyAPI/deploy/arch/load-env.sh
+. "$SCRIPT_DIR/load-env.sh"
 CATALOG="$SCRIPT_DIR/models.json"
 FETCH_MODELS="$SCRIPT_DIR/fetch_models.py"
 
@@ -544,15 +546,6 @@ wait_for_tabby_health() {
   append_update_log "Timed out after ${tries}s waiting for $url"
   [[ -n "$body" ]] && echo "Last body: $body" >> "${INSTALL_LOG:-/dev/null}"
   return 1
-}
-
-load_tabby_env_file() {
-  local env_file="$1"
-  [[ -f "$env_file" ]] || return 0
-  # shellcheck disable=SC1090
-  set -a
-  . "$env_file"
-  set +a
 }
 
 INSTALL_LOG=""
@@ -2062,23 +2055,23 @@ load_backup_tabby_env() {
     value=${line#*=}
     value=$(trim_env_value "$value")
     case "$key" in
-      TABBY_NETWORK_HOST) TABBY_NETWORK_HOST=$value ;;
-      TABBY_NETWORK_PORT) TABBY_NETWORK_PORT=$value ;;
-      TABBY_MODELS) TABBY_MODELS=$value ;;
-      TABBY_PUBLIC_BASE) TABBY_PUBLIC_BASE=$value ;;
-      TABBY_SSH_REMOTE) TABBY_SSH_REMOTE=$value ;;
-      TABBY_SSH_FORWARD) TABBY_SSH_FORWARD=$value ;;
-      TABBY_SSH_KEY) TABBY_SSH_KEY=$value ;;
-      COMFYUI_URL) COMFYUI_URL=$value ;;
-      TABBY_SAVER_ENABLED) TABBY_SAVER_ENABLED=$value ;;
-      TABBY_SAVER_IDLE_S) TABBY_SAVER_IDLE_S=$value ;;
-      TABBY_SAVER_LOGOUT_IDLE_S) TABBY_SAVER_LOGOUT_IDLE_S=$value ;;
-      TABBY_SAVER_HUD_S) TABBY_SAVER_HUD_S=$value ;;
-      TABBY_SAVER_TTY) TABBY_SAVER_TTY=$value ;;
-      TABBY_SAVER_USER_TTY) TABBY_SAVER_USER_TTY=$value ;;
-      TABBY_AUTO_UPDATE) TABBY_AUTO_UPDATE=$value ;;
-      TABBY_AUTO_UPDATE_DAYS) TABBY_AUTO_UPDATE_DAYS=$value ;;
-      TABBY_AUTO_UPDATE_FULL) TABBY_AUTO_UPDATE_FULL=$value ;;
+      TABBY_NETWORK_HOST) printf -v TABBY_NETWORK_HOST '%s' "$value" ;;
+      TABBY_NETWORK_PORT) printf -v TABBY_NETWORK_PORT '%s' "$value" ;;
+      TABBY_MODELS) printf -v TABBY_MODELS '%s' "$value" ;;
+      TABBY_PUBLIC_BASE) printf -v TABBY_PUBLIC_BASE '%s' "$value" ;;
+      TABBY_SSH_REMOTE) printf -v TABBY_SSH_REMOTE '%s' "$value" ;;
+      TABBY_SSH_FORWARD) printf -v TABBY_SSH_FORWARD '%s' "$value" ;;
+      TABBY_SSH_KEY) printf -v TABBY_SSH_KEY '%s' "$value" ;;
+      COMFYUI_URL) printf -v COMFYUI_URL '%s' "$value" ;;
+      TABBY_SAVER_ENABLED) printf -v TABBY_SAVER_ENABLED '%s' "$value" ;;
+      TABBY_SAVER_IDLE_S) printf -v TABBY_SAVER_IDLE_S '%s' "$value" ;;
+      TABBY_SAVER_LOGOUT_IDLE_S) printf -v TABBY_SAVER_LOGOUT_IDLE_S '%s' "$value" ;;
+      TABBY_SAVER_HUD_S) printf -v TABBY_SAVER_HUD_S '%s' "$value" ;;
+      TABBY_SAVER_TTY) printf -v TABBY_SAVER_TTY '%s' "$value" ;;
+      TABBY_SAVER_USER_TTY) printf -v TABBY_SAVER_USER_TTY '%s' "$value" ;;
+      TABBY_AUTO_UPDATE) printf -v TABBY_AUTO_UPDATE '%s' "$value" ;;
+      TABBY_AUTO_UPDATE_DAYS) printf -v TABBY_AUTO_UPDATE_DAYS '%s' "$value" ;;
+      TABBY_AUTO_UPDATE_FULL) printf -v TABBY_AUTO_UPDATE_FULL '%s' "$value" ;;
     esac
   done < "$envf"
 }

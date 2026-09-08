@@ -41,7 +41,9 @@ class ShellJailTests(unittest.TestCase):
         vols = [cmd[i + 1] for i, item in enumerate(cmd) if item == "-v"]
         self.assertIn(f"{root.resolve()}:/work", vols)
         self.assertTrue(any(item.endswith(":/etc/passwd:ro") for item in vols))
-        self.assertTrue(any(item.endswith(":/etc/tabby-git-credentials") for item in vols))
+        self.assertTrue(any(item.endswith(":/etc/tabby-git-credentials:ro") for item in vols))
+        self.assertIn("--network", cmd)
+        self.assertIn("none", cmd)
         self.assertIn("GIT_CONFIG_VALUE_0=store --file=/etc/tabby-git-credentials", cmd)
         self.assertIn("--cap-drop", cmd)
         self.assertIn("ALL", cmd)

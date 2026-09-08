@@ -247,6 +247,21 @@ def normalize_prompt(arguments: Optional[dict[str, Any]]) -> str:
     return prompt
 
 
+def mcp_owner_from_request(request) -> str:
+    """Stable per-credential id so two API clients cannot share a GPU batch."""
+    if request is None:
+        return "mcp:local"
+    from common.auth import _presented_token, _token_digest
+
+    token = _presented_token(
+        request.headers.get("x-api-key") if hasattr(request, "headers") else None,
+        request.headers.get("authorization") if hasattr(request, "headers") else None,
+    )
+    if not token:
+        return "mcp:anonymous"
+    return "key:" + _token_digest(token)[:16]
+
+
 def clamp_count(value: Any) -> int:
     try:
         return max(1, min(int(value or 1), 4))
@@ -495,9 +510,17 @@ async def run_generate_tool(
         restore = was_llm
 
     from common.networking import DisconnectHandler
+    from images.jobs import active_mcp_image_job
     from ui.occupancy import StackGate
 
-    gate = StackGate("api", kind="image")
+    owner = mcp_owner_from_request(request)
+    busy = active_mcp_image_job()
+    if busy and str(busy.owner or "").strip() == owner:
+        return await _run_generate_job(
+            args, request, prompt, items, size, count, seed, restore, owner=owner
+        )
+
+    gate = StackGate(owner or "api", kind="image")
     handler = DisconnectHandler(request, "/v1/mcp") if request is not None else None
     if handler is not None:
         await gate.wait_until_acquired(handler)
@@ -505,7 +528,7 @@ async def run_generate_tool(
         await gate.wait_until_acquired(_NullDisconnect())
     try:
         return await _run_generate_job(
-            args, request, prompt, items, size, count, seed, restore
+            args, request, prompt, items, size, count, seed, restore, owner=owner
         )
     finally:
         await gate.release()
@@ -516,7 +539,9 @@ class _NullDisconnect:
         return None
 
 
-async def _run_generate_job(args, request, prompt, items, size, count, seed, restore):
+async def _run_generate_job(
+    args, request, prompt, items, size, count, seed, restore, *, owner: str = ""
+):
     from common.gpu_mode import public_api_base
     from images.jobs import start_mcp_image_job, wait_until_done
 
@@ -532,6 +557,7 @@ async def _run_generate_job(args, request, prompt, items, size, count, seed, res
         api_base=api_base,
         items=items or None,
         delay=0.0,
+        owner=owner or mcp_owner_from_request(request),
     )
     if kind == "busy":
         return tool_text(format_mcp_job_text(job, busy_other=True), is_error=False)

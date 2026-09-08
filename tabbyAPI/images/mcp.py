@@ -58,6 +58,8 @@ async def run_generate_tool(arguments: Optional[dict[str, Any]], request=None) -
 
     suggested = str(args.get("output_path") or "").strip() or "images/generated.png"
     api_base = public_api_base(request)
+    from common.mcp_images import mcp_owner_from_request
+
     job, kind = await start_mcp_image_job(
         prompt=prompt,
         output_path=suggested,
@@ -68,6 +70,7 @@ async def run_generate_tool(arguments: Optional[dict[str, Any]], request=None) -
         api_base=api_base,
         items=items or None,
         delay=0.0,
+        owner=mcp_owner_from_request(request),
     )
     if kind == "busy":
         return tool_text(

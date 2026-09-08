@@ -125,6 +125,7 @@ class StackBackupTests(unittest.TestCase):
                 {
                     "format": stack_backup.FORMAT,
                     "version": stack_backup.VERSION,
+                    "complete": True,
                     "groups": ["models"],
                     "items": [{"path": "../escape", "group": "models", "bytes": 1}],
                 }
@@ -132,6 +133,23 @@ class StackBackupTests(unittest.TestCase):
             encoding="utf-8",
         )
         with self.assertRaisesRegex(stack_backup.StackBackupError, "unsafe"):
+            stack_backup.plan_restore(self.destination)
+
+    def test_restore_rejects_incomplete_backup(self):
+        self.destination.mkdir()
+        (self.destination / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "format": stack_backup.FORMAT,
+                    "version": stack_backup.VERSION,
+                    "complete": False,
+                    "groups": ["models"],
+                    "items": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(stack_backup.StackBackupError, "incomplete"):
             stack_backup.plan_restore(self.destination)
 
 

@@ -150,12 +150,85 @@ def run_args(username: str, chat_id: str, workspace: Path) -> list[str]:
             "-v",
             f"{group}:/etc/group:ro",
             "-v",
-            f"{creds.resolve()}:{GIT_CREDS_MOUNT}",
+            f"{creds.resolve()}:{GIT_CREDS_MOUNT}:ro",
+            "--network",
+            "none",
             "--restart",
             "no",
             IMAGE,
             "sleep",
             "infinity",
+        ]
+    )
+    return argv
+
+
+def oneshot_args(username: str, chat_id: str, command: str) -> list[str]:
+    """docker run --rm with network, for git clone/fetch/pull/push only."""
+    root = workspace_root(username, chat_id, create=True, box=False).resolve()
+    if not root.is_dir():
+        root.mkdir(parents=True, exist_ok=True)
+    passwd, group = write_identity(username, chat_id)
+    from ui.git import GIT_CREDS_MOUNT, ensure_creds_file
+
+    creds = ensure_creds_file(username, chat_id)
+    name = unix_name(username)
+    uid, gid = _uid_gid()
+    argv = [
+        docker_bin(),
+        "run",
+        "--rm",
+        "--label",
+        LABEL,
+        "--label",
+        f"tabby.user={safe_name(username)}",
+        "--label",
+        f"tabby.chat={safe_name(chat_id)}",
+        "--hostname",
+        "tabby",
+        "--user",
+        f"{uid}:{gid}",
+        "--workdir",
+        WORK_DIR,
+        "--env",
+        f"HOME={WORK_DIR}",
+        "--env",
+        f"USER={name}",
+        "--env",
+        f"LOGNAME={name}",
+        "--env",
+        "TERM=xterm-256color",
+        "--env",
+        "PS1=\\W $ ",
+    ]
+    for pair in _git_env_pairs():
+        argv.extend(["--env", pair])
+    argv.extend(
+        [
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges",
+            "--memory",
+            MEMORY,
+            "--pids-limit",
+            PIDS,
+            "--cpus",
+            CPUS,
+            "--tmpfs",
+            "/tmp",
+            "-v",
+            f"{root}:{WORK_DIR}",
+            "-v",
+            f"{passwd}:/etc/passwd:ro",
+            "-v",
+            f"{group}:/etc/group:ro",
+            "-v",
+            f"{creds.resolve()}:{GIT_CREDS_MOUNT}:ro",
+            IMAGE,
+            "bash",
+            "-lc",
+            command,
         ]
     )
     return argv
@@ -219,6 +292,21 @@ def _stale_container(name: str) -> bool:
     return current != wanted
 
 
+def _sandbox_outdated(name: str) -> bool:
+    if _stale_container(name) or _missing_git_creds_mount(name):
+        return True
+    mode = _inspect_field(name, "{{.HostConfig.NetworkMode}}")
+    if mode and mode != "none":
+        return True
+    rw = _inspect_field(
+        name,
+        '{{range .Mounts}}{{if eq .Destination "/etc/tabby-git-credentials"}}{{.RW}}{{end}}{{end}}',
+    )
+    if rw and rw.strip().lower() == "true":
+        return True
+    return False
+
+
 def _missing_git_creds_mount(name: str) -> bool:
     from ui.git import GIT_CREDS_MOUNT
 
@@ -256,7 +344,7 @@ def ensure_container(username: str, chat_id: str) -> str:
     root = workspace_root(username, chat_id, create=True, box=False)
     with _name_lock(name):
         status = _inspect_status(name)
-        if status and (_stale_container(name) or _missing_git_creds_mount(name)):
+        if status and _sandbox_outdated(name):
             _run([docker_bin(), "rm", "-f", name], timeout=30)
             status = None
         if status == "running":
@@ -330,13 +418,17 @@ def run_shell(
     *,
     timeout: float | None = None,
     max_bytes: int | None = None,
+    network: bool = False,
 ) -> tuple[int, str]:
     """Run one command in the chat container. Returns (exit_code, output)."""
     text = str(command or "").strip()
     if not text:
         return 0, ""
-    ensure_container(username, chat_id)
-    argv = exec_args(username, chat_id, ["bash", "-lc", text])
+    if network:
+        argv = oneshot_args(username, chat_id, text)
+    else:
+        ensure_container(username, chat_id)
+        argv = exec_args(username, chat_id, ["bash", "-lc", text])
     limit = SHELL_TIMEOUT_S if timeout is None else max(1.0, float(timeout))
     cap = SHELL_MAX_BYTES if max_bytes is None else max(1024, int(max_bytes))
     try:

@@ -19,6 +19,9 @@ from common.mcp_images import (
 class McpImagesTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         from endpoints.core.image_jobs import reset_mcp_image_jobs_for_tests
+        from ui.occupancy import reset_for_tests as reset_occupancy
+
+        reset_occupancy()
 
         self._tmpdir = tempfile.TemporaryDirectory()
         self._gallery_patch = mock.patch(
@@ -295,6 +298,38 @@ class McpImagesTests(unittest.IsolatedAsyncioTestCase):
             "Added to the same GPU batch" in again_text or "2 image" in again_text
         )
         self.assertIn("2 image", first_text + again_text)
+
+    async def test_empty_owner_does_not_append_across_clients(self):
+        from images.jobs import start_mcp_image_job, wait_until_done
+
+        gate = self._patch_slow_job()
+        first, kind = await start_mcp_image_job(
+            prompt="qwen-image: Cafe logo",
+            output_path="images/logo.png",
+            size="1024x1024",
+            count=1,
+            seed=None,
+            restore=True,
+            api_base="https://gpu.example/v1",
+            delay=0.0,
+            owner="",
+        )
+        self.assertEqual(kind, "started")
+        second, kind2 = await start_mcp_image_job(
+            prompt="a cafe interior",
+            output_path="images/hero.png",
+            size="1024x1024",
+            count=1,
+            seed=None,
+            restore=True,
+            api_base="https://gpu.example/v1",
+            delay=0.0,
+            owner="",
+        )
+        self.assertEqual(kind2, "busy")
+        self.assertEqual(second.id, first.id)
+        gate.set()
+        await wait_until_done(first)
 
     async def test_images_array_is_one_job(self):
         gate = self._patch_slow_job()

@@ -131,8 +131,17 @@ async def _watch_auth_file():
 
 def _format_api_keys(auth_keys: AuthKeys) -> str:
     if isinstance(auth_keys.api_key, str):
-        return auth_keys.api_key
-    return ", ".join(auth_keys.api_key)
+        count = 1 if auth_keys.api_key else 0
+    else:
+        count = len(auth_keys.api_key)
+    return f"{count} extra API key(s)"
+
+
+def _chmod_private(path: str) -> None:
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
 
 
 async def load_auth_keys(disable_from_config: bool):
@@ -164,6 +173,9 @@ async def load_auth_keys(disable_from_config: bool):
             yaml.dump(AUTH_KEYS.model_dump(), string_stream)
 
             await auth_file.write(string_stream.getvalue())
+        _chmod_private(AUTH_FILE)
+    else:
+        _chmod_private(AUTH_FILE)
 
     # Reload the keys whenever the file changes, so keys can be added or
     # revoked without a server restart
@@ -173,8 +185,8 @@ async def load_auth_keys(disable_from_config: bool):
     logger.info(
         f"Login passwords are also API keys: the Linux account password for "
         f"admin endpoints, and each Tabby-only user's password for API calls.\n"
-        f"Optional extra keys from {AUTH_FILE}: {_format_api_keys(AUTH_KEYS)}\n"
-        f"Optional extra admin key from {AUTH_FILE}: {AUTH_KEYS.admin_key}\n"
+        f"Optional extra keys from {AUTH_FILE}: {_format_api_keys(AUTH_KEYS)}. "
+        f"Extra admin key: {'present' if AUTH_KEYS.admin_key else 'none'}.\n"
         "If yaml keys get compromised, delete api_tokens.yml and restart. "
         "Have fun!"
     )
@@ -193,6 +205,25 @@ def _extra_users_stamp() -> str:
     from ui.users import password_hashes_stamp
 
     return password_hashes_stamp()
+
+
+def _linux_auth_stamp() -> str:
+    try:
+        return str(os.stat("/etc/shadow").st_mtime)
+    except OSError:
+        return ""
+
+
+def _password_cache_stamp() -> str:
+    return f"{_extra_users_stamp()}\0{_linux_auth_stamp()}"
+
+
+def _password_cache_ttl(perm: Optional[str]) -> float:
+    if not perm:
+        return PASSWORD_FAIL_TTL_S
+    if perm == "admin" and not _linux_auth_stamp():
+        return 15.0
+    return PASSWORD_CACHE_TTL_S
 
 
 def _presented_token(*candidates: Optional[str]) -> Optional[str]:
@@ -239,7 +270,7 @@ def permission_for_token(test_key: str) -> Optional[str]:
     if yaml_perm:
         return yaml_perm
     digest = _token_digest(test_key)
-    stamp = _extra_users_stamp()
+    stamp = _password_cache_stamp()
     now = time.time()
     with _password_cache_lock:
         hit = _password_cache.get(digest)
@@ -248,7 +279,7 @@ def permission_for_token(test_key: str) -> Optional[str]:
             if now < expires and cached_stamp == stamp:
                 return perm
     perm = _login_permission(test_key)
-    ttl = PASSWORD_CACHE_TTL_S if perm else PASSWORD_FAIL_TTL_S
+    ttl = _password_cache_ttl(perm)
     with _password_cache_lock:
         _password_cache[digest] = (perm, now + ttl, stamp)
     return perm

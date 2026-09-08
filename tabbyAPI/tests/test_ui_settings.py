@@ -120,3 +120,76 @@ class AutoUpdateSettingsTests(unittest.TestCase):
         self.assertEqual(settings.normalize_update_key("TABBY_AUTO_UPDATE_DAYS"), "interval_days")
         self.assertEqual(settings.normalize_update_key("update-all"), "full")
         self.assertEqual(settings.normalize_update_key("enable"), "enabled")
+
+
+class EnvQuoteTests(unittest.TestCase):
+    def test_shell_metacharacters_are_rejected(self):
+        with self.assertRaises(settings.SettingsError):
+            settings._env_quote("$(id)")
+        with self.assertRaises(settings.SettingsError):
+            settings._env_quote("`reboot`")
+        with self.assertRaises(settings.SettingsError):
+            settings._env_quote("ok\nKEY=1")
+
+    def test_spaces_are_single_quoted(self):
+        self.assertEqual(settings._env_quote("/opt/Tabby API"), "'/opt/Tabby API'")
+
+    def test_plain_values_stay_unquoted(self):
+        self.assertEqual(settings._env_quote("http://127.0.0.1:8188"), "http://127.0.0.1:8188")
+
+    def test_blocked_keys_cannot_be_saved(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            env = Path(tmp) / "tabby.env"
+            env.write_text("COMFYUI_URL=http://127.0.0.1:8188\n", encoding="utf-8")
+            with mock.patch.object(settings, "ENV_PATH", env):
+                with mock.patch.object(settings, "_reload_live"):
+                    with self.assertRaises(settings.SettingsError):
+                        settings.save_settings({"system": {"LD_PRELOAD": "/tmp/x.so"}})
+
+    def test_scrub_env_file_drops_ld_preload(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            env = Path(tmp) / "tabby.env"
+            env.write_text(
+                "COMFYUI_URL=http://127.0.0.1:8188\nLD_PRELOAD=/tmp/x.so\n",
+                encoding="utf-8",
+            )
+            settings.scrub_env_file(env)
+            text = env.read_text(encoding="utf-8")
+            self.assertIn("COMFYUI_URL=", text)
+            self.assertNotIn("LD_PRELOAD", text)
+
+
+class LoadEnvShTests(unittest.TestCase):
+    def test_start_and_run_api_do_not_source_tabby_env(self):
+        root = Path(__file__).resolve().parents[1] / "deploy" / "arch"
+        start = (root / "start.sh").read_text(encoding="utf-8")
+        run_api = (root / "run-api.sh").read_text(encoding="utf-8")
+        self.assertIn("load-env.sh", start)
+        self.assertIn("load_tabby_env_file", start)
+        self.assertNotIn('. "$ENV_FILE"', start)
+        self.assertIn("load-env.sh", run_api)
+        self.assertNotIn('. "$ENV_FILE"', run_api)
+
+    def test_loader_refuses_command_substitution(self):
+        import subprocess
+        import tempfile
+
+        script = Path(__file__).resolve().parents[1] / "deploy" / "arch" / "load-env.sh"
+        with tempfile.TemporaryDirectory() as tmp:
+            env = Path(tmp) / "tabby.env"
+            env.write_text("COMFYUI_URL=$(id)\n", encoding="utf-8")
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    f'. "{script}" && load_tabby_env_file "{env}"',
+                ],
+                capture_output=True,
+                text=True,
+            )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unsafe", result.stderr.lower())

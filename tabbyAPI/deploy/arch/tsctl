@@ -24,14 +24,14 @@ resolve_root() {
       /opt/tabbyapi-stack/tabbyAPI/deploy/arch/tabby.env \
       /opt/tabby-stack/tabbyAPI/deploy/arch/tabby.env; do
     [[ -f "$envf" ]] || continue
-    # shellcheck disable=SC1090
-    TABBY_INSTALL_ROOT=""
-    set -a
-    # shellcheck disable=SC1090
-    . "$envf"
-    set +a
-    if [[ -n "${TABBY_INSTALL_ROOT:-}" && -d "${TABBY_INSTALL_ROOT}/tabbyAPI" ]]; then
-      printf '%s' "${TABBY_INSTALL_ROOT%/}"
+    line=$(grep -m1 '^TABBY_INSTALL_ROOT=' "$envf" || true)
+    value=${line#TABBY_INSTALL_ROOT=}
+    value=${value#\"}
+    value=${value%\"}
+    value=${value#\'}
+    value=${value%\'}
+    if [[ -n "$value" && -d "${value}/tabbyAPI" ]]; then
+      printf '%s' "${value%/}"
       return 0
     fi
   done

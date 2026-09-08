@@ -1549,7 +1549,7 @@ def clone_git(username: str, chat_id: str, url: str) -> dict[str, str]:
     )
     try:
         code, output = codebox.run_shell(
-            username, chat_id, cmd, timeout=CLONE_TIMEOUT_S
+            username, chat_id, cmd, timeout=CLONE_TIMEOUT_S, network=True
         )
     except codebox.CodeboxError as exc:
         raise ValueError(str(exc)) from exc

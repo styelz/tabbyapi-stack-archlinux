@@ -279,13 +279,13 @@ async def ui_metrics(
 
 
 @router.get("/logs/history", include_in_schema=False)
-async def ui_log_history(lines: int = 300, _user: str = Depends(require_ui_user)):
+async def ui_log_history(lines: int = 300, _admin: str = Depends(require_ui_admin)):
     install_log_sink()
     return {"lines": journalctl_history(lines)}
 
 
 @router.get("/logs/stream", include_in_schema=False)
-async def ui_log_stream(_user: str = Depends(require_ui_user)):
+async def ui_log_stream(_admin: str = Depends(require_ui_admin)):
     install_log_sink()
 
     async def events():

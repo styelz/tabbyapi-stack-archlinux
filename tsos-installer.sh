@@ -1844,26 +1844,26 @@ load_backup_tabby_env() {
     value=$(trim_env_value "$value")
     case "$key" in
       TABBY_NETWORK_HOST)
-        [[ -z "${HOST_FROM_CLI:-}" ]] && TABBY_NETWORK_HOST=$value
+        [[ -z "${HOST_FROM_CLI:-}" ]] && printf -v TABBY_NETWORK_HOST '%s' "$value"
         ;;
-      TABBY_NETWORK_PORT) TABBY_NETWORK_PORT=$value ;;
+      TABBY_NETWORK_PORT) printf -v TABBY_NETWORK_PORT '%s' "$value" ;;
       TABBY_MODELS)
-        [[ -z "${MODELS_FROM_CLI:-}" ]] && TABBY_MODELS=$value
+        [[ -z "${MODELS_FROM_CLI:-}" ]] && printf -v TABBY_MODELS '%s' "$value"
         ;;
-      TABBY_PUBLIC_BASE) TABBY_PUBLIC_BASE=$value ;;
-      TABBY_SSH_REMOTE) TABBY_SSH_REMOTE=$value ;;
-      TABBY_SSH_FORWARD) TABBY_SSH_FORWARD=$value ;;
-      TABBY_SSH_KEY) TABBY_SSH_KEY=$value ;;
-      COMFYUI_URL) COMFYUI_URL=$value ;;
-      TABBY_SAVER_ENABLED) TABBY_SAVER_ENABLED=$value ;;
-      TABBY_SAVER_IDLE_S) TABBY_SAVER_IDLE_S=$value ;;
-      TABBY_SAVER_LOGOUT_IDLE_S) TABBY_SAVER_LOGOUT_IDLE_S=$value ;;
-      TABBY_SAVER_HUD_S) TABBY_SAVER_HUD_S=$value ;;
-      TABBY_SAVER_TTY) TABBY_SAVER_TTY=$value ;;
-      TABBY_SAVER_USER_TTY) TABBY_SAVER_USER_TTY=$value ;;
-      TABBY_AUTO_UPDATE) TABBY_AUTO_UPDATE=$value ;;
-      TABBY_AUTO_UPDATE_DAYS) TABBY_AUTO_UPDATE_DAYS=$value ;;
-      TABBY_AUTO_UPDATE_FULL) TABBY_AUTO_UPDATE_FULL=$value ;;
+      TABBY_PUBLIC_BASE) printf -v TABBY_PUBLIC_BASE '%s' "$value" ;;
+      TABBY_SSH_REMOTE) printf -v TABBY_SSH_REMOTE '%s' "$value" ;;
+      TABBY_SSH_FORWARD) printf -v TABBY_SSH_FORWARD '%s' "$value" ;;
+      TABBY_SSH_KEY) printf -v TABBY_SSH_KEY '%s' "$value" ;;
+      COMFYUI_URL) printf -v COMFYUI_URL '%s' "$value" ;;
+      TABBY_SAVER_ENABLED) printf -v TABBY_SAVER_ENABLED '%s' "$value" ;;
+      TABBY_SAVER_IDLE_S) printf -v TABBY_SAVER_IDLE_S '%s' "$value" ;;
+      TABBY_SAVER_LOGOUT_IDLE_S) printf -v TABBY_SAVER_LOGOUT_IDLE_S '%s' "$value" ;;
+      TABBY_SAVER_HUD_S) printf -v TABBY_SAVER_HUD_S '%s' "$value" ;;
+      TABBY_SAVER_TTY) printf -v TABBY_SAVER_TTY '%s' "$value" ;;
+      TABBY_SAVER_USER_TTY) printf -v TABBY_SAVER_USER_TTY '%s' "$value" ;;
+      TABBY_AUTO_UPDATE) printf -v TABBY_AUTO_UPDATE '%s' "$value" ;;
+      TABBY_AUTO_UPDATE_DAYS) printf -v TABBY_AUTO_UPDATE_DAYS '%s' "$value" ;;
+      TABBY_AUTO_UPDATE_FULL) printf -v TABBY_AUTO_UPDATE_FULL '%s' "$value" ;;
       TABBY_INSTALL_ROOT)
         if [[ -z "${USER_FROM_CLI:-}" ]]; then
           user=$(linux_user_from_install_root "$value" || true)

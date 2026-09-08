@@ -66,11 +66,14 @@ read_env() {
     value="${value%\"}"
     value="${value#\"}"
     case "$key" in
-      TABBY_AUTO_UPDATE) TABBY_AUTO_UPDATE=$value ;;
-      TABBY_AUTO_UPDATE_DAYS) TABBY_AUTO_UPDATE_DAYS=$value ;;
-      TABBY_AUTO_UPDATE_FULL) TABBY_AUTO_UPDATE_FULL=$value ;;
-      TABBY_NETWORK_PORT) TABBY_NETWORK_PORT=$value ;;
-      TABBY_INSTALL_ROOT) STACK_ROOT=$value; STAMP="$STACK_ROOT/tabby-auto-update.stamp" ;;
+      TABBY_AUTO_UPDATE) printf -v TABBY_AUTO_UPDATE '%s' "$value" ;;
+      TABBY_AUTO_UPDATE_DAYS) printf -v TABBY_AUTO_UPDATE_DAYS '%s' "$value" ;;
+      TABBY_AUTO_UPDATE_FULL) printf -v TABBY_AUTO_UPDATE_FULL '%s' "$value" ;;
+      TABBY_NETWORK_PORT) printf -v TABBY_NETWORK_PORT '%s' "$value" ;;
+      TABBY_INSTALL_ROOT)
+        printf -v STACK_ROOT '%s' "$value"
+        STAMP="$STACK_ROOT/tabby-auto-update.stamp"
+        ;;
     esac
   done < "$ENV_FILE"
 }

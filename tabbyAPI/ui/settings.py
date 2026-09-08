@@ -253,6 +253,11 @@ GPU_ALIASES = {
 GPU_ENV_NAMES = frozenset(item["env"] for item in GPU_FIELDS)
 
 _ENV_ASSIGN = re.compile(r"^(\s*)(?:#\s*)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
+_SAFE_UNQUOTED = re.compile(r"^[A-Za-z0-9._/~:@%=+,+-]*$")
+_BLOCKED_ENV = frozenset(
+    {"ENV", "BASH_ENV", "SHELLOPTS", "GLOBIGNORE", "CDPATH", "IFS"}
+)
+_BLOCKED_ENV_PREFIXES = ("LD_", "PYTHON", "BASH_")
 
 
 class SettingsError(ValueError):
@@ -469,7 +474,7 @@ def _system_schema(file_values: dict[str, str]) -> list[dict[str, Any]]:
         field.setdefault("optional", True)
         fields.append(field)
     for name in sorted(file_values):
-        if name in known:
+        if name in known or env_key_blocked(name):
             continue
         fields.append(
             {
@@ -485,10 +490,37 @@ def _system_schema(file_values: dict[str, str]) -> list[dict[str, Any]]:
     return fields
 
 
+def env_key_blocked(name: str) -> bool:
+    if name in _BLOCKED_ENV:
+        return True
+    return name.startswith(_BLOCKED_ENV_PREFIXES)
+
+
+def _known_env_keys() -> set[str]:
+    return (
+        {item["name"] for item in SYSTEM_FIELDS}
+        | set(SAVER_ENV_NAMES)
+        | set(GPU_ENV_NAMES)
+        | set(UPDATE_ENV_NAMES)
+    )
+
+
+def _writable_env_keys(file_values: dict[str, str]) -> set[str]:
+    extra = {name for name in file_values if not env_key_blocked(name)}
+    return _known_env_keys() | extra
+
+
 def _env_quote(value: str) -> str:
-    if any(char in value for char in " \t#\"'") and not value.startswith("$"):
-        return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
-    return value
+    text = str(value)
+    if any(char in text for char in "\n\r\0"):
+        raise SettingsError("Environment values cannot contain newlines")
+    if _SAFE_UNQUOTED.fullmatch(text):
+        return text
+    if any(char in text for char in "$`\\'"):
+        raise SettingsError(
+            "Environment values cannot contain quotes or shell characters"
+        )
+    return "'" + text + "'"
 
 
 def _write_env(updates: dict[str, Optional[str]]) -> None:
@@ -507,6 +539,8 @@ def _write_env(updates: dict[str, Optional[str]]) -> None:
             out.append(line)
             continue
         key = match.group(2)
+        if env_key_blocked(key):
+            continue
         if key not in updates:
             out.append(line)
             continue
@@ -521,6 +555,8 @@ def _write_env(updates: dict[str, Optional[str]]) -> None:
         if out and out[-1].strip():
             out.append("")
         for key in extras:
+            if env_key_blocked(key):
+                continue
             value = updates[key]
             if value is None:
                 out.append(f"# {key}=")
@@ -532,6 +568,41 @@ def _write_env(updates: dict[str, Optional[str]]) -> None:
     tmp = ENV_PATH.with_suffix(ENV_PATH.suffix + ".tmp")
     tmp.write_text(text, encoding="utf-8")
     tmp.replace(ENV_PATH)
+    try:
+        os.chmod(ENV_PATH, 0o600)
+    except OSError:
+        pass
+
+
+def scrub_env_file(path: Path) -> None:
+    """Drop linker/shell-hijack keys from tabby.env (restores, old files)."""
+    if not path.is_file():
+        return
+    lines = path.read_text(encoding="utf-8").splitlines()
+    out: list[str] = []
+    changed = False
+    for line in lines:
+        match = _ENV_ASSIGN.match(line)
+        if match and env_key_blocked(match.group(2)):
+            changed = True
+            continue
+        out.append(line)
+    if not changed:
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+        return
+    text = "\n".join(out)
+    if not text.endswith("\n"):
+        text += "\n"
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(path)
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
 
 
 def _coerce_field(spec: dict[str, Any], value: Any) -> Any:
@@ -1138,10 +1209,14 @@ def save_settings(body: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(system, dict):
             raise SettingsError("system must be an object")
         env_updates: dict[str, Optional[str]] = {}
+        existing = _parse_env(ENV_PATH)
+        allowed = _writable_env_keys(existing)
         for key, raw in system.items():
             name = str(key).strip()
-            if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name):
+            if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name) or env_key_blocked(name):
                 raise SettingsError(f"Invalid environment key {name}")
+            if name not in allowed:
+                raise SettingsError(f"Unknown environment key {name}")
             if raw is None:
                 env_updates[name] = None
             elif name in SECRET_KEYS and str(raw) == "":

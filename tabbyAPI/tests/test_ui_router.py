@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 
 from ui.router import UI_PREFIX, legacy_router, router
 
@@ -56,6 +57,8 @@ class UiRoutePrefixTests(unittest.TestCase):
         self.fail(f"missing route {path}")
 
     def test_restart_and_update_require_admin(self):
+        self.assertIn("require_ui_admin", self._dep_names("/v1/ui/logs/history"))
+        self.assertIn("require_ui_admin", self._dep_names("/v1/ui/logs/stream"))
         self.assertIn("require_ui_admin", self._dep_names("/v1/ui/restart"))
         self.assertIn("require_ui_admin", self._dep_names("/v1/ui/update"))
         self.assertIn("require_ui_admin", self._dep_names("/v1/ui/update/log"))
@@ -71,6 +74,15 @@ class UiRoutePrefixTests(unittest.TestCase):
         self.assertIn("require_ui_admin", self._dep_names("/v1/ui/stack-backup/plan"))
         self.assertIn("require_ui_admin", self._dep_names("/v1/ui/stack-backup"))
         self.assertIn("require_ui_admin", self._dep_names("/v1/ui/stack-backup/restore"))
+
+    def test_logs_tab_is_admin_only(self):
+        html = Path(__file__).resolve().parents[1] / "ui" / "static" / "index.html"
+        app = Path(__file__).resolve().parents[1] / "ui" / "static" / "app.js"
+        html_src = html.read_text(encoding="utf-8")
+        app_src = app.read_text(encoding="utf-8")
+        self.assertIn('id="tab-logs"', html_src)
+        self.assertIn("logsTab.hidden = !isAdmin", app_src)
+        self.assertIn('hash === "logs"', app_src)
 
     def test_saver_state_is_not_session_gated(self):
         deps = self._dep_names("/v1/ui/saver/state")
