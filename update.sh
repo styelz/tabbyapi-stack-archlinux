@@ -27,8 +27,8 @@ Does not run pacman -Syu or upgrade already-installed OS packages.
 
 Options
   --git         Git pull only. No pip or missing OS packages. A TTY asks
-                before restarting tabbyapi. Status Update git restarts by
-                itself when API Python files changed.
+                before restarting tabbyapi. Status Update git passes
+                --restart so it never sits on that prompt.
   --all         Pull, then apply code, Python deps, and reload tabbyapi.
   --comfy       Also git pull ComfyUI and ComfyUI-GGUF. Update all then
                 reinstalls their Python requirements; git-only only pulls.
@@ -226,6 +226,10 @@ ui_yesno() {
     whiptail --backtitle "$BACKTITLE" --title "$title" "${extra[@]}" \
       --yes-button "Restart" --no-button "Skip" --yesno "$text" 16 74
     return $?
+  fi
+  if [[ ! -t 0 && ! -t 1 ]]; then
+    [[ "$default_yes" -eq 1 ]]
+    return
   fi
   local yn="Y/n"
   [[ "$default_yes" -eq 0 ]] && yn="y/N"
@@ -717,7 +721,9 @@ Log: $UPDATE_LOG"
     exit 0
   fi
 
-  if [[ ! -t 1 && ! -c /dev/tty ]]; then
+  # /dev/tty is always a char device, even with no controlling terminal.
+  # systemd-run from Status has no stdout TTY; never wait on Restart/Skip.
+  if [[ ! -t 1 ]]; then
     if git_should_auto_restart; then
       do_restart
     else

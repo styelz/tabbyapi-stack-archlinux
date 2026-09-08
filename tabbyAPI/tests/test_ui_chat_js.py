@@ -185,6 +185,7 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
         self.assertIn('fact("Stack"', status_src)
         self.assertIn("already_running", status_src)
         self.assertIn("/already running/i.test(result.message", status_src)
+        self.assertIn("waitUntilReady({ requireDown: true, watchUpdate: true })", status_src)
 
     def test_tree_drag_and_editor_find(self):
         self.assertIn('application/x-tabby-path', self.src)

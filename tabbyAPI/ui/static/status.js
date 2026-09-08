@@ -641,7 +641,7 @@ function mountStatus(root) {
       }
       if (result.message) modal.setNote(result.message);
       modal.setTitle("Updating git");
-      await modal.waitUntilReady({ requireDown: false, watchUpdate: true });
+      await modal.waitUntilReady({ requireDown: true, watchUpdate: true });
       msg.textContent = "API is back.";
       await refresh().catch((err) => TabbyUI.paintApiDown(err));
       finishProgress(modal, {

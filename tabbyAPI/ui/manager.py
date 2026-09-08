@@ -550,6 +550,7 @@ def _spawn_stack_update(script: Path, args: list[str], message: str) -> dict[str
             "--collect",
             f"--unit={UPDATE_UNIT}",
             f"--working-directory={STACK_ROOT}",
+            "--property=StandardInput=null",
             f"--setenv=XDG_RUNTIME_DIR={env['XDG_RUNTIME_DIR']}",
         ]
         dbus = env.get("DBUS_SESSION_BUS_ADDRESS")
@@ -604,8 +605,8 @@ def start_stack_update(*, full: bool = False) -> dict[str, Any]:
         )
     return _spawn_stack_update(
         script,
-        ["bash", str(script), "--git"],
-        "Started git update. TabbyAPI restarts on its own if API code changed.",
+        ["bash", str(script), "--git", "--restart"],
+        "Started git update. TabbyAPI restarts when the pull finishes.",
     )
 
 

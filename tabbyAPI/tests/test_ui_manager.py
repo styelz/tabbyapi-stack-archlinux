@@ -303,6 +303,8 @@ class UiManagerTests(unittest.TestCase):
             cmds = [c[0][0] for c in run.call_args_list]
             spawned = next(cmd for cmd in cmds if cmd and cmd[0] == "/usr/bin/systemd-run")
             self.assertIn("--git", spawned)
+            self.assertIn("--restart", spawned)
+            self.assertIn("StandardInput=null", spawned)
             self.assertNotIn("--no-restart", spawned)
             self.assertNotIn("--all", spawned)
             self.assertTrue(result["ok"])
