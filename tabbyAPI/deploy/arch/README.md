@@ -120,7 +120,7 @@ Chat phrases and mixed page+images: `$HOME/tabbyapi-stack/AGENTS.md`.
 bash "$HOME/tabbyapi-stack/update.sh"
 ```
 
-**Update git** pulls. After the pull, Status offers Restart or Skip; a bounce is only needed when API Python changed. **Update all** also runs `install.sh --update` and restarts. Status can do the same. Auto-update (default every 7 days) does Update all when idle; `tsctl updates disable` or Settings → Updates turns it off. This does not overwrite `config.yml` or `tabby.env`, and it does not run `pacman -Syu`.
+**Update git** pulls. It does not rebuild the Code sandbox image or refresh Python deps. After the pull, Status offers Restart or Skip; a bounce is only needed when API Python changed. **Update all** also runs `install.sh --update` and restarts. Status can do the same. Auto-update (default every 7 days) does Update all when idle; `tsctl updates disable` or Settings → Updates turns it off. This does not overwrite `config.yml` or `tabby.env`, and it does not run `pacman -Syu`.
 
 `--comfy` also updates ComfyUI. Leave that off unless you want image-gen to follow upstream.
 

@@ -122,7 +122,7 @@ On the GPU host:
 bash "$HOME/tabbyapi-stack/update.sh"
 ```
 
-**Update git** pulls code. After the pull, Status offers Restart or Skip; the API only needs a bounce when Python it already loaded changed. **Update all** also refreshes dependencies and restarts. Status can do the same. Auto-update (default every 7 days) runs Update all when the API is idle; **Settings → Updates** or `tsctl updates disable` turns it off. Config, `tabby.env`, weights, and the venv stay. This is not a full Arch upgrade.
+**Update git** pulls code. It does not rebuild the Code sandbox image or refresh Python deps. After the pull, Status offers Restart or Skip; the API only needs a bounce when Python it already loaded changed. **Update all** also refreshes dependencies, rebuilds a missing sandbox image, and restarts. Status can do the same. Auto-update (default every 7 days) runs Update all when the API is idle; **Settings → Updates** or `tsctl updates disable` turns it off. Config, `tabby.env`, weights, and the venv stay. This is not a full Arch upgrade.
 
 ## More
 

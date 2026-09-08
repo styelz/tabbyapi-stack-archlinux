@@ -26,9 +26,10 @@ new update.sh is used. config.yml, tabby.env, models, and venv stay.
 Does not run pacman -Syu or upgrade already-installed OS packages.
 
 Options
-  --git         Git pull only. No pip or missing OS packages. A TTY asks
-                before restarting tabbyapi (default Skip unless API Python
-                changed). Status Update git does the same in the UI.
+  --git         Git pull only. No pip, missing OS packages, or Code sandbox
+                Docker rebuild. A TTY asks before restarting tabbyapi
+                (default Skip unless API Python changed). Status Update git
+                does the same in the UI.
   --all         Pull, then apply code, Python deps, and reload tabbyapi.
   --comfy       Also git pull ComfyUI and ComfyUI-GGUF. Update all then
                 reinstalls their Python requirements; git-only only pulls.
@@ -653,46 +654,6 @@ install_tabby_gpu() {
   rm -f "$tmp"
 }
 
-codebox_image_present() {
-  docker image inspect tabbyapi-stack-code:local >/dev/null 2>&1 && return 0
-  sudo -n docker image inspect tabbyapi-stack-code:local >/dev/null 2>&1
-}
-
-codebox_sources_changed() {
-  local from="${TABBY_UPDATE_FROM_REV:-none}" to="${1:-}"
-  [[ -n "$to" && "$from" != none && "$from" != "$to" ]] || return 1
-  git -C "$DEST" diff --name-only "$from" "$to" | grep -q '^tabbyAPI/ui/codebox/'
-}
-
-ensure_codebox_image() {
-  local df="$DEST/tabbyAPI/ui/codebox/Dockerfile"
-  local new_head="${1:-}"
-  [[ -f "$df" ]] || return 0
-  command -v docker >/dev/null 2>&1 || return 0
-  if codebox_image_present && ! codebox_sources_changed "$new_head"; then
-    echo "==> Code sandbox image already present; skipping rebuild" >> "$UPDATE_LOG"
-    return 0
-  fi
-  progress 85 "Building Code sandbox image"
-  echo "==> Building Code sandbox image" >> "$UPDATE_LOG"
-  if DOCKER_BUILDKIT=1 docker build -t tabbyapi-stack-code:local \
-    -f "$df" "$DEST/tabbyAPI/ui/codebox" >> "$UPDATE_LOG" 2>&1; then
-    :
-  elif DOCKER_BUILDKIT=1 sudo -n docker build -t tabbyapi-stack-code:local \
-    -f "$df" "$DEST/tabbyAPI/ui/codebox" >> "$UPDATE_LOG" 2>&1; then
-    :
-  else
-    echo "WARNING: tabbyapi-stack-code image build failed" >> "$UPDATE_LOG"
-    return 0
-  fi
-  local box_ids=()
-  mapfile -t box_ids < <(docker ps -aq --filter label=tabby.stack=code 2>/dev/null || true)
-  if ((${#box_ids[@]})); then
-    docker rm -f "${box_ids[@]}" >> "$UPDATE_LOG" 2>&1 || \
-      sudo -n docker rm -f "${box_ids[@]}" >> "$UPDATE_LOG" 2>&1 || true
-  fi
-}
-
 git_should_auto_restart() {
   ((${#RESTART_FILES[@]} > 0)) && return 0
   api_unit_running || return 0
@@ -709,7 +670,6 @@ finish_git_update() {
   collect_restart_files "${TABBY_UPDATE_FROM_REV:-none}" "$new_head"
   printf '%s\n' "==> from_rev=${TABBY_UPDATE_FROM_REV:-none} to_rev=$new_head restart_files=${#RESTART_FILES[@]} restart=${RESTART_API:-auto}" >> "$UPDATE_LOG"
   write_restart_prompt_json
-  ensure_codebox_image "$new_head"
 
   local pulled=0
   if [[ "${TABBY_UPDATE_FROM_REV:-none}" == none || "${TABBY_UPDATE_FROM_REV:-}" != "$new_head" ]]; then

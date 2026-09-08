@@ -4194,7 +4194,7 @@ If something fails
 
 Update
   $DEST/update.sh              asks Update git vs Update all (dialog menu)
-  $DEST/update.sh --git        git pull only; offers an API restart at the end
+  $DEST/update.sh --git        git pull only; no sandbox rebuild or pip; offers an API restart at the end
   $DEST/update.sh --git --restart
                               git pull, then restart tabbyapi (no prompt)
   $DEST/update.sh --no-restart skip the restart prompt on Update git
