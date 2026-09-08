@@ -204,7 +204,8 @@ run_update() {
   if full_flag; then
     args+=(--all --restart)
   else
-    args+=(--git --restart)
+    # Unattended: update.sh restarts only when API Python changed (or the unit is down).
+    args+=(--git)
   fi
   if ((DRY_RUN)); then
     log "dry-run: ${args[*]}"

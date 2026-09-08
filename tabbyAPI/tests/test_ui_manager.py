@@ -303,13 +303,13 @@ class UiManagerTests(unittest.TestCase):
             cmds = [c[0][0] for c in run.call_args_list]
             spawned = next(cmd for cmd in cmds if cmd and cmd[0] == "/usr/bin/systemd-run")
             self.assertIn("--git", spawned)
-            self.assertIn("--restart", spawned)
+            self.assertIn("--no-restart", spawned)
             self.assertIn("--property=StandardInput=null", spawned)
-            self.assertNotIn("--no-restart", spawned)
+            self.assertNotIn("--restart", spawned)
             self.assertNotIn("--all", spawned)
             self.assertTrue(result["ok"])
-            self.assertTrue(result["restarting"])
-            self.assertNotIn("ask_restart", result)
+            self.assertFalse(result["restarting"])
+            self.assertTrue(result["ask_restart"])
             self.assertIn("git update", result["message"].lower())
             self.assertIn("--setenv=PYTHONUNBUFFERED=1", spawned)
             self.assertIn("--setenv=PIP_PROGRESS_BAR=on", spawned)
@@ -335,7 +335,8 @@ class UiManagerTests(unittest.TestCase):
             self.assertIn("--all", spawned)
             self.assertIn("--restart", spawned)
             self.assertTrue(result["ok"])
-            self.assertNotIn("ask_restart", result)
+            self.assertTrue(result["restarting"])
+            self.assertFalse(result.get("ask_restart"))
 
     def test_update_already_running_is_followable(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -379,3 +380,20 @@ class UiManagerTests(unittest.TestCase):
         self.assertEqual(state["step"], "Updating TabbyAPI Python packages")
         self.assertGreaterEqual(state["age_s"], 0)
         self.assertIn("Updating TabbyAPI Python packages", "\n".join(state["lines"]))
+
+    def test_update_log_state_includes_prompt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "tabby-update.log").write_text("==> [100%] Git update finished\n", encoding="utf-8")
+            (root / "tabby-update-prompt.json").write_text(
+                '{"title":"Restart API?","yes_label":"Restart","no_label":"Skip",'
+                '"needs_restart":false,"pulled":false,"summary":"Already up to date."}',
+                encoding="utf-8",
+            )
+            with mock.patch.object(manager, "STACK_ROOT", root):
+                with mock.patch.object(manager, "update_job_running", return_value=False):
+                    state = manager.update_log_state(50)
+        self.assertFalse(state["running"])
+        self.assertEqual(state["prompt"]["title"], "Restart API?")
+        self.assertEqual(state["prompt"]["yes_label"], "Restart")
+        self.assertFalse(state["prompt"]["needs_restart"])

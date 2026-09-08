@@ -33,6 +33,9 @@ class UpdateShRestartOptionTests(unittest.TestCase):
         self.assertIn("Code sandbox image already present; skipping rebuild", src)
         self.assertIn("write_restart_prompt_json", src)
         self.assertIn("tabby-update-prompt.json", src)
+        self.assertIn("needs_restart", src)
+        self.assertIn("TABBY_PROMPT_NEEDS", src)
+        self.assertIn("git_should_auto_restart && default_yes=1", src)
         self.assertIn("fetch --progress origin", src)
         self.assertIn("log_run()", src)
         self.assertIn("tr '\\r' '\\n'", src)
@@ -132,6 +135,11 @@ class UpdateShFfPullTests(unittest.TestCase):
             self.assertEqual(data["no_label"], "Skip")
             self.assertTrue(data["pulled"])
             self.assertTrue(data.get("text"))
+            self.assertIn("needs_restart", data)
+            self.assertIn("restart_files", data)
+            self.assertIn("tabbyAPI/phrase.py", data.get("restart_files") or [])
+            self.assertTrue(data["needs_restart"])
+            self.assertTrue(data["default_yes"])
 
 
 INSTALL_SH = Path(__file__).resolve().parents[2] / "install.sh"

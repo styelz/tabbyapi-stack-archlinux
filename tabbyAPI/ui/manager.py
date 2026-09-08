@@ -520,6 +520,9 @@ def update_log_state(limit: int = 400) -> dict[str, Any]:
         state["age_s"] = max(0, int(time.time() - path.stat().st_mtime))
     except OSError:
         state["age_s"] = None
+    prompt = load_update_prompt()
+    if prompt:
+        state["prompt"] = prompt
     return state
 
 
@@ -538,7 +541,14 @@ def load_update_prompt(path: Path | None = None) -> dict[str, Any] | None:
     return data
 
 
-def _spawn_stack_update(script: Path, args: list[str], message: str) -> dict[str, Any]:
+def _spawn_stack_update(
+    script: Path,
+    args: list[str],
+    message: str,
+    *,
+    restarting: bool = True,
+    ask_restart: bool = False,
+) -> dict[str, Any]:
     """Run update.sh outside the tabbyapi cgroup so systemctl restart can finish.
 
     A child of tabbyapi.service (even with start_new_session) stays in that
@@ -549,14 +559,16 @@ def _spawn_stack_update(script: Path, args: list[str], message: str) -> dict[str
     started = {
         "ok": True,
         "message": message,
-        "restarting": True,
+        "restarting": restarting,
+        "ask_restart": ask_restart,
         "log": _update_log_tail(400),
     }
     if update_job_running():
         return {
             "ok": True,
             "already_running": True,
-            "restarting": True,
+            "restarting": restarting,
+            "ask_restart": ask_restart,
             "message": "An update is already running. Waiting for it to finish.",
             "log": _update_log_tail(400),
         }
@@ -640,8 +652,10 @@ def start_stack_update(*, full: bool = False) -> dict[str, Any]:
         )
     return _spawn_stack_update(
         script,
-        ["bash", str(script), "--git", "--restart"],
-        "Started git update. TabbyAPI restarts when the pull finishes.",
+        ["bash", str(script), "--git", "--no-restart"],
+        "Started git update. After the pull you can restart the API.",
+        restarting=False,
+        ask_restart=True,
     )
 
 

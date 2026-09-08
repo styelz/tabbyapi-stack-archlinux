@@ -27,8 +27,8 @@ Does not run pacman -Syu or upgrade already-installed OS packages.
 
 Options
   --git         Git pull only. No pip or missing OS packages. A TTY asks
-                before restarting tabbyapi. Status Update git passes
-                --restart so it never sits on that prompt.
+                before restarting tabbyapi (default Skip unless API Python
+                changed). Status Update git does the same in the UI.
   --all         Pull, then apply code, Python deps, and reload tabbyapi.
   --comfy       Also git pull ComfyUI and ComfyUI-GGUF. Update all then
                 reinstalls their Python requirements; git-only only pulls.
@@ -193,6 +193,7 @@ ui_start() {
     echo "dest=$DEST kind=$UPDATE_KIND comfy=$UPDATE_COMFY restart=${RESTART_API:-auto}"
     echo
   } > "$UPDATE_LOG"
+  rm -f "$DEST/tabby-update-prompt.json"
   ui_gauge_only
 }
 
@@ -539,31 +540,45 @@ restart_prompt_text() {
 }
 
 ask_restart_api() {
-  ui_yesno "Restart API?" "$(restart_prompt_text)" 1
+  local default_yes=0
+  git_should_auto_restart && default_yes=1
+  ui_yesno "Restart API?" "$(restart_prompt_text)" "$default_yes"
 }
 
 # Sidecar for /v1/ui Status: same title/text as the TTY Restart/Skip dialog.
 write_restart_prompt_json() {
   local path="$DEST/tabby-update-prompt.json"
-  local new_head pulled=0 summary
+  local new_head pulled=0 needs=0 summary files_env=""
   new_head="$(git -C "$DEST" rev-parse HEAD 2>/dev/null || true)"
   if [[ "${TABBY_UPDATE_FROM_REV:-none}" == none || "${TABBY_UPDATE_FROM_REV:-}" != "$new_head" ]]; then
     pulled=1
+  fi
+  if git_should_auto_restart; then
+    needs=1
   fi
   if [[ "$pulled" -eq 1 ]]; then
     summary="Pulled the latest code."
   else
     summary="Already up to date."
   fi
+  if ((${#RESTART_FILES[@]})); then
+    files_env="$(printf '%s\n' "${RESTART_FILES[@]}")"
+  fi
   command -v python3 >/dev/null 2>&1 || return 0
-  TABBY_PROMPT_SUMMARY="$summary" TABBY_PROMPT_PULLED="$pulled" python3 -c '
+  TABBY_PROMPT_SUMMARY="$summary" TABBY_PROMPT_PULLED="$pulled" \
+  TABBY_PROMPT_NEEDS="$needs" TABBY_PROMPT_FILES="$files_env" python3 -c '
 import json, os, sys
+files = [line for line in os.environ.get("TABBY_PROMPT_FILES", "").split("\n") if line]
+needs = os.environ["TABBY_PROMPT_NEEDS"] == "1"
 json.dump(
     {
         "title": "Restart API?",
         "text": sys.stdin.read().rstrip("\n"),
         "summary": os.environ["TABBY_PROMPT_SUMMARY"],
         "pulled": os.environ["TABBY_PROMPT_PULLED"] == "1",
+        "needs_restart": needs,
+        "restart_files": files,
+        "default_yes": needs,
         "yes_label": "Restart",
         "no_label": "Skip",
     },
@@ -735,7 +750,8 @@ Log: $UPDATE_LOG"
   fi
 
   # /dev/tty is always a char device, even with no controlling terminal.
-  # systemd-run from Status has no stdout TTY; never wait on Restart/Skip.
+  # systemd-run from Status passes --no-restart and offers Restart/Skip in the UI.
+  # Auto-update --git (no TTY) restarts only when API Python changed or the unit is down.
   if [[ ! -t 1 ]]; then
     if git_should_auto_restart; then
       do_restart

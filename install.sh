@@ -4205,7 +4205,9 @@ Update
   config.yml, tabby.env, models, venv, and ComfyUI weights are kept.
   If update.sh changes in the pull, it restarts itself.
   Update all reloads the API until GET /health is healthy (~65s).
-  Update git offers that restart at the end; --restart skips the prompt.
+  Update git offers that restart at the end; Status shows Restart or Skip.
+  --restart skips the prompt. Update git does not bounce the API when the
+  pull did not change Python that the running process needs to reload.
 
 Uninstall
   $DEST/uninstall.sh              stop services, then remove the install

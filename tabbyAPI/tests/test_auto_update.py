@@ -82,6 +82,12 @@ class AutoUpdateScriptTests(unittest.TestCase):
         self.assertIn("enabled=on", result.stdout)
         self.assertIn("days=7", result.stdout)
 
+    def test_git_only_does_not_force_restart(self):
+        src = AUTO_UPDATE.read_text(encoding="utf-8")
+        self.assertIn("args+=(--git)", src)
+        self.assertNotIn("args+=(--git --restart)", src)
+        self.assertIn("args+=(--all --restart)", src)
+
     def test_update_sh_installs_timer(self):
         src = UPDATE_SH.read_text(encoding="utf-8")
         self.assertIn("auto-update.sh", src)

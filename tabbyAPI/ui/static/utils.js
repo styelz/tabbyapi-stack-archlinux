@@ -804,6 +804,7 @@
     let updateTimer = 0;
     let updateSeen = 0;
     let updateRunning = false;
+    let updatePrompt = null;
     let clockTimer = 0;
     let currentPercent = null;
     let currentStep = "";
@@ -1012,6 +1013,7 @@
         extra.forEach(appendLine);
         if (typeof data.percent === "number") setProgress(data.percent, data.step || currentStep);
         else if (data.step) setStep(data.step);
+        if (data.prompt && typeof data.prompt === "object") updatePrompt = data.prompt;
         if (updateRunning && !extra.length) paintIdleHint();
       } catch {
         /* API is down during restart; journal catch-up covers boot logs. */
@@ -1209,6 +1211,9 @@
       },
       get closed() {
         return closed;
+      },
+      get updatePrompt() {
+        return updatePrompt;
       },
     });
     return handle;

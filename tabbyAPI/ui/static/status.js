@@ -563,6 +563,77 @@ function mountStatus(root) {
     });
   }
 
+  async function offerGitRestart(modal) {
+    let prompt = modal.updatePrompt;
+    if (!prompt) {
+      try {
+        const data = await TabbyUI.api("update/log?lines=1");
+        prompt = data && data.prompt;
+      } catch {
+        prompt = null;
+      }
+    }
+    prompt = prompt && typeof prompt === "object" ? prompt : {};
+    const needsRestart = Boolean(prompt.needs_restart);
+    const summary = prompt.summary || "Git update finished.";
+    const text = prompt.text || (
+      needsRestart
+        ? "The pull changed API code. Restart tabbyapi now so it loads (about 65 seconds)?"
+        : "Already up to date. Restart tabbyapi anyway (about 65 seconds)?"
+    );
+    msg.textContent = summary;
+    modal.stopJournal();
+    modal.stopUpdateLog();
+    modal.setBusy(false);
+    modal.setTitle(prompt.title || "Restart API?");
+    modal.setProgress(100, summary);
+    modal.setNote(text);
+    await new Promise((resolve) => {
+      let settled = false;
+      const done = (value) => {
+        if (settled) return;
+        settled = true;
+        resolve(value);
+      };
+      const watch = setInterval(() => {
+        if (settled || modal.closed) {
+          clearInterval(watch);
+          if (modal.closed) done("skip");
+        }
+      }, 250);
+      const skip = {
+        label: prompt.no_label || "Skip",
+        primary: !needsRestart,
+        run: () => {
+          msg.textContent = `${summary} The API was not restarted.`;
+          finishProgress(modal, {
+            title: "Git update finished",
+            note: `${summary} The API was not restarted.`,
+            reloadPrimary: Boolean(prompt.pulled),
+          });
+          done("skip");
+        },
+      };
+      const restart = {
+        label: prompt.yes_label || "Restart",
+        primary: needsRestart,
+        danger: needsRestart,
+        run: () => {
+          runRestart(modal, { fromUpdate: true })
+            .catch((err) => {
+              msg.textContent = err.message;
+              finishProgress(modal, {
+                title: "Restart",
+                note: err.message || "Restart failed.",
+              });
+            })
+            .finally(() => done("restart"));
+        },
+      };
+      modal.setActions(needsRestart ? [skip, restart] : [restart, skip]);
+    });
+  }
+
   function applyRange() {
     setActivePreset();
     refreshMetrics().catch((err) => {
@@ -624,7 +695,7 @@ function mountStatus(root) {
     msg.textContent = "Updating git…";
     const modal = TabbyUI.progressModal({
       title: "Updating git",
-      note: "Pulling origin. If API code changed, TabbyAPI restarts by itself.",
+      note: "Pulling origin. After the pull you can restart the API.",
     });
     modal.startUpdateLog();
     modal.startJournal();
@@ -641,15 +712,8 @@ function mountStatus(root) {
       }
       if (result.message) modal.setNote(result.message);
       modal.setTitle("Updating git");
-      await modal.waitUntilReady({ requireDown: true, watchUpdate: true });
-      msg.textContent = "API is back.";
-      await refresh().catch((err) => TabbyUI.paintApiDown(err));
-      modal.setProgress(100, "Git update finished. Reload the UI to pick up updated pages.");
-      finishProgress(modal, {
-        title: "Git update finished",
-        note: "Git update finished. Reload the UI to pick up updated pages.",
-        reloadPrimary: true,
-      });
+      await modal.waitUntilReady({ requireDown: false, watchUpdate: true });
+      await offerGitRestart(modal);
     } catch (err) {
       msg.textContent = err.message;
       TabbyUI.paintApiDown(err);
