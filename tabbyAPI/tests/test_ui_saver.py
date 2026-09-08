@@ -332,7 +332,21 @@ class SaverKioskSceneTests(unittest.TestCase):
         self.assertFalse(scene["live"])
         self.assertGreaterEqual(scene["speed"], 0.30)
         self.assertLess(scene["speed"], 0.55)
-        self.assertGreaterEqual(scene["intensity"], 0.38)
+        self.assertGreaterEqual(scene["intensity"], 0.46)
+
+    def test_idle_palette_is_visibly_navy(self):
+        idle = self.kiosk.PALETTES["idle"]
+        peak = idle[-1]
+        mid = idle[128]
+        self.assertGreater(peak[2], 90)
+        self.assertGreater(sum(peak), 220)
+        self.assertGreater(sum(mid), sum(self.kiosk.BG) + 30)
+        self.assertGreater(peak[2], peak[0])
+
+    def test_idle_sleeper_glow_is_visible(self):
+        color = self.kiosk._sleep_add_color(1.0)
+        self.assertGreater(color[2], 80)
+        self.assertGreater(sum(color), 140)
 
     def test_hud_idle_shows_clock_and_profile(self):
         idle = self.kiosk.scene_from_state(

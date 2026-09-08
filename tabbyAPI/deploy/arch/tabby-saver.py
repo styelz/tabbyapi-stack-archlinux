@@ -96,7 +96,14 @@ def _palette(stops: list[tuple[float, tuple[int, int, int]]]) -> list[tuple[int,
 
 
 PALETTES = {
-    "idle": _palette([(0.0, BG), (0.5, (14, 18, 28)), (1.0, (26, 34, 56))]),
+    "idle": _palette(
+        [
+            (0.0, BG),
+            (0.28, (22, 30, 52)),
+            (0.62, (40, 52, 96)),
+            (1.0, (58, 76, 132)),
+        ]
+    ),
     "chat": _palette(
         [
             (0.0, BG),
@@ -949,7 +956,7 @@ def scene_from_state(
         pass
     elif not live:
         # Idle still has to drift: a nearly-static navy field reads as frozen.
-        intensity = min(0.40 + 0.14 * (vram / 100.0), 0.54)
+        intensity = min(0.48 + 0.16 * (vram / 100.0), 0.64)
         speed = 0.36 + 0.10 * (vram / 100.0)
         heat = max(0.08, min(0.28, 0.08 + (temp - 38.0) / 110.0))
     elif stage == "prefill":
@@ -1420,13 +1427,13 @@ _SLEEP_SLOTS = (
 )
 _SLEEP_LIFE = 0.20
 _SLEEP_FADE = 0.08
-_SLEEP_TINT = (36, 52, 82)
+_SLEEP_TINT = (56, 82, 138)
 _SLEEP_ACCENTS = (
-    (28, 64, 88),
-    (48, 40, 92),
-    (40, 58, 70),
-    (52, 46, 72),
-    (32, 56, 80),
+    (44, 102, 148),
+    (78, 62, 148),
+    (62, 96, 122),
+    (88, 74, 128),
+    (52, 92, 136),
 )
 
 
@@ -1468,9 +1475,9 @@ def _sleep_tint_for(slot: int, cycle: int) -> tuple[int, int, int]:
     accent = _SLEEP_ACCENTS[_sleep_pick_index(slot, cycle, len(_SLEEP_ACCENTS), 67)]
     mixed = _mix(base, accent, 0.16 + 0.28 * _sleep_unit(slot, cycle, 71))
     return (
-        max(18, min(70, mixed[0] + int(10 * (_sleep_unit(slot, cycle, 73) - 0.5)))),
-        max(24, min(86, mixed[1] + int(12 * (_sleep_unit(slot, cycle, 74) - 0.5)))),
-        max(40, min(118, mixed[2] + int(14 * (_sleep_unit(slot, cycle, 75) - 0.5)))),
+        max(28, min(118, mixed[0] + int(14 * (_sleep_unit(slot, cycle, 73) - 0.5)))),
+        max(40, min(148, mixed[1] + int(16 * (_sleep_unit(slot, cycle, 74) - 0.5)))),
+        max(70, min(196, mixed[2] + int(18 * (_sleep_unit(slot, cycle, 75) - 0.5)))),
     )
 
 
@@ -1543,9 +1550,9 @@ def _sleep_add_color(lift: float, tint: tuple[int, int, int] | None = None) -> t
     t = _clamp01(lift)
     ink = tint or _SLEEP_TINT
     return (
-        max(0, min(36, int(ink[0] * t))),
-        max(0, min(44, int(ink[1] * t))),
-        max(0, min(52, int(ink[2] * t))),
+        max(0, min(78, int(ink[0] * t))),
+        max(0, min(104, int(ink[1] * t))),
+        max(0, min(168, int(ink[2] * t))),
     )
 
 
@@ -1585,7 +1592,7 @@ def _sleep_ellipse_sheet(
     for i in range(steps, 0, -1):
         t = i / float(steps)
         fall = (1.0 - t) ** 1.7
-        color = _sleep_add_color(amt * (0.16 + 0.84 * fall) * 0.38, tint)
+        color = _sleep_add_color(amt * (0.16 + 0.84 * fall) * 0.58, tint)
         if color == (0, 0, 0):
             continue
         ww = max(1, int(round(rx * t)))
@@ -1625,7 +1632,7 @@ def _sleep_nested_poly(
     for i in range(steps, 0, -1):
         t = i / float(steps)
         fall = (1.0 - t) ** 1.55
-        color = _sleep_add_color(amt * (0.18 + 0.82 * fall) * 0.36, tint)
+        color = _sleep_add_color(amt * (0.18 + 0.82 * fall) * 0.56, tint)
         if color == (0, 0, 0):
             continue
         scaled = [(cx + (px - cx) * t, cy + (py - cy) * t) for px, py in shifted]
@@ -1655,7 +1662,7 @@ def _sleep_disc_sheet(
     for i in range(steps, 0, -1):
         t = i / float(steps)
         fall = (1.0 - t) ** 1.6
-        color = _sleep_add_color(amt * (0.16 + 0.84 * fall) * 0.38, tint)
+        color = _sleep_add_color(amt * (0.16 + 0.84 * fall) * 0.58, tint)
         if color == (0, 0, 0):
             continue
         for x, y, r in discs:
@@ -1976,7 +1983,7 @@ def _draw_field_numpy(width: int, height: int, scene: dict[str, Any], np_mod: An
             + vsin(db * 0.051 + st * 0.88)
         ) * (1.0 / 6.0) + 0.5
         blob = pulse * np_mod.exp(-np_mod.minimum(da, db) * inv_diag * 2.4)
-        v_idle = 0.16 + wave * 0.52 * gain + glow * 0.32 + blob * 0.36
+        v_idle = 0.22 + wave * 0.60 * gain + glow * 0.40 + blob * 0.42
     if not use_idle:
         wave = (
             vsin(x * 0.041 + st)
@@ -2025,7 +2032,7 @@ def _draw_field_python(width: int, height: int, scene: dict[str, Any]) -> Any:
                     + lsin(db * 0.051 + st * 0.88)
                 ) * (1.0 / 6.0) + 0.5
                 blob = pulse * math.exp(-min(da, db) * inv_diag * 2.4)
-                v_idle = 0.16 + wave * 0.52 * gain + glow * 0.32 + blob * 0.36
+                v_idle = 0.22 + wave * 0.60 * gain + glow * 0.40 + blob * 0.42
             if not use_idle:
                 wave = (
                     lsin(x * 0.041 + st)
