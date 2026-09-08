@@ -1,10 +1,13 @@
 [Unit]
 Description=Tabby-stack LLM activity screensaver (KMS kiosk)
 Documentation=file://__TABBY_DIR__/deploy/arch/README.md
-After=network-online.target systemd-user-sessions.service getty@__USER_TTY__.service
-Wants=network-online.target
-# Runs on a spare VT. tty1 stays getty: a key/mouse drops the field and
-# chvt back; idle (logged in) or logout-idle (login prompt) brings it back.
+After=systemd-user-sessions.service plymouth-quit.service
+Wants=systemd-user-sessions.service
+# Runs on a spare VT as soon as Plymouth releases DRM. Do not wait for
+# network-online or getty: those delay the first paint by the idle/logout
+# wait (and getty Type=idle is several seconds after splash). tty1 stays
+# getty in the background; a key/mouse drops the field and chvt back; idle
+# (logged in) or logout-idle (login prompt) brings it back after that.
 # Do not enable if Omarchy or a graphical session already owns this GPU.
 ConditionPathExistsGlob=/dev/dri/card*
 

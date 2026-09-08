@@ -348,6 +348,58 @@ class SaverKioskSceneTests(unittest.TestCase):
         self.assertGreater(color[2], 80)
         self.assertGreater(sum(color), 140)
 
+    def test_idle_field_hue_holds_then_blends(self):
+        seed = 17
+        a = self.kiosk.idle_field_hue(0.0, seed)
+        self.assertEqual(a, self.kiosk.idle_field_hue(120.0, seed))
+        self.assertEqual(a, self.kiosk.idle_field_hue(260.0, seed))
+        blended = self.kiosk.idle_field_hue(280.0, seed)
+        nxt = self.kiosk.idle_field_hue(300.0, seed)
+        self.assertNotAlmostEqual(a, nxt, places=3)
+        self.assertGreater(abs(blended - a), 0.02)
+        self.assertGreater(abs(blended - nxt), 0.02)
+        self.assertAlmostEqual(self.kiosk.lerp_hue(0.9, 0.1, 0.5), 0.0, places=6)
+
+    def test_idle_sleepers_fade_and_hold_place(self):
+        idle = self.kiosk.scene_from_state(
+            {"gpu_mode": "llm", "profile": "qwen", "busy": False},
+            True,
+        )
+        idle["cycle"] = "idle"
+        idle["overlay"] = 0.0
+        idle["live"] = False
+        idle["st"] = 22.0
+        first = self.kiosk.idle_sleeper_items(idle, 480, 270)
+        idle["st"] = 22.5
+        second = self.kiosk.idle_sleeper_items(idle, 480, 270)
+        self.assertTrue(first)
+        self.assertTrue(second)
+        kinds = {item["kind"] for item in first}
+        self.assertTrue(kinds <= set(self.kiosk._SLEEP_KINDS))
+        by_seed = {item["seed"]: item for item in second}
+        held = False
+        for item in first:
+            other = by_seed.get(item["seed"])
+            if other is None:
+                continue
+            held = True
+            self.assertLess(abs(item["fx"] - other["fx"]), 0.01)
+            self.assertLess(abs(item["fy"] - other["fy"]), 0.01)
+        self.assertTrue(held)
+        env = self.kiosk.idle_sleeper_envelope
+        self.assertEqual(env(-0.01), 0.0)
+        self.assertGreater(env(0.40), env(0.02))
+        self.assertGreater(env(0.40), env(0.74))
+
+    def test_idle_rt_sphere_is_lit(self):
+        rgb = self.kiosk._sleep_rt_rgb(
+            "sphere", 32, 32, 0.35, 0.2, 1.0, (80, 100, 160)
+        )
+        self.assertEqual(len(rgb), 32 * 32 * 3)
+        mid = (16 * 32 + 16) * 3
+        self.assertGreater(sum(rgb[mid : mid + 3]), sum(rgb[0:3]))
+        self.assertGreater(sum(rgb[mid : mid + 3]), 12)
+
     def test_hud_idle_shows_clock_and_profile(self):
         idle = self.kiosk.scene_from_state(
             {"gpu_mode": "llm", "profile": "qwen", "busy": False},
@@ -898,6 +950,61 @@ class SaverKioskSceneTests(unittest.TestCase):
             )
         )
 
+    def test_resume_on_boot_skips_idle_and_logout_wait(self):
+        resume = self.kiosk.should_resume_saver
+        wait = self.kiosk.idle_wait_s
+        self.assertEqual(
+            wait(idle_s=120.0, logout_idle_s=10.0, logged_in=False, boot=True),
+            0.0,
+        )
+        self.assertEqual(
+            wait(idle_s=120.0, logout_idle_s=10.0, logged_in=True, boot=True),
+            0.0,
+        )
+        self.assertEqual(
+            wait(idle_s=120.0, logout_idle_s=10.0, logged_in=False),
+            10.0,
+        )
+        self.assertTrue(
+            resume(
+                now=10.0,
+                last_input=10.0,
+                idle_s=120.0,
+                logout_idle_s=10.0,
+                logged_in=False,
+                boot=True,
+            )
+        )
+        self.assertTrue(
+            resume(
+                now=10.0,
+                last_input=9.9,
+                idle_s=120.0,
+                logout_idle_s=5.0,
+                logged_in=True,
+                boot=True,
+            )
+        )
+        self.assertFalse(
+            resume(
+                now=10.0,
+                last_input=10.0,
+                idle_s=120.0,
+                logout_idle_s=10.0,
+                logged_in=False,
+                boot=False,
+            )
+        )
+
+    def test_saver_unit_starts_without_network_or_getty_wait(self):
+        text = (
+            Path(__file__).resolve().parents[1] / "deploy/arch/tabby-saver.service"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn("network-online.target", text)
+        self.assertNotIn("getty@", text)
+        self.assertIn("plymouth-quit.service", text)
+        self.assertIn("systemd-user-sessions.service", text)
+
     def test_follow_fades_neuron_overlay(self):
         follow = self.kiosk.SceneFollow()
         hot = self.kiosk.scene_from_state(
@@ -1188,6 +1295,18 @@ class SaverKioskSceneTests(unittest.TestCase):
         self.assertLess(self.kiosk.idle_tod_hue(18.5), 0.0)
         self.assertGreater(self.kiosk.idle_tod_hue(1.0), 0.0)
         self.assertEqual(self.kiosk.idle_tod_hue(12.0), 0.0)
+
+    def test_follow_idle_hue_changes_every_five_minutes(self):
+        follow = self.kiosk.SceneFollow()
+        idle = self.kiosk.scene_from_state(
+            {"gpu_mode": "llm", "busy": False, "profile": "qwen"},
+            True,
+        )
+        first = follow.tick(idle, 0.04, 10.0)
+        later = follow.tick(idle, 0.04, 22.0)
+        self.assertAlmostEqual(first["idle_hue"], later["idle_hue"], places=6)
+        changed = follow.tick(idle, 0.04, 10.0 + 301.0)
+        self.assertGreater(abs(changed["idle_hue"] - first["idle_hue"]), 0.01)
 
     def test_follow_prefers_occupancy_elapsed(self):
         follow = self.kiosk.SceneFollow()

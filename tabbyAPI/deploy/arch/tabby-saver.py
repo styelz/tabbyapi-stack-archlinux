@@ -57,6 +57,8 @@ HUD_IDLE_HOLD_S = 300.0
 HUD_IDLE_FADE_S = 12.0
 HUD_IDLE_HIDE_ALPHA = 0.02
 HUD_IDLE_PEEK_GRACE_S = 1.0
+IDLE_FIELD_HUE_HOLD_S = 300.0
+IDLE_FIELD_HUE_BLEND_S = 40.0
 
 SIN_BITS = 12
 SIN_SIZE = 1 << SIN_BITS
@@ -202,6 +204,36 @@ def idle_tod_hue(hour: float) -> float:
     if 5.0 <= h < 8.0:
         return 0.04 * (1.0 - (h - 5.0) / 3.0)
     return 0.0
+
+
+def lerp_hue(a: float, b: float, t: float) -> float:
+    """Shortest-arc mix on the hue wheel (turns, 0–1)."""
+    d = ((b - a) + 0.5) % 1.0 - 0.5
+    return (a + d * _clamp01(t)) % 1.0
+
+
+def idle_field_hue_for(cycle: int, seed: int = 0) -> float:
+    return _u01(int(cycle) + 3, int(seed) + 9049)
+
+
+def idle_field_hue(
+    idle_s: float,
+    seed: int = 0,
+    hold_s: float = IDLE_FIELD_HUE_HOLD_S,
+    blend_s: float = IDLE_FIELD_HUE_BLEND_S,
+) -> float:
+    """Hold a random idle field hue, then ease to the next one every hold_s."""
+    hold = max(1.0, float(hold_s))
+    blend = max(0.5, min(hold * 0.45, float(blend_s)))
+    s = max(0.0, float(idle_s))
+    cycle = int(s // hold)
+    local = s - cycle * hold
+    src = idle_field_hue_for(cycle, seed)
+    dst = idle_field_hue_for(cycle + 1, seed)
+    start = hold - blend
+    if local < start:
+        return src
+    return lerp_hue(src, dst, _smoothstep((local - start) / blend))
 
 
 def wall_clock_parts(stamp: float | None = None) -> tuple[str, str]:
@@ -630,6 +662,7 @@ class SceneFollow:
         self.typical_s = 0.0
         self.idle_s = 0.0
         self._idle_t0 = 0.0
+        self._idle_hue_seed = 0
         self.idle_hue = 0.0
         self.clock = ""
         self.date = ""
@@ -766,12 +799,12 @@ class SceneFollow:
         self.typical_s = max(0.0, float(dest_typical)) if dest_typical is not None else 0.0
         wall = time.time()
         self.clock, self.date = wall_clock_parts(wall)
-        lt = time.localtime(wall)
-        self.idle_hue = idle_tod_hue(lt.tm_hour + lt.tm_min / 60.0)
         if self.cycle == "idle" and not held:
             if self._idle_t0 <= 0.0:
                 self._idle_t0 = now
+                self._idle_hue_seed = int(now * 1_000_003) & 0x7FFFFFFF
             self.idle_s = max(0.0, now - self._idle_t0)
+            self.idle_hue = idle_field_hue(self.idle_s, self._idle_hue_seed)
         else:
             self._idle_t0 = 0.0
             self.idle_s = 0.0
@@ -1404,85 +1437,48 @@ def draw_cycle_fx(pygame_mod: Any, screen: Any, scene: dict[str, Any]) -> None:
             pygame_mod.draw.circle(screen, _mix(BG, color, 0.18), (cx, cy), inner, 1)
 
 
-# Idle-only: faint light in the field, not clip-art on top of it.
-# Slots are only a cadence. Kind, place, and tint are hashed per appearance.
-# At idle speed ~0.36 a slot is ~60–130s; some beats rest so it does not loop.
-_SLEEP_KINDS = (
-    "bloom",
-    "lens",
-    "halo",
-    "diamond",
-    "crescent",
-    "vesica",
-    "petal",
-    "twin",
-    "spark",
-    "wedge",
-)
+# Idle-only: faint ray-marched solids. Each appearance keeps one hashed
+# place and fades in/out; slots never teleport to dodge each other.
+_SLEEP_KINDS = ("sphere", "box", "torus", "octa", "capsule")
 _SLEEP_SLOTS = (
-    (22.5, 0.06),
-    (31.0, 0.38),
-    (39.5, 0.61),
-    (48.0, 0.87),
+    (56.0, 0.00),
+    (68.0, 0.41),
+    (82.0, 0.73),
 )
-_SLEEP_LIFE = 0.20
-_SLEEP_FADE = 0.08
-_SLEEP_TINT = (56, 82, 138)
-_SLEEP_ACCENTS = (
-    (44, 102, 148),
-    (78, 62, 148),
-    (62, 96, 122),
-    (88, 74, 128),
-    (52, 92, 136),
-)
+_SLEEP_LIFE = 0.76
+_SLEEP_FADE = 0.22
+_SLEEP_TINT = (48, 72, 118)
 
 
 def _sleep_unit(slot: int, cycle: int, salt: int) -> float:
     return _u01(slot + 3, int(cycle) * 10007 + salt)
 
 
-def _sleep_pick_index(slot: int, cycle: int, count: int, salt: int) -> int:
-    n = max(1, int(count))
-    cyc = int(cycle)
-    raw = int(_sleep_unit(slot, cyc, salt) * n) % n
-    prev = int(_sleep_unit(slot, cyc - 1, salt) * n) % n
-    prev_prev = int(_sleep_unit(slot, cyc - 2, salt) * n) % n
-    if prev == prev_prev:
-        prev = (prev + 1 + int(_sleep_unit(slot, cyc - 1, salt + 1) * (n - 1))) % n
-    if raw == prev:
-        raw = (raw + 1 + int(_sleep_unit(slot, cyc, salt + 1) * (n - 1))) % n
-    return raw
+def idle_sleeper_envelope(
+    u: float, life: float = _SLEEP_LIFE, fade: float = _SLEEP_FADE
+) -> float:
+    """Smooth in and out. Zero outside the life window (no snaps)."""
+    if u < 0.0 or u > life:
+        return 0.0
+    fade = max(1e-6, float(fade))
+    return _smoothstep(u / fade) * _smoothstep((life - u) / fade)
 
 
 def _sleep_xy(slot: int, cycle: int) -> tuple[float, float]:
-    def at(cyc: int) -> tuple[float, float]:
-        return (
-            0.12 + 0.76 * _sleep_unit(slot, cyc, 41),
-            0.14 + 0.72 * _sleep_unit(slot, cyc, 43),
-        )
-
-    x, y = at(cycle)
-    px, py = at(cycle - 1)
-    if (x - px) * (x - px) + (y - py) * (y - py) < 0.045:
-        x = 0.12 + 0.76 * ((x + 0.37) % 1.0)
-        y = 0.14 + 0.72 * ((y + 0.29) % 1.0)
+    """Stable place for this appearance. Lanes keep the three slots apart."""
+    lane = (slot % 3) / 3.0
+    x = 0.18 + 0.64 * _sleep_unit(slot, cycle, 41)
+    y = 0.16 + 0.22 * lane + 0.38 * _sleep_unit(slot, cycle, 43)
     return x, y
 
 
-def _sleep_tint_for(slot: int, cycle: int) -> tuple[int, int, int]:
-    shift = (_sleep_unit(slot, cycle, 61) - 0.5) * 0.22
-    base = _shift_color(_SLEEP_TINT, shift)
-    accent = _SLEEP_ACCENTS[_sleep_pick_index(slot, cycle, len(_SLEEP_ACCENTS), 67)]
-    mixed = _mix(base, accent, 0.16 + 0.28 * _sleep_unit(slot, cycle, 71))
-    return (
-        max(28, min(118, mixed[0] + int(14 * (_sleep_unit(slot, cycle, 73) - 0.5)))),
-        max(40, min(148, mixed[1] + int(16 * (_sleep_unit(slot, cycle, 74) - 0.5)))),
-        max(70, min(196, mixed[2] + int(18 * (_sleep_unit(slot, cycle, 75) - 0.5)))),
-    )
+def _sleep_tint_for(slot: int, cycle: int, idle_hue: float = 0.0) -> tuple[int, int, int]:
+    shift = idle_hue + (_sleep_unit(slot, cycle, 61) - 0.5) * 0.10
+    return _shift_color(_SLEEP_TINT, shift)
 
 
 def idle_sleeper_items(scene: dict[str, Any], width: int, height: int) -> list[dict[str, Any]]:
-    """Soft luminous breaths while the field is fully idle. Empty otherwise."""
+    """Soft solids while the field is fully idle. Empty otherwise."""
     if overlay_amount(scene) > 0.04:
         return []
     if str(scene.get("cycle") or "idle") != "idle":
@@ -1492,54 +1488,51 @@ def idle_sleeper_items(scene: dict[str, Any], width: int, height: int) -> list[d
     if str(scene.get("palette") or "") == "down" or not scene.get("connected", True):
         return []
     st = float(scene.get("st") or 0.0)
-    hue = float(scene.get("hue") or 0.0)
+    idle_hue = float(scene.get("idle_hue") or 0.0)
     w = max(1, int(width))
     h = max(1, int(height))
     out: list[dict[str, Any]] = []
     placed: list[tuple[float, float]] = []
-    used_kinds: set[str] = set()
     n_kinds = len(_SLEEP_KINDS)
     for slot, (period, phase) in enumerate(_SLEEP_SLOTS):
         period = max(1.0, float(period))
-        clock = st / period + phase + hue
+        clock = st / period + phase
         u = clock % 1.0
-        if u > _SLEEP_LIFE:
+        amt = idle_sleeper_envelope(u)
+        if amt <= 0.02:
             continue
         cycle = int(math.floor(clock - u + 1e-9))
-        if _sleep_unit(slot, cycle, 13) < 0.24:
+        if _sleep_unit(slot, cycle, 13) < 0.18:
             continue
-        fade = _smoothstep(u / _SLEEP_FADE) * _smoothstep((_SLEEP_LIFE - u) / _SLEEP_FADE)
-        if fade <= 0.02:
-            continue
-        kind_i = _sleep_pick_index(slot, cycle, n_kinds, 17)
-        kind = _SLEEP_KINDS[kind_i]
-        if kind in used_kinds:
-            kind = _SLEEP_KINDS[(kind_i + 1 + int(_sleep_unit(slot, cycle, 19) * (n_kinds - 1))) % n_kinds]
-        used_kinds.add(kind)
+        kind = _SLEEP_KINDS[int(_sleep_unit(slot, cycle, 17) * n_kinds) % n_kinds]
         x, y = _sleep_xy(slot, cycle)
+        crowded = False
         for ox, oy in placed:
-            if (x - ox) * (x - ox) + (y - oy) * (y - oy) < 0.05:
-                x = 0.12 + 0.76 * ((x + 0.41) % 1.0)
-                y = 0.14 + 0.72 * ((y + 0.33) % 1.0)
-        drift = u / _SLEEP_LIFE
-        dx = 0.028 * (_sleep_unit(slot, cycle, 23) - 0.5)
-        dy = -0.010 - 0.022 * _sleep_unit(slot, cycle, 24)
-        x += dx * drift + 0.006 * lsin(st * 0.11 + slot * 1.7)
-        y += dy * drift + 0.004 * lsin(st * 0.09 + slot * 2.1)
-        x = 0.08 if x < 0.08 else 0.92 if x > 0.92 else x
-        y = 0.10 if y < 0.10 else 0.88 if y > 0.88 else y
+            if (x - ox) * (x - ox) + (y - oy) * (y - oy) < 0.045:
+                crowded = True
+                break
+        if crowded:
+            continue
+        x += 0.012 * lsin(st * 0.07 + slot * 1.3)
+        y += 0.008 * lsin(st * 0.055 + slot * 1.9)
+        if x < 0.10 or x > 0.90 or y < 0.10 or y > 0.90:
+            continue
         placed.append((x, y))
-        scale = 0.70 + 0.75 * _sleep_unit(slot, cycle, 29)
-        breath = 0.88 + 0.12 * lsin(st * 0.20 + slot * 1.3)
+        scale = 0.78 + 0.34 * _sleep_unit(slot, cycle, 29)
+        yaw0 = TWO_PI * _sleep_unit(slot, cycle, 31)
+        pitch0 = ( _sleep_unit(slot, cycle, 37) - 0.5 ) * 0.55
         out.append(
             {
                 "kind": kind,
-                "x": int(round(x * (w - 1))),
-                "y": int(round(y * (h - 1))),
-                "size": max(12, int(round(h * 0.15 * scale))),
-                "amt": fade * breath,
-                "angle": TWO_PI * _sleep_unit(slot, cycle, 31),
-                "tint": _sleep_tint_for(slot, cycle),
+                "fx": x,
+                "fy": y,
+                "x": x * (w - 1),
+                "y": y * (h - 1),
+                "size": max(14, int(round(h * 0.13 * scale))),
+                "amt": amt,
+                "yaw": yaw0 + st * (0.11 + 0.05 * _sleep_unit(slot, cycle, 47)),
+                "pitch": pitch0 + 0.18 * lsin(st * 0.08 + slot),
+                "tint": _sleep_tint_for(slot, cycle, idle_hue),
                 "seed": slot * 10007 + cycle,
             }
         )
@@ -1550,341 +1543,266 @@ def _sleep_add_color(lift: float, tint: tuple[int, int, int] | None = None) -> t
     t = _clamp01(lift)
     ink = tint or _SLEEP_TINT
     return (
-        max(0, min(78, int(ink[0] * t))),
-        max(0, min(104, int(ink[1] * t))),
-        max(0, min(168, int(ink[2] * t))),
+        max(0, min(56, int(ink[0] * t))),
+        max(0, min(78, int(ink[1] * t))),
+        max(0, min(124, int(ink[2] * t))),
     )
 
 
 def _blit_sleep_add(
-    pygame_mod: Any, screen: Any, surf: Any, cx: int, cy: int, angle: float = 0.0
+    pygame_mod: Any, screen: Any, surf: Any, cx: float, cy: float
 ) -> None:
-    if abs(angle) > 0.03:
-        surf = pygame_mod.transform.rotate(surf, -angle * 180.0 / math.pi)
     flags = getattr(pygame_mod, "BLEND_RGB_ADD", 0)
-    screen.blit(surf, (cx - surf.get_width() // 2, cy - surf.get_height() // 2), special_flags=flags)
-
-
-def _sleep_blank(pygame_mod: Any, width: int, height: int) -> Any:
-    surf = pygame_mod.Surface((max(3, int(width)), max(3, int(height))))
-    surf.fill((0, 0, 0))
-    return surf
-
-
-def _sleep_ellipse_sheet(
-    pygame_mod: Any,
-    rx: int,
-    ry: int,
-    amt: float,
-    tint: tuple[int, int, int],
-    hole: float = 0.0,
-) -> Any | None:
-    amt = _clamp01(amt)
-    rx = max(4, int(rx))
-    ry = max(4, int(ry))
-    if amt <= 0.02:
-        return None
-    w = rx * 2 + 3
-    h = ry * 2 + 3
-    surf = _sleep_blank(pygame_mod, w, h)
-    ox, oy = w // 2, h // 2
-    steps = max(5, min(10, min(rx, ry) // 2))
-    for i in range(steps, 0, -1):
-        t = i / float(steps)
-        fall = (1.0 - t) ** 1.7
-        color = _sleep_add_color(amt * (0.16 + 0.84 * fall) * 0.58, tint)
-        if color == (0, 0, 0):
-            continue
-        ww = max(1, int(round(rx * t)))
-        hh = max(1, int(round(ry * t)))
-        pygame_mod.draw.ellipse(surf, color, (ox - ww, oy - hh, ww * 2, hh * 2))
-    if hole > 0.08:
-        inner_x = max(1, int(round(rx * hole)))
-        inner_y = max(1, int(round(ry * hole)))
-        pygame_mod.draw.ellipse(
-            surf, (0, 0, 0), (ox - inner_x, oy - inner_y, inner_x * 2, inner_y * 2)
-        )
-    return surf
-
-
-def _sleep_nested_poly(
-    pygame_mod: Any,
-    pts: list[tuple[float, float]],
-    amt: float,
-    tint: tuple[int, int, int],
-) -> Any | None:
-    if len(pts) < 3 or _clamp01(amt) <= 0.02:
-        return None
-    xs = [p[0] for p in pts]
-    ys = [p[1] for p in pts]
-    minx, maxx = min(xs), max(xs)
-    miny, maxy = min(ys), max(ys)
-    pad = 3
-    w = max(6, int(math.ceil(maxx - minx)) + pad * 2)
-    h = max(6, int(math.ceil(maxy - miny)) + pad * 2)
-    surf = _sleep_blank(pygame_mod, w, h)
-    ox = -minx + pad
-    oy = -miny + pad
-    cx = sum(xs) / len(pts) + ox
-    cy = sum(ys) / len(pts) + oy
-    shifted = [(p[0] + ox, p[1] + oy) for p in pts]
-    steps = 7
-    for i in range(steps, 0, -1):
-        t = i / float(steps)
-        fall = (1.0 - t) ** 1.55
-        color = _sleep_add_color(amt * (0.18 + 0.82 * fall) * 0.56, tint)
-        if color == (0, 0, 0):
-            continue
-        scaled = [(cx + (px - cx) * t, cy + (py - cy) * t) for px, py in shifted]
-        pygame_mod.draw.polygon(surf, color, scaled)
-    return surf
-
-
-def _sleep_disc_sheet(
-    pygame_mod: Any,
-    discs: list[tuple[float, float, float]],
-    amt: float,
-    tint: tuple[int, int, int],
-) -> Any | None:
-    if not discs or _clamp01(amt) <= 0.02:
-        return None
-    xs = [x + r for x, _y, r in discs] + [x - r for x, _y, r in discs]
-    ys = [y + r for _x, y, r in discs] + [y - r for _x, y, r in discs]
-    minx, maxx = min(xs), max(xs)
-    miny, maxy = min(ys), max(ys)
-    pad = 3
-    w = max(6, int(math.ceil(maxx - minx)) + pad * 2)
-    h = max(6, int(math.ceil(maxy - miny)) + pad * 2)
-    surf = _sleep_blank(pygame_mod, w, h)
-    ox = -minx + pad
-    oy = -miny + pad
-    steps = 6
-    for i in range(steps, 0, -1):
-        t = i / float(steps)
-        fall = (1.0 - t) ** 1.6
-        color = _sleep_add_color(amt * (0.16 + 0.84 * fall) * 0.58, tint)
-        if color == (0, 0, 0):
-            continue
-        for x, y, r in discs:
-            rad = max(1, int(round(r * t)))
-            pygame_mod.draw.circle(surf, color, (int(round(x + ox)), int(round(y + oy))), rad)
-    return surf
-
-
-def _draw_sleeping_bloom(
-    pygame_mod: Any,
-    screen: Any,
-    cx: int,
-    cy: int,
-    size: int,
-    amt: float,
-    angle: float,
-    tint: tuple[int, int, int],
-) -> None:
-    rx = max(6, int(size * (0.88 + 0.18 * abs(math.cos(angle)))))
-    ry = max(5, int(size * (0.62 + 0.16 * abs(math.sin(angle * 1.2)))))
-    surf = _sleep_ellipse_sheet(pygame_mod, rx, ry, amt, tint)
-    if surf is not None:
-        _blit_sleep_add(pygame_mod, screen, surf, cx, cy, angle * 0.25)
-
-
-def _draw_sleeping_lens(
-    pygame_mod: Any,
-    screen: Any,
-    cx: int,
-    cy: int,
-    size: int,
-    amt: float,
-    angle: float,
-    tint: tuple[int, int, int],
-) -> None:
-    surf = _sleep_ellipse_sheet(
-        pygame_mod, max(10, int(size * 1.48)), max(4, int(size * 0.34)), amt * 0.92, tint
+    screen.blit(
+        surf,
+        (int(round(cx - surf.get_width() * 0.5)), int(round(cy - surf.get_height() * 0.5))),
+        special_flags=flags,
     )
-    if surf is not None:
-        _blit_sleep_add(pygame_mod, screen, surf, cx, cy, angle)
 
 
-def _draw_sleeping_halo(
-    pygame_mod: Any,
-    screen: Any,
-    cx: int,
-    cy: int,
-    size: int,
+def _sleep_sdf(kind: str, px: float, py: float, pz: float) -> float:
+    if kind == "sphere":
+        return math.sqrt(px * px + py * py + pz * pz) - 0.80
+    if kind == "box":
+        ax, ay, az = abs(px) - 0.50, abs(py) - 0.50, abs(pz) - 0.50
+        qx, qy, qz = max(ax, 0.0), max(ay, 0.0), max(az, 0.0)
+        return math.sqrt(qx * qx + qy * qy + qz * qz) + min(max(ax, max(ay, az)), 0.0) - 0.10
+    if kind == "torus":
+        q = math.hypot(px, pz) - 0.58
+        return math.hypot(q, py) - 0.20
+    if kind == "octa":
+        return (abs(px) + abs(py) + abs(pz) - 0.92) * 0.57735027
+    t = 0.0 if py < -0.44 else 1.0 if py > 0.46 else (py + 0.44) / 0.90
+    dx, dy, dz = px, py - (-0.44 + 0.90 * t), pz
+    return math.sqrt(dx * dx + dy * dy + dz * dz) - 0.30
+
+
+def _sleep_rotate(
+    px: float, py: float, pz: float, yaw: float, pitch: float
+) -> tuple[float, float, float]:
+    c, s = math.cos(pitch), math.sin(pitch)
+    py, pz = py * c - pz * s, py * s + pz * c
+    c, s = math.cos(yaw), math.sin(yaw)
+    px, pz = px * c - pz * s, px * s + pz * c
+    return px, py, pz
+
+
+def _sleep_rt_rgb(
+    kind: str,
+    width: int,
+    height: int,
+    yaw: float,
+    pitch: float,
     amt: float,
-    angle: float,
     tint: tuple[int, int, int],
-) -> None:
-    rx = max(10, int(size * 1.18))
-    ry = max(8, int(rx * (0.78 + 0.22 * abs(math.sin(angle)))))
-    surf = _sleep_ellipse_sheet(pygame_mod, rx, ry, amt * 0.80, tint, hole=0.58 + 0.10 * abs(math.cos(angle)))
-    if surf is not None:
-        _blit_sleep_add(pygame_mod, screen, surf, cx, cy, angle * 0.2)
+) -> bytes:
+    """Software ray march of one solid. Black misses; dim additive hits."""
+    w = max(8, int(width))
+    h = max(8, int(height))
+    amt = _clamp01(amt) * 0.52
+    tr, tg, tb = tint
+    out = bytearray(w * h * 3)
+    if amt <= 0.01:
+        return bytes(out)
+    try:
+        import numpy as np
+    except ImportError:
+        np = None
+    if np is not None:
+        return _sleep_rt_rgb_numpy(kind, w, h, yaw, pitch, amt, (tr, tg, tb), np)
+    steps = 12
+    light = (0.48, 0.78, 0.44)
+    ln = math.sqrt(light[0] ** 2 + light[1] ** 2 + light[2] ** 2)
+    lx, ly, lz = light[0] / ln, light[1] / ln, light[2] / ln
+    eps = 0.014
+    i = 0
+    for iy in range(h):
+        v = 1.0 - (iy + 0.5) / h * 2.0
+        for ix in range(w):
+            u = (ix + 0.5) / w * 2.0 - 1.0
+            rdx, rdy, rdz = u * 0.82, v * 0.82, -1.32
+            inv = 1.0 / math.sqrt(rdx * rdx + rdy * rdy + rdz * rdz)
+            rdx, rdy, rdz = rdx * inv, rdy * inv, rdz * inv
+            t = 0.0
+            hit = False
+            px = py = pz = 0.0
+            closest = 8.0
+            for _step in range(steps):
+                px, py, pz = rdx * t, rdy * t, 2.55 + rdz * t
+                qx, qy, qz = _sleep_rotate(px, py, pz, yaw, pitch)
+                d = _sleep_sdf(kind, qx, qy, qz)
+                closest = min(closest, d if d > 0.0 else 0.0)
+                if d < 0.012:
+                    hit = True
+                    break
+                t += max(d, 0.01)
+                if t > 6.0:
+                    break
+            if not hit:
+                glow = math.exp(-closest * closest * 70.0) * amt * 0.20
+                if glow > 0.004:
+                    out[i] = min(255, int(tr * glow))
+                    out[i + 1] = min(255, int(tg * glow))
+                    out[i + 2] = min(255, int(tb * glow))
+                i += 3
+                continue
+            def n_at(dx: float, dy: float, dz: float) -> float:
+                sx, sy, sz = _sleep_rotate(px + dx, py + dy, pz + dz, yaw, pitch)
+                return _sleep_sdf(kind, sx, sy, sz)
+            nx = n_at(eps, 0.0, 0.0) - n_at(-eps, 0.0, 0.0)
+            ny = n_at(0.0, eps, 0.0) - n_at(0.0, -eps, 0.0)
+            nz = n_at(0.0, 0.0, eps) - n_at(0.0, 0.0, -eps)
+            nn = math.sqrt(nx * nx + ny * ny + nz * nz) or 1.0
+            nx, ny, nz = nx / nn, ny / nn, nz / nn
+            diff = max(0.0, nx * lx + ny * ly + nz * lz)
+            ndv = max(0.0, -(nx * rdx + ny * rdy + nz * rdz))
+            rim = (1.0 - ndv) * (1.0 - ndv)
+            hx, hy, hz = lx - rdx, ly - rdy, lz - rdz
+            hn = math.sqrt(hx * hx + hy * hy + hz * hz) or 1.0
+            spec = max(0.0, nx * hx / hn + ny * hy / hn + nz * hz / hn) ** 14
+            fog = math.exp(-t * 0.18)
+            lift = (0.10 + 0.40 * diff + 0.16 * rim) * fog * amt
+            out[i] = min(255, int(tr * lift + 210 * spec * amt * fog))
+            out[i + 1] = min(255, int(tg * lift + 220 * spec * amt * fog))
+            out[i + 2] = min(255, int(tb * lift + 255 * spec * amt * fog))
+            i += 3
+    return bytes(out)
 
 
-def _draw_sleeping_diamond(
-    pygame_mod: Any,
-    screen: Any,
-    cx: int,
-    cy: int,
-    size: int,
+def _sleep_rt_rgb_numpy(
+    kind: str,
+    w: int,
+    h: int,
+    yaw: float,
+    pitch: float,
     amt: float,
-    angle: float,
     tint: tuple[int, int, int],
-) -> None:
-    rx = max(8, size * 0.82)
-    ry = max(7, size * 0.62)
-    pts = [(0.0, -ry), (rx, 0.0), (0.0, ry), (-rx, 0.0)]
-    surf = _sleep_nested_poly(pygame_mod, pts, amt, tint)
-    if surf is not None:
-        _blit_sleep_add(pygame_mod, screen, surf, cx, cy, angle)
+    np: Any,
+) -> bytes:
+    xs = ((np.arange(w, dtype=np.float32) + 0.5) / w) * 2.0 - 1.0
+    ys = 1.0 - ((np.arange(h, dtype=np.float32) + 0.5) / h) * 2.0
+    u, v = np.meshgrid(xs, ys)
+    rdx = u * np.float32(0.82)
+    rdy = v * np.float32(0.82)
+    rdz = np.full((h, w), np.float32(-1.32))
+    inv = 1.0 / np.sqrt(rdx * rdx + rdy * rdy + rdz * rdz)
+    rdx, rdy, rdz = rdx * inv, rdy * inv, rdz * inv
+    cy, sy = np.float32(math.cos(pitch)), np.float32(math.sin(pitch))
+    cz, sz = np.float32(math.cos(yaw)), np.float32(math.sin(yaw))
+
+    def rotate(px, py, pz):
+        py2 = py * cy - pz * sy
+        pz2 = py * sy + pz * cy
+        px2 = px * cz - pz2 * sz
+        pz3 = px * sz + pz2 * cz
+        return px2, py2, pz3
+
+    def sdf(px, py, pz):
+        if kind == "sphere":
+            return np.sqrt(px * px + py * py + pz * pz) - np.float32(0.80)
+        if kind == "box":
+            ax = np.abs(px) - np.float32(0.50)
+            ay = np.abs(py) - np.float32(0.50)
+            az = np.abs(pz) - np.float32(0.50)
+            qx = np.maximum(ax, 0.0)
+            qy = np.maximum(ay, 0.0)
+            qz = np.maximum(az, 0.0)
+            return np.sqrt(qx * qx + qy * qy + qz * qz) + np.minimum(
+                np.maximum(ax, np.maximum(ay, az)), 0.0
+            ) - np.float32(0.10)
+        if kind == "torus":
+            q = np.sqrt(px * px + pz * pz) - np.float32(0.58)
+            return np.sqrt(q * q + py * py) - np.float32(0.20)
+        if kind == "octa":
+            return (np.abs(px) + np.abs(py) + np.abs(pz) - np.float32(0.92)) * np.float32(
+                0.57735027
+            )
+        tcap = np.clip((py + np.float32(0.44)) / np.float32(0.90), 0.0, 1.0)
+        dy = py - (np.float32(-0.44) + np.float32(0.90) * tcap)
+        return np.sqrt(px * px + dy * dy + pz * pz) - np.float32(0.30)
+
+    t = np.zeros((h, w), dtype=np.float32)
+    hit = np.zeros((h, w), dtype=bool)
+    dmin = np.full((h, w), np.float32(8.0))
+    for _step in range(14):
+        px = rdx * t
+        py = rdy * t
+        pz = np.float32(2.55) + rdz * t
+        qx, qy, qz = rotate(px, py, pz)
+        d = sdf(qx, qy, qz)
+        dmin = np.minimum(dmin, np.maximum(d, 0.0))
+        arrived = d < np.float32(0.012)
+        hit = hit | arrived
+        t = np.where(hit | (t > 6.0), t, t + np.maximum(d, np.float32(0.01)))
+    live = hit & (t <= 6.0)
+    px = rdx * t
+    py = rdy * t
+    pz = np.float32(2.55) + rdz * t
+    eps = np.float32(0.014)
+
+    def sdf_at(dx, dy, dz):
+        qx, qy, qz = rotate(px + dx, py + dy, pz + dz)
+        return sdf(qx, qy, qz)
+
+    nx = sdf_at(eps, 0.0, 0.0) - sdf_at(-eps, 0.0, 0.0)
+    ny = sdf_at(0.0, eps, 0.0) - sdf_at(0.0, -eps, 0.0)
+    nz = sdf_at(0.0, 0.0, eps) - sdf_at(0.0, 0.0, -eps)
+    nn = np.maximum(np.sqrt(nx * nx + ny * ny + nz * nz), 1e-5)
+    nx, ny, nz = nx / nn, ny / nn, nz / nn
+    lx, ly, lz = np.float32(0.48), np.float32(0.78), np.float32(0.44)
+    ln = math.sqrt(0.48 ** 2 + 0.78 ** 2 + 0.44 ** 2)
+    lx, ly, lz = lx / ln, ly / ln, lz / ln
+    diff = np.maximum(nx * lx + ny * ly + nz * lz, 0.0)
+    ndv = np.maximum(-(nx * rdx + ny * rdy + nz * rdz), 0.0)
+    rim = (1.0 - ndv) ** 2
+    hx = lx - rdx
+    hy = ly - rdy
+    hz = lz - rdz
+    hn = np.maximum(np.sqrt(hx * hx + hy * hy + hz * hz), 1e-5)
+    spec = np.maximum(nx * hx / hn + ny * hy / hn + nz * hz / hn, 0.0) ** 14
+    fog = np.exp(-t * np.float32(0.18))
+    lift = (0.10 + 0.40 * diff + 0.16 * rim) * fog * np.float32(amt)
+    tr, tg, tb = tint
+    rgb = np.zeros((h, w, 3), dtype=np.float32)
+    rgb[..., 0] = tr * lift + 210.0 * spec * amt * fog
+    rgb[..., 1] = tg * lift + 220.0 * spec * amt * fog
+    rgb[..., 2] = tb * lift + 255.0 * spec * amt * fog
+    glow = np.exp(-dmin * dmin * np.float32(70.0)) * np.float32(amt) * np.float32(0.20)
+    miss = ~live
+    rgb[..., 0] = np.where(live, rgb[..., 0], tr * glow)
+    rgb[..., 1] = np.where(live, rgb[..., 1], tg * glow)
+    rgb[..., 2] = np.where(live, rgb[..., 2], tb * glow)
+    rgb = np.clip(rgb, 0.0, 255.0)
+    return np.ascontiguousarray(rgb.astype(np.uint8)).tobytes()
 
 
-def _draw_sleeping_crescent(
-    pygame_mod: Any,
-    screen: Any,
-    cx: int,
-    cy: int,
-    size: int,
-    amt: float,
-    angle: float,
-    tint: tuple[int, int, int],
-) -> None:
-    r = max(8, int(size * 0.92))
-    surf = _sleep_ellipse_sheet(pygame_mod, r, r, amt, tint)
-    if surf is None:
+def _draw_sleeping_solid(pygame_mod: Any, screen: Any, item: dict[str, Any]) -> None:
+    amt = float(item.get("amt") or 0.0)
+    if amt <= 0.02:
         return
-    punch = max(5, int(r * 0.78))
-    ox = int(round(math.cos(angle) * r * 0.42))
-    oy = int(round(math.sin(angle) * r * 0.42))
-    pygame_mod.draw.circle(surf, (0, 0, 0), (surf.get_width() // 2 + ox, surf.get_height() // 2 + oy), punch)
-    _blit_sleep_add(pygame_mod, screen, surf, cx, cy)
-
-
-def _draw_sleeping_vesica(
-    pygame_mod: Any,
-    screen: Any,
-    cx: int,
-    cy: int,
-    size: int,
-    amt: float,
-    angle: float,
-    tint: tuple[int, int, int],
-) -> None:
-    r = max(6, size * 0.48)
-    span = r * 0.62
-    discs = [(-span, 0.0, r), (span, 0.0, r)]
-    surf = _sleep_disc_sheet(pygame_mod, discs, amt * 0.9, tint)
-    if surf is not None:
-        _blit_sleep_add(pygame_mod, screen, surf, cx, cy, angle)
-
-
-def _draw_sleeping_petal(
-    pygame_mod: Any,
-    screen: Any,
-    cx: int,
-    cy: int,
-    size: int,
-    amt: float,
-    angle: float,
-    tint: tuple[int, int, int],
-) -> None:
-    discs: list[tuple[float, float, float]] = []
-    n = 5
-    for i in range(n):
-        t = i / float(n - 1)
-        discs.append((0.0, (t - 0.55) * size * 1.15, max(2.5, size * (0.42 - 0.28 * t))))
-    surf = _sleep_disc_sheet(pygame_mod, discs, amt, tint)
-    if surf is not None:
-        _blit_sleep_add(pygame_mod, screen, surf, cx, cy, angle)
-
-
-def _draw_sleeping_twin(
-    pygame_mod: Any,
-    screen: Any,
-    cx: int,
-    cy: int,
-    size: int,
-    amt: float,
-    angle: float,
-    tint: tuple[int, int, int],
-) -> None:
-    r = max(5, size * 0.40)
-    span = r * 1.15
-    discs = [(-span, 0.0, r), (span, 0.0, r * 0.82)]
-    surf = _sleep_disc_sheet(pygame_mod, discs, amt * 0.88, tint)
-    if surf is not None:
-        _blit_sleep_add(pygame_mod, screen, surf, cx, cy, angle)
-
-
-def _draw_sleeping_spark(
-    pygame_mod: Any,
-    screen: Any,
-    cx: int,
-    cy: int,
-    size: int,
-    amt: float,
-    angle: float,
-    tint: tuple[int, int, int],
-    seed: int,
-) -> None:
-    n = 3 + int(_u01(seed, 5) * 3)
-    discs: list[tuple[float, float, float]] = []
-    for i in range(n):
-        a = angle + i * (TWO_PI / n) + _u01(seed, 7 + i) * 0.7
-        rad = size * (0.28 + 0.55 * _u01(seed, 11 + i))
-        discs.append((math.cos(a) * rad, math.sin(a) * rad, max(2.0, size * (0.10 + 0.12 * _u01(seed, 13 + i)))))
-    surf = _sleep_disc_sheet(pygame_mod, discs, amt * 0.95, tint)
-    if surf is not None:
-        _blit_sleep_add(pygame_mod, screen, surf, cx, cy)
-
-
-def _draw_sleeping_wedge(
-    pygame_mod: Any,
-    screen: Any,
-    cx: int,
-    cy: int,
-    size: int,
-    amt: float,
-    angle: float,
-    tint: tuple[int, int, int],
-) -> None:
-    h = max(8, size * 0.92)
-    b = max(7, size * 0.70)
-    pts = [(0.0, -h), (b, h * 0.55), (-b, h * 0.55)]
-    surf = _sleep_nested_poly(pygame_mod, pts, amt * 0.9, tint)
-    if surf is not None:
-        _blit_sleep_add(pygame_mod, screen, surf, cx, cy, angle)
+    size = max(12, int(item.get("size") or 16))
+    span = max(18, min(56, size * 2))
+    kind = str(item.get("kind") or "sphere")
+    tint = item.get("tint") or _SLEEP_TINT
+    rgb = _sleep_rt_rgb(
+        kind,
+        span,
+        span,
+        float(item.get("yaw") or 0.0),
+        float(item.get("pitch") or 0.0),
+        amt,
+        tint,
+    )
+    surf = pygame_mod.image.frombuffer(rgb, (span, span), "RGB").convert()
+    _blit_sleep_add(pygame_mod, screen, surf, float(item["x"]), float(item["y"]))
 
 
 def draw_sleepers(pygame_mod: Any, screen: Any, scene: dict[str, Any]) -> None:
     w, h = screen.get_size()
     for item in idle_sleeper_items(scene, w, h):
-        kind = item["kind"]
-        x, y, size, amt = item["x"], item["y"], item["size"], item["amt"]
-        angle = float(item.get("angle") or 0.0)
-        tint = item.get("tint") or _SLEEP_TINT
-        seed = int(item.get("seed") or 0)
-        if kind == "lens":
-            _draw_sleeping_lens(pygame_mod, screen, x, y, size, amt, angle, tint)
-        elif kind == "halo":
-            _draw_sleeping_halo(pygame_mod, screen, x, y, size, amt, angle, tint)
-        elif kind == "diamond":
-            _draw_sleeping_diamond(pygame_mod, screen, x, y, size, amt, angle, tint)
-        elif kind == "crescent":
-            _draw_sleeping_crescent(pygame_mod, screen, x, y, size, amt, angle, tint)
-        elif kind == "vesica":
-            _draw_sleeping_vesica(pygame_mod, screen, x, y, size, amt, angle, tint)
-        elif kind == "petal":
-            _draw_sleeping_petal(pygame_mod, screen, x, y, size, amt, angle, tint)
-        elif kind == "twin":
-            _draw_sleeping_twin(pygame_mod, screen, x, y, size, amt, angle, tint)
-        elif kind == "spark":
-            _draw_sleeping_spark(pygame_mod, screen, x, y, size, amt, angle, tint, seed)
-        elif kind == "wedge":
-            _draw_sleeping_wedge(pygame_mod, screen, x, y, size, amt, angle, tint)
-        else:
-            _draw_sleeping_bloom(pygame_mod, screen, x, y, size, amt, angle, tint)
+        _draw_sleeping_solid(pygame_mod, screen, item)
+
+
 
 
 def _blended_palette(
@@ -2408,6 +2326,19 @@ def evdev_is_activity(ev_type: int) -> bool:
     return ev_type in (EV_KEY, EV_REL, EV_ABS)
 
 
+def idle_wait_s(
+    *,
+    idle_s: float,
+    logout_idle_s: float,
+    logged_in: bool,
+    boot: bool = False,
+) -> float:
+    """Seconds to wait before taking the console. Zero on process start (reboot)."""
+    if boot:
+        return 0.0
+    return idle_s if logged_in else logout_idle_s
+
+
 def should_resume_saver(
     *,
     now: float,
@@ -2416,10 +2347,21 @@ def should_resume_saver(
     logout_idle_s: float,
     logged_in: bool,
     was_logged_in: bool | None = None,
+    boot: bool = False,
 ) -> bool:
-    """Show the field after idle while logged in, or after logout-idle when not."""
+    """Show the field after idle while logged in, or after logout-idle when not.
+
+    boot=True (service just started after install or reboot) skips those waits
+    so the kiosk takes the console immediately. After the first dismiss, idle
+    and logout-idle apply as configured.
+    """
     del was_logged_in
-    wait = idle_s if logged_in else logout_idle_s
+    wait = idle_wait_s(
+        idle_s=idle_s,
+        logout_idle_s=logout_idle_s,
+        logged_in=logged_in,
+        boot=boot,
+    )
     return (now - last_input) >= wait
 
 
@@ -2794,6 +2736,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"tabby-saver: {exc}", file=sys.stderr)
             return 1
         logged_in = console_logged_in(user_tty)
+        # Reboot / first start: take the console now. Idle and logout-idle
+        # start after the first key/mouse dismiss, not at process start.
+        boot = True
         show = True
         while True:
             if show:
@@ -2807,6 +2752,7 @@ def main(argv: list[str] | None = None) -> int:
                 if action == "quit":
                     return 0
                 watch.bump()
+                boot = False
                 logged_in = console_logged_in(user_tty)
                 activate_vt(user_nr)
                 show = False
@@ -2820,6 +2766,7 @@ def main(argv: list[str] | None = None) -> int:
                     idle_s=max(1.0, float(args.idle)),
                     logout_idle_s=max(0.0, float(args.logout_idle)),
                     logged_in=now_login,
+                    boot=boot,
                 ):
                     show = True
                 logged_in = now_login

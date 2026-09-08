@@ -2952,10 +2952,10 @@ inst_edit_saver() {
   ui_yesno "Screensaver" \
 "Enable the TTY activity screensaver?
 
-A CPU-rendered field on a spare VT (default tty8). tty1 stays a
-login prompt. A key or mouse hides it. While logged in it waits
-${TABBY_SAVER_IDLE_S}s with no input; after logout it waits
-${TABBY_SAVER_LOGOUT_IDLE_S}s.
+A CPU-rendered field on a spare VT (default tty8). It starts as soon
+as the machine boots. tty1 stays a login prompt. A key or mouse
+hides it. While logged in it then waits ${TABBY_SAVER_IDLE_S}s with
+no input; after logout it waits ${TABBY_SAVER_LOGOUT_IDLE_S}s.
 
 Do not enable if Omarchy or another desktop already owns the GPU." \
     "$yn" || rc=$?
@@ -4057,7 +4057,7 @@ TTY screensaver (spare VT, default tty8; on unless a desktop owns the GPU)
   tsctl screensaver enable
   tsctl screensaver timeout=120
   tsctl screensaver logout-timeout=10
-  Idle 2 min while logged in; 10 s after logout (defaults). Key/mouse hides it.
+  Idle 2 min while logged in; 10 s after logout (defaults). Boot starts it immediately.
   Probe in a window: /usr/bin/python $DEST_TABBY/deploy/arch/tabby-saver.py --window
   Stop: tsctl screensaver disable
   VTs: TABBY_SAVER_TTY=tty8 TABBY_SAVER_USER_TTY=tty1
