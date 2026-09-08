@@ -768,19 +768,29 @@
     wrap.setAttribute("role", "dialog");
     wrap.setAttribute("aria-modal", "true");
     wrap.innerHTML =
-      '<div class="dialog-card dialog-progress">' +
-      '<div class="progress-head"><h2></h2><span class="muted progress-elapsed">0s</span></div>' +
+      '<div class="dialog-card dialog-progress is-busy">' +
+      '<div class="progress-head">' +
+      '<div class="progress-head-main"><span class="progress-spin" aria-hidden="true"></span><h2></h2></div>' +
+      '<span class="muted progress-elapsed">0s</span></div>' +
       '<p class="progress-note"></p>' +
-      '<pre class="log-view progress-log" aria-live="polite"></pre>' +
+      '<div class="progress-meter is-indeterminate" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">' +
+      '<div class="progress-meter-fill"></div></div>' +
+      '<div class="progress-log-wrap">' +
+      '<p class="progress-log-hint muted">Waiting for the first log lines…</p>' +
+      '<pre class="log-view progress-log" aria-live="polite"></pre></div>' +
       '<div class="dialog-actions"></div></div>';
     wrap.querySelector("h2").textContent = title;
     wrap.querySelector(".progress-note").textContent = note || "Working…";
     document.body.appendChild(wrap);
 
+    const card = wrap.querySelector(".dialog-progress");
     const view = wrap.querySelector(".progress-log");
+    const hintEl = wrap.querySelector(".progress-log-hint");
     const actionsEl = wrap.querySelector(".dialog-actions");
     const noteEl = wrap.querySelector(".progress-note");
     const elapsedEl = wrap.querySelector(".progress-elapsed");
+    const meterEl = wrap.querySelector(".progress-meter");
+    const fillEl = wrap.querySelector(".progress-meter-fill");
     const MAX_LINES = 800;
     const handle = {};
     wrap._tabbyProgress = handle;
@@ -795,13 +805,92 @@
     let updateSeen = 0;
     let updateRunning = false;
     let clockTimer = 0;
+    let currentPercent = null;
+    let currentStep = "";
+    let lastLogAt = Date.now();
+    let statusNoteOverride = "";
     const startedAt = Date.now();
+    const initialNote = note || "Working…";
 
     function tickElapsed() {
       elapsedEl.textContent = formatDuration((Date.now() - startedAt) / 1000);
+      if (busy) paintIdleHint();
     }
     clockTimer = setInterval(tickElapsed, 500);
     tickElapsed();
+    setHintVisible();
+
+    function setHintVisible() {
+      if (!hintEl) return;
+      hintEl.hidden = buffer.length > 0;
+    }
+
+    function paintNote() {
+      if (statusNoteOverride) {
+        noteEl.textContent = statusNoteOverride;
+        return;
+      }
+      if (currentStep) {
+        noteEl.textContent = currentStep;
+        return;
+      }
+      noteEl.textContent = initialNote;
+    }
+
+    function paintIdleHint() {
+      if (!busy || statusNoteOverride || !currentStep) return;
+      const idle = Date.now() - lastLogAt;
+      if (idle < 8000) {
+        if (noteEl.textContent !== currentStep) paintNote();
+        return;
+      }
+      const wait = formatDuration(idle / 1000);
+      noteEl.textContent = `${currentStep} — still working (${wait} since last log line). This step can take a few minutes.`;
+    }
+
+    function setProgress(percent, step) {
+      if (step) currentStep = String(step);
+      if (percent != null && Number.isFinite(Number(percent))) {
+        const next = Math.max(0, Math.min(100, Math.round(Number(percent))));
+        if (currentPercent == null || next >= currentPercent || next >= 100) {
+          currentPercent = next;
+          meterEl.classList.remove("is-indeterminate");
+          fillEl.style.width = `${currentPercent}%`;
+          meterEl.setAttribute("aria-valuenow", String(currentPercent));
+          meterEl.setAttribute(
+            "aria-valuetext",
+            currentStep ? `${currentPercent}% · ${currentStep}` : `${currentPercent}%`
+          );
+        }
+      }
+      if (!statusNoteOverride) paintNote();
+    }
+
+    function setStep(step) {
+      if (!step) return;
+      currentStep = String(step);
+      if (!statusNoteOverride) paintNote();
+    }
+
+    function applyLineProgress(line) {
+      const text = String(line || "");
+      const pct = /==>\s*\[(\d+)%\]\s*(.*)$/.exec(text);
+      if (pct) {
+        setProgress(Number(pct[1]), pct[2]);
+        return;
+      }
+      const git = /^(?:remote:\s*)?(Receiving objects|Resolving deltas|Counting objects|Compressing objects|Writing objects):\s+(\d+)%/.exec(text);
+      if (git) {
+        const mapped = currentPercent == null ? Number(git[2]) : Math.max(currentPercent, Math.round(20 + (Number(git[2]) * 50) / 100));
+        setProgress(mapped, `${git[1]} ${git[2]}%`);
+        return;
+      }
+      const rsync = /^\s*[\d,]+\s+(\d+)%\s+[\d.]+[kMGT]?B\/s/i.exec(text);
+      if (rsync) {
+        setProgress(Number(rsync[1]), currentStep || `${rsync[1]}% copied`);
+        return;
+      }
+    }
 
     function trimView() {
       if (buffer.length <= MAX_LINES) return;
@@ -820,12 +909,16 @@
       }
       view.replaceChildren(frag);
       if (stick) view.scrollTop = view.scrollHeight;
+      setHintVisible();
     }
 
     function appendLine(line) {
       const text = String(line || "").replace(/\r$/, "");
       if (!text) return;
+      lastLogAt = Date.now();
+      applyLineProgress(text);
       buffer.push(text);
+      setHintVisible();
       if (buffer.length > MAX_LINES) {
         trimView();
         return;
@@ -839,7 +932,7 @@
     }
 
     function ingestText(text) {
-      const incoming = String(text || "").split(/\r?\n/).filter((line) => line !== "");
+      const incoming = String(text || "").split(/\r\n|\n|\r/).filter((line) => line !== "");
       if (!incoming.length) return;
       const last = buffer[buffer.length - 1];
       const idx = last ? incoming.lastIndexOf(last) : -1;
@@ -917,6 +1010,9 @@
         const extra = lines.slice(updateSeen);
         updateSeen = lines.length;
         extra.forEach(appendLine);
+        if (typeof data.percent === "number") setProgress(data.percent, data.step || currentStep);
+        else if (data.step) setStep(data.step);
+        if (updateRunning && !extra.length) paintIdleHint();
       } catch {
         /* API is down during restart; journal catch-up covers boot logs. */
       }
@@ -967,14 +1063,20 @@
             if (lastUptime != null && up + 5 < lastUptime) sawBusy = true;
             lastUptime = up;
           }
+          if (watchUpdate && (updateRunning || currentStep) && !(data && data.restarting)) {
+            statusNoteOverride = "";
+            paintIdleHint();
+          }
           if (data && (data.restarting || data.switching || data.busy)) {
             sawBusy = true;
             if (data.restarting) {
-              noteEl.textContent = "Restarting the API…";
-            } else {
-              noteEl.textContent = name ? `Loading ${name}…` : "Loading…";
+              statusNoteOverride = "";
+              setStep("Restarting the API…");
+            } else if (!(watchUpdate && (updateRunning || currentStep))) {
+              statusNoteOverride = "";
+              setStep(name ? `Loading ${name}…` : "Loading…");
             }
-          } else if (looksReady(data) && sawBusy) {
+          } else if (looksReady(data) && sawBusy && !watchUpdate) {
             paintGpuFromStatus(data);
             return data;
           } else if (
@@ -1022,7 +1124,8 @@
           if (err && /failed before a restart|The update failed|Timed out waiting/i.test(err.message || "")) throw err;
           sawBusy = true;
           if (window.TabbyUI && window.TabbyUI.paintApiDown) window.TabbyUI.paintApiDown(err);
-          noteEl.textContent = "API is down. Waiting for it to come back…";
+          statusNoteOverride = "API is down. Waiting for it to come back…";
+          paintNote();
         }
         await sleep(1500);
       }
@@ -1078,10 +1181,19 @@
         wrap.querySelector("h2").textContent = value || "Working";
       },
       setNote(value) {
+        statusNoteOverride = "";
+        if (value) currentStep = value;
         noteEl.textContent = value || "";
       },
+      setProgress,
       setBusy(value) {
         busy = Boolean(value);
+        card.classList.toggle("is-busy", busy);
+        if (!busy) {
+          statusNoteOverride = "";
+          meterEl.classList.remove("is-indeterminate");
+          if (currentPercent == null) setProgress(100, currentStep);
+        }
       },
       appendLine,
       ingestText,
@@ -1132,7 +1244,7 @@
     progress.stopJournal();
     progress.stopUpdateLog();
     progress.setTitle("API is back");
-    progress.setNote("TabbyAPI is healthy again. Reload the UI if pages look stale.");
+    progress.setProgress(100, "TabbyAPI is healthy again. Reload the UI if pages look stale.");
     progress.setBusy(false);
     return progress;
   }

@@ -644,6 +644,7 @@ function mountStatus(root) {
       await modal.waitUntilReady({ requireDown: true, watchUpdate: true });
       msg.textContent = "API is back.";
       await refresh().catch((err) => TabbyUI.paintApiDown(err));
+      modal.setProgress(100, "Git update finished. Reload the UI to pick up updated pages.");
       finishProgress(modal, {
         title: "Git update finished",
         note: "Git update finished. Reload the UI to pick up updated pages.",
@@ -693,6 +694,7 @@ function mountStatus(root) {
       await modal.waitUntilReady({ requireDown: true, watchUpdate: true });
       msg.textContent = "API is back.";
       await refresh().catch((err) => TabbyUI.paintApiDown(err));
+      modal.setProgress(100, "Full update finished and TabbyAPI is healthy again. Reload the UI to pick up updated pages.");
       finishProgress(modal, {
         title: "API is back",
         note: "Full update finished and TabbyAPI is healthy again. Reload the UI to pick up updated pages.",

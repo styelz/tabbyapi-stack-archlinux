@@ -263,9 +263,22 @@ Full log: $UPDATE_LOG"
   exit 1
 }
 
+# git/pip write \r progress. Turn those into real lines so the Status modal
+# can poll tabby-update.log instead of sitting on a silent last line.
+log_run() {
+  local log="$1" rc=0
+  shift
+  if command -v stdbuf >/dev/null 2>&1; then
+    stdbuf -oL -eL "$@" 2>&1 | tr '\r' '\n' >>"$log" || rc=${PIPESTATUS[0]:-1}
+  else
+    "$@" >>"$log" 2>&1 || rc=$?
+  fi
+  return "$rc"
+}
+
 run_git() {
   printf '+ %s\n' "$*" >> "$UPDATE_LOG"
-  if ! GIT_TERMINAL_PROMPT=0 "$@" >>"$UPDATE_LOG" 2>&1; then
+  if ! GIT_TERMINAL_PROMPT=0 log_run "$UPDATE_LOG" "$@"; then
     local rc=$?
     echo "command failed ($rc)" >> "$UPDATE_LOG"
     die "Git command failed ($rc)."
@@ -910,7 +923,7 @@ ff_pull() {
   local pct_fetch="${3:-15}"
   local pct_merge="${4:-75}"
   progress "$pct_fetch" "Fetching $label"
-  run_git git -C "$dir" fetch origin
+  run_git git -C "$dir" fetch --progress origin
   branch="$(origin_branch "$dir")"
   if [[ -z "$branch" ]]; then
     branch="$(git -C "$dir" rev-parse --abbrev-ref HEAD)"
@@ -1002,7 +1015,7 @@ else
   progress 15 "Bootstrapping git from origin"
   run_git git -C "$DEST" init
   ensure_stack_origin
-  run_git git -C "$DEST" fetch origin
+  run_git git -C "$DEST" fetch --progress origin
   branch="$(origin_branch "$DEST")"
   [[ -n "$branch" ]] || die "Could not find origin/main or origin/master at $ORIGIN."
   progress 55 "Checking out origin/$branch"

@@ -1203,6 +1203,25 @@ run_quiet() {
     fi
     return 0
   fi
+  # Status Update all polls tabby-update.log. Without a TTY, pip/git sit
+  # silent for minutes; copy line-oriented output into that log too.
+  if [[ -n "${TABBY_UPDATE_LOG:-}" ]]; then
+    printf '+ %s\n' "$*" >> "$TABBY_UPDATE_LOG"
+    local rc=0
+    if command -v stdbuf >/dev/null 2>&1; then
+      stdbuf -oL -eL "$@" 2>&1 | tr '\r' '\n' | tee -a "$INSTALL_LOG" >> "$TABBY_UPDATE_LOG" \
+        || rc=${PIPESTATUS[0]:-1}
+    else
+      "$@" 2>&1 | tr '\r' '\n' | tee -a "$INSTALL_LOG" >> "$TABBY_UPDATE_LOG" \
+        || rc=${PIPESTATUS[0]:-1}
+    fi
+    if [[ "$rc" -ne 0 ]]; then
+      echo "Command failed ($rc): $*" >> "$INSTALL_LOG"
+      append_update_log "Command failed ($rc): $*"
+      progress_fail "$rc"
+    fi
+    return 0
+  fi
   if ! "$@" >>"$INSTALL_LOG" 2>&1; then
     local rc=$?
     echo "Command failed ($rc): $*" >> "$INSTALL_LOG"

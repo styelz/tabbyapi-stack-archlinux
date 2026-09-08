@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -473,6 +474,26 @@ def start_stack_restart() -> dict[str, Any]:
     }
 
 
+_UPDATE_PCT_RE = re.compile(r"==>\s*\[(\d+)%\]\s*(.*)$")
+
+
+def parse_update_progress(lines: list[str] | None) -> dict[str, Any]:
+    """Last ``==> [N%] step`` line from update.sh / install.sh."""
+    percent: int | None = None
+    step = ""
+    for line in reversed(lines or []):
+        match = _UPDATE_PCT_RE.search(str(line).strip())
+        if match:
+            percent = int(match.group(1))
+            step = match.group(2).strip()
+            break
+    out: dict[str, Any] = {}
+    if percent is not None:
+        out["percent"] = percent
+        out["step"] = step
+    return out
+
+
 def update_log_lines(limit: int = 400) -> list[str]:
     path = STACK_ROOT / "tabby-update.log"
     try:
@@ -488,7 +509,18 @@ def update_job_running() -> bool:
 
 
 def update_log_state(limit: int = 400) -> dict[str, Any]:
-    return {"lines": update_log_lines(limit), "running": update_job_running()}
+    path = STACK_ROOT / "tabby-update.log"
+    lines = update_log_lines(limit)
+    state: dict[str, Any] = {
+        "lines": lines,
+        "running": update_job_running(),
+    }
+    state.update(parse_update_progress(lines))
+    try:
+        state["age_s"] = max(0, int(time.time() - path.stat().st_mtime))
+    except OSError:
+        state["age_s"] = None
+    return state
 
 
 def _update_log_tail(limit: int = 40) -> str:
@@ -552,6 +584,9 @@ def _spawn_stack_update(script: Path, args: list[str], message: str) -> dict[str
             f"--working-directory={STACK_ROOT}",
             "--property=StandardInput=null",
             f"--setenv=XDG_RUNTIME_DIR={env['XDG_RUNTIME_DIR']}",
+            "--setenv=PYTHONUNBUFFERED=1",
+            "--setenv=PIP_PROGRESS_BAR=on",
+            "--setenv=GIT_FLUSH=1",
         ]
         dbus = env.get("DBUS_SESSION_BUS_ADDRESS")
         if dbus:

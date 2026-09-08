@@ -186,6 +186,16 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
         self.assertIn("already_running", status_src)
         self.assertIn("/already running/i.test(result.message", status_src)
         self.assertIn("waitUntilReady({ requireDown: true, watchUpdate: true })", status_src)
+        self.assertIn("progress-meter", utils_src)
+        self.assertIn("startUpdateLog", status_src)
+        self.assertIn("Waiting for the first log lines", utils_src)
+        self.assertIn("still working", utils_src)
+        self.assertIn("function setProgress(", utils_src)
+        self.assertIn("==>\\s*\\[(\\d+)%\\]", utils_src)
+        css = CHAT_CSS.read_text(encoding="utf-8")
+        self.assertIn(".progress-meter", css)
+        self.assertIn(".progress-spin", css)
+        self.assertIn(".progress-log-hint", css)
 
     def test_tree_drag_and_editor_find(self):
         self.assertIn('application/x-tabby-path', self.src)

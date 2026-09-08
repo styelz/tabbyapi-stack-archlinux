@@ -33,6 +33,10 @@ class UpdateShRestartOptionTests(unittest.TestCase):
         self.assertIn("Code sandbox image already present; skipping rebuild", src)
         self.assertIn("write_restart_prompt_json", src)
         self.assertIn("tabby-update-prompt.json", src)
+        self.assertIn("fetch --progress origin", src)
+        self.assertIn("log_run()", src)
+        self.assertIn("tr '\\r' '\\n'", src)
+        self.assertIn("stdbuf -oL -eL", src)
         self.assertIn("restart_prompt_text", src)
         self.assertNotIn("tabbyapi is not running, so it was not restarted.", src)
         self.assertNotIn(
@@ -140,3 +144,5 @@ class InstallShHeadlessUpdateTests(unittest.TestCase):
         self.assertIn('if tty_writable; then\n    GAUGE_MODE="text"', src)
         self.assertNotIn('if [[ -c /dev/tty ]]; then\n    GAUGE_MODE="text"', src)
         self.assertIn(">/dev/tty 2>/dev/null || true", src)
+        self.assertIn('if [[ -n "${TABBY_UPDATE_LOG:-}" ]]; then', src)
+        self.assertIn('tee -a "$INSTALL_LOG" >> "$TABBY_UPDATE_LOG"', src)

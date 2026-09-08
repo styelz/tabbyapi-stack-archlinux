@@ -304,13 +304,16 @@ class UiManagerTests(unittest.TestCase):
             spawned = next(cmd for cmd in cmds if cmd and cmd[0] == "/usr/bin/systemd-run")
             self.assertIn("--git", spawned)
             self.assertIn("--restart", spawned)
-            self.assertIn("StandardInput=null", spawned)
+            self.assertIn("--property=StandardInput=null", spawned)
             self.assertNotIn("--no-restart", spawned)
             self.assertNotIn("--all", spawned)
             self.assertTrue(result["ok"])
             self.assertTrue(result["restarting"])
             self.assertNotIn("ask_restart", result)
             self.assertIn("git update", result["message"].lower())
+            self.assertIn("--setenv=PYTHONUNBUFFERED=1", spawned)
+            self.assertIn("--setenv=PIP_PROGRESS_BAR=on", spawned)
+            self.assertIn("--setenv=GIT_FLUSH=1", spawned)
 
     def test_full_update_starts_outside_tabbyapi_cgroup(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -347,3 +350,32 @@ class UiManagerTests(unittest.TestCase):
         self.assertTrue(result["already_running"])
         self.assertTrue(result["restarting"])
         self.assertIn("already running", result["message"].lower())
+
+    def test_parse_update_progress_uses_last_percent_line(self):
+        parsed = manager.parse_update_progress(
+            [
+                "hello",
+                "==> [20%] Fetching tabbyapi-stack",
+                "Receiving objects: 12%",
+                "==> [70%] Checking out origin/main",
+            ]
+        )
+        self.assertEqual(parsed["percent"], 70)
+        self.assertEqual(parsed["step"], "Checking out origin/main")
+        self.assertEqual(manager.parse_update_progress(["no gauge"]), {})
+
+    def test_update_log_state_includes_progress(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "tabby-update.log").write_text(
+                "start\n==> [45%] Updating TabbyAPI Python packages\npip noise\n",
+                encoding="utf-8",
+            )
+            with mock.patch.object(manager, "STACK_ROOT", root):
+                with mock.patch.object(manager, "update_job_running", return_value=True):
+                    state = manager.update_log_state(50)
+        self.assertTrue(state["running"])
+        self.assertEqual(state["percent"], 45)
+        self.assertEqual(state["step"], "Updating TabbyAPI Python packages")
+        self.assertGreaterEqual(state["age_s"], 0)
+        self.assertIn("Updating TabbyAPI Python packages", "\n".join(state["lines"]))
