@@ -369,9 +369,9 @@ class SaverKioskSceneTests(unittest.TestCase):
         idle = self.kiosk.PALETTES["idle"]
         peak = idle[-1]
         mid = idle[128]
-        self.assertGreater(peak[2], 90)
-        self.assertGreater(sum(peak), 220)
-        self.assertGreater(sum(mid), sum(self.kiosk.BG) + 30)
+        self.assertGreater(peak[2], 110)
+        self.assertGreater(sum(peak), 280)
+        self.assertGreater(sum(mid), sum(self.kiosk.BG) + 50)
         self.assertGreater(peak[2], peak[0])
 
     def test_idle_sleeper_glow_is_visible(self):

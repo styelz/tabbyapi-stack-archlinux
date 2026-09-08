@@ -101,22 +101,22 @@ PALETTES = {
     "idle": _palette(
         [
             (0.0, BG),
-            (0.28, (22, 30, 52)),
-            (0.62, (40, 52, 96)),
-            (1.0, (58, 76, 132)),
+            (0.28, (30, 40, 68)),
+            (0.62, (52, 68, 118)),
+            (1.0, (74, 96, 156)),
         ]
     ),
     "chat": _palette(
         [
             (0.0, BG),
-            (0.22, (24, 30, 64)),
-            (0.48, (58, 78, 138)),
-            (0.74, (72, 48, 128)),
-            (1.0, (118, 48, 78)),
+            (0.22, (32, 40, 78)),
+            (0.48, (70, 92, 156)),
+            (0.74, (86, 60, 144)),
+            (1.0, (136, 60, 92)),
         ]
     ),
-    "image": _palette([(0.0, BG), (0.42, (32, 22, 8)), (1.0, (128, 96, 32))]),
-    "switch": _palette([(0.0, BG), (0.45, (8, 28, 22)), (1.0, (28, 96, 64))]),
+    "image": _palette([(0.0, BG), (0.42, (42, 30, 12)), (1.0, (148, 112, 42))]),
+    "switch": _palette([(0.0, BG), (0.45, (12, 38, 30)), (1.0, (36, 112, 78))]),
     "down": _palette([(0.0, (6, 3, 4)), (0.42, (32, 8, 10)), (1.0, (96, 22, 28))]),
 }
 
@@ -1468,7 +1468,7 @@ _SLEEP_FADE = 0.18
 _SLEEP_SPAN_FRAC = 0.48
 _SLEEP_SPAN_MAX = 520
 _SLEEP_RT_MAX = 256
-_SLEEP_TINT = (48, 72, 118)
+_SLEEP_TINT = (56, 84, 132)
 
 
 def _sleep_unit(slot: int, cycle: int, salt: int) -> float:
@@ -1864,7 +1864,7 @@ def _field_common(width: int, height: int, scene: dict[str, Any]):
     breath_idle = 0.5 + 0.5 * lsin(st * 1.55)
     breath_live = 0.5 + 0.5 * lsin(st * 1.15)
     breath = breath_idle + (breath_live - breath_idle) * mix
-    gain = intensity * (0.70 + 0.14 * breath)
+    gain = intensity * (0.78 + 0.14 * breath)
     cx = (width - 1) * 0.5
     cy = (height - 1) * 0.5
     inv_diag = 1.0 / (math.hypot(cx, cy) + 1.0)
@@ -1911,7 +1911,7 @@ def _draw_field_numpy(width: int, height: int, scene: dict[str, Any], np_mod: An
             + vsin(db * 0.051 + st * 0.88)
         ) * (1.0 / 6.0) + 0.5
         blob = pulse * np_mod.exp(-np_mod.minimum(da, db) * inv_diag * 2.4)
-        v_idle = 0.22 + wave * 0.60 * gain + glow * 0.40 + blob * 0.42
+        v_idle = 0.27 + wave * 0.62 * gain + glow * 0.42 + blob * 0.44
     if not use_idle:
         wave = (
             vsin(x * 0.041 + st)
@@ -1919,7 +1919,7 @@ def _draw_field_numpy(width: int, height: int, scene: dict[str, Any], np_mod: An
             + vsin((x + y) * 0.021 + st * 1.13)
             + vsin(dist * 0.048 - st * 0.47)
         ) * 0.25 + 0.5
-        v_live = 0.18 + wave * 0.34 * gain + glow * 0.38
+        v_live = 0.24 + wave * 0.40 * gain + glow * 0.42
     if use_idle:
         v = v_idle
     elif use_live:
@@ -1960,7 +1960,7 @@ def _draw_field_python(width: int, height: int, scene: dict[str, Any]) -> Any:
                     + lsin(db * 0.051 + st * 0.88)
                 ) * (1.0 / 6.0) + 0.5
                 blob = pulse * math.exp(-min(da, db) * inv_diag * 2.4)
-                v_idle = 0.22 + wave * 0.60 * gain + glow * 0.40 + blob * 0.42
+                v_idle = 0.27 + wave * 0.62 * gain + glow * 0.42 + blob * 0.44
             if not use_idle:
                 wave = (
                     lsin(x * 0.041 + st)
@@ -1968,7 +1968,7 @@ def _draw_field_python(width: int, height: int, scene: dict[str, Any]) -> Any:
                     + lsin((x + y) * 0.021 + st * 1.13)
                     + lsin(dist * 0.048 - st * 0.47)
                 ) * 0.25 + 0.5
-                v_live = 0.18 + wave * 0.34 * gain + glow * 0.38
+                v_live = 0.24 + wave * 0.40 * gain + glow * 0.42
             if use_idle:
                 v = v_idle
             elif use_live:
