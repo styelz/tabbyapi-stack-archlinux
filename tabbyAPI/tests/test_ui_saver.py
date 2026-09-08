@@ -372,24 +372,39 @@ class SaverKioskSceneTests(unittest.TestCase):
         first = self.kiosk.idle_sleeper_items(idle, 480, 270)
         idle["st"] = 22.5
         second = self.kiosk.idle_sleeper_items(idle, 480, 270)
-        self.assertTrue(first)
-        self.assertTrue(second)
+        self.assertEqual(len(first), 3)
+        self.assertEqual(len(second), 3)
         kinds = {item["kind"] for item in first}
         self.assertTrue(kinds <= set(self.kiosk._SLEEP_KINDS))
         by_seed = {item["seed"]: item for item in second}
-        held = False
         for item in first:
-            other = by_seed.get(item["seed"])
-            if other is None:
-                continue
-            held = True
+            other = by_seed[item["seed"]]
             self.assertLess(abs(item["fx"] - other["fx"]), 0.01)
             self.assertLess(abs(item["fy"] - other["fy"]), 0.01)
-        self.assertTrue(held)
+            self.assertGreater(item["size"], 60)
+            self.assertGreater(item["amt"], 0.5)
         env = self.kiosk.idle_sleeper_envelope
-        self.assertEqual(env(-0.01), 0.0)
-        self.assertGreater(env(0.40), env(0.02))
-        self.assertGreater(env(0.40), env(0.74))
+        self.assertGreater(env(0.0), 0.55)
+        self.assertGreater(env(0.40), 0.55)
+        self.assertGreater(env(0.74), 0.55)
+
+    def test_idle_sleepers_stay_spread_apart(self):
+        idle = self.kiosk.scene_from_state(
+            {"gpu_mode": "llm", "profile": "qwen", "busy": False},
+            True,
+        )
+        idle["cycle"] = "idle"
+        idle["overlay"] = 0.0
+        idle["live"] = False
+        idle["st"] = 40.0
+        items = self.kiosk.idle_sleeper_items(idle, 1920, 1080)
+        self.assertEqual(len(items), 3)
+        for i, a in enumerate(items):
+            for b in items[i + 1 :]:
+                dx = a["fx"] - b["fx"]
+                dy = a["fy"] - b["fy"]
+                self.assertGreater(dx * dx + dy * dy, self.kiosk._SLEEP_MIN_SEP ** 2)
+        self.assertGreater(min(item["size"] for item in items), 140)
 
     def test_idle_rt_sphere_is_lit(self):
         rgb = self.kiosk._sleep_rt_rgb(

@@ -1437,16 +1437,17 @@ def draw_cycle_fx(pygame_mod: Any, screen: Any, scene: dict[str, Any]) -> None:
             pygame_mod.draw.circle(screen, _mix(BG, color, 0.18), (cx, cy), inner, 1)
 
 
-# Idle-only: faint ray-marched solids. Each appearance keeps one hashed
-# place and fades in/out; slots never teleport to dodge each other.
+# Idle-only: faint ray-marched solids. Three persistent homes, well apart.
+# Drawn on the full framebuffer (not the 480×270 field) so motion is smooth.
 _SLEEP_KINDS = ("sphere", "box", "torus", "octa", "capsule")
-_SLEEP_SLOTS = (
-    (56.0, 0.00),
-    (68.0, 0.41),
-    (82.0, 0.73),
+_SLEEP_HOMES = (
+    (0.18, 0.28),
+    (0.82, 0.32),
+    (0.50, 0.78),
 )
-_SLEEP_LIFE = 0.76
-_SLEEP_FADE = 0.22
+_SLEEP_MIN_SEP = 0.34
+_SLEEP_LIFE = 1.0
+_SLEEP_FADE = 0.0
 _SLEEP_TINT = (48, 72, 118)
 
 
@@ -1454,21 +1455,17 @@ def _sleep_unit(slot: int, cycle: int, salt: int) -> float:
     return _u01(slot + 3, int(cycle) * 10007 + salt)
 
 
-def idle_sleeper_envelope(
-    u: float, life: float = _SLEEP_LIFE, fade: float = _SLEEP_FADE
-) -> float:
-    """Smooth in and out. Zero outside the life window (no snaps)."""
-    if u < 0.0 or u > life:
-        return 0.0
-    fade = max(1e-6, float(fade))
-    return _smoothstep(u / fade) * _smoothstep((life - u) / fade)
+def idle_sleeper_envelope(u: float, life: float = _SLEEP_LIFE, fade: float = _SLEEP_FADE) -> float:
+    """Gentle breath. Never hits zero, so solids do not pop off and back on."""
+    del life, fade
+    return 0.72 + 0.28 * (0.5 + 0.5 * math.sin(float(u) * TWO_PI))
 
 
-def _sleep_xy(slot: int, cycle: int) -> tuple[float, float]:
-    """Stable place for this appearance. Lanes keep the three slots apart."""
-    lane = (slot % 3) / 3.0
-    x = 0.18 + 0.64 * _sleep_unit(slot, cycle, 41)
-    y = 0.16 + 0.22 * lane + 0.38 * _sleep_unit(slot, cycle, 43)
+def _sleep_xy(slot: int, st: float) -> tuple[float, float]:
+    """Home in a screen third, plus a slow orbit. math.sin so it does not stair-step."""
+    hx, hy = _SLEEP_HOMES[slot % len(_SLEEP_HOMES)]
+    x = hx + 0.06 * math.sin(st * 0.037 + slot * 2.15)
+    y = hy + 0.07 * math.sin(st * 0.029 + slot * 1.37)
     return x, y
 
 
@@ -1492,35 +1489,16 @@ def idle_sleeper_items(scene: dict[str, Any], width: int, height: int) -> list[d
     w = max(1, int(width))
     h = max(1, int(height))
     out: list[dict[str, Any]] = []
-    placed: list[tuple[float, float]] = []
     n_kinds = len(_SLEEP_KINDS)
-    for slot, (period, phase) in enumerate(_SLEEP_SLOTS):
-        period = max(1.0, float(period))
-        clock = st / period + phase
-        u = clock % 1.0
-        amt = idle_sleeper_envelope(u)
-        if amt <= 0.02:
-            continue
-        cycle = int(math.floor(clock - u + 1e-9))
-        if _sleep_unit(slot, cycle, 13) < 0.18:
-            continue
-        kind = _SLEEP_KINDS[int(_sleep_unit(slot, cycle, 17) * n_kinds) % n_kinds]
-        x, y = _sleep_xy(slot, cycle)
-        crowded = False
-        for ox, oy in placed:
-            if (x - ox) * (x - ox) + (y - oy) * (y - oy) < 0.045:
-                crowded = True
-                break
-        if crowded:
-            continue
-        x += 0.012 * lsin(st * 0.07 + slot * 1.3)
-        y += 0.008 * lsin(st * 0.055 + slot * 1.9)
-        if x < 0.10 or x > 0.90 or y < 0.10 or y > 0.90:
-            continue
-        placed.append((x, y))
-        scale = 0.78 + 0.34 * _sleep_unit(slot, cycle, 29)
-        yaw0 = TWO_PI * _sleep_unit(slot, cycle, 31)
-        pitch0 = ( _sleep_unit(slot, cycle, 37) - 0.5 ) * 0.55
+    short = min(w, h)
+    for slot in range(len(_SLEEP_HOMES)):
+        epoch = int(st / 160.0)
+        kind = _SLEEP_KINDS[(slot + epoch) % n_kinds]
+        x, y = _sleep_xy(slot, st)
+        scale = 0.92 + 0.16 * _sleep_unit(slot, epoch, 29)
+        yaw0 = TWO_PI * _sleep_unit(slot, epoch, 31)
+        pitch0 = (_sleep_unit(slot, epoch, 37) - 0.5) * 0.40
+        span = max(72, min(240, int(round(short * 0.30 * scale))))
         out.append(
             {
                 "kind": kind,
@@ -1528,12 +1506,12 @@ def idle_sleeper_items(scene: dict[str, Any], width: int, height: int) -> list[d
                 "fy": y,
                 "x": x * (w - 1),
                 "y": y * (h - 1),
-                "size": max(14, int(round(h * 0.13 * scale))),
-                "amt": amt,
-                "yaw": yaw0 + st * (0.11 + 0.05 * _sleep_unit(slot, cycle, 47)),
-                "pitch": pitch0 + 0.18 * lsin(st * 0.08 + slot),
-                "tint": _sleep_tint_for(slot, cycle, idle_hue),
-                "seed": slot * 10007 + cycle,
+                "size": span,
+                "amt": idle_sleeper_envelope(st * 0.11 + slot * 0.37),
+                "yaw": yaw0 + st * 0.055,
+                "pitch": pitch0 + 0.10 * math.sin(st * 0.048 + slot),
+                "tint": _sleep_tint_for(slot, epoch, idle_hue),
+                "seed": slot,
             }
         )
     return out
@@ -1768,7 +1746,6 @@ def _sleep_rt_rgb_numpy(
     rgb[..., 1] = tg * lift + 220.0 * spec * amt * fog
     rgb[..., 2] = tb * lift + 255.0 * spec * amt * fog
     glow = np.exp(-dmin * dmin * np.float32(70.0)) * np.float32(amt) * np.float32(0.20)
-    miss = ~live
     rgb[..., 0] = np.where(live, rgb[..., 0], tr * glow)
     rgb[..., 1] = np.where(live, rgb[..., 1], tg * glow)
     rgb[..., 2] = np.where(live, rgb[..., 2], tb * glow)
@@ -1780,8 +1757,7 @@ def _draw_sleeping_solid(pygame_mod: Any, screen: Any, item: dict[str, Any]) -> 
     amt = float(item.get("amt") or 0.0)
     if amt <= 0.02:
         return
-    size = max(12, int(item.get("size") or 16))
-    span = max(18, min(56, size * 2))
+    span = max(48, min(240, int(item.get("size") or 72)))
     kind = str(item.get("kind") or "sphere")
     tint = item.get("tint") or _SLEEP_TINT
     rgb = _sleep_rt_rgb(
@@ -2692,8 +2668,8 @@ def run_visible_field(args: argparse.Namespace, bus: StateBus, follow: SceneFoll
             ok = bool(ok or (data and data.get("busy")))
             scene = follow.tick(scene_from_state(data, ok), dt, now)
             field = draw_field(max(64, args.width), max(36, args.height), scene)
-            draw_sleepers(pygame, field, scene)
             screen.blit(pygame.transform.smoothscale(field, screen.get_size()), (0, 0))
+            draw_sleepers(pygame, screen, scene)
             draw_neurons(pygame, screen, scene)
             draw_cycle_fx(pygame, screen, scene)
             height = screen.get_size()[1]
