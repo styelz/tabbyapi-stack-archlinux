@@ -418,7 +418,7 @@ async def saver_state() -> dict[str, Any]:
     from images.jobs import active_mcp_image_job, loaded_tabby_name
     from select_model import last_profile
     from ui.flight import iter_live_flights
-    from ui.manager import cached_nvidia_stats, ensure_gpu_cache
+    from ui.manager import _host_live, cached_nvidia_stats, ensure_gpu_cache
     from ui.occupancy import snapshot as stack_queue_snapshot
 
     mode = read_mode()
@@ -487,5 +487,6 @@ async def saver_state() -> dict[str, Any]:
             "elapsed_s": elapsed_s,
             "typical_s": typical_s,
             "gpu": cached_nvidia_stats(),
+            "host": _host_live(),
         }
     )

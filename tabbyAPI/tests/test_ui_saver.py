@@ -133,6 +133,8 @@ class SaverSanitizeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["gpu"]["vram_pct"], 58)
         self.assertEqual(payload["gpu"]["temperature_c"], 64)
         self.assertEqual(payload["host"]["cpu_pct"], 12.3)
+        self.assertNotIn("ram_pct", payload["host"])
+        self.assertNotIn("load1", payload["host"])
         self.assertEqual(payload["tokens"], 12)
         self.assertEqual(payload["stage"], "decode")
         self.assertEqual(payload["waiters"], 2)
@@ -165,6 +167,7 @@ class SaverSanitizeTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(payload["recovering"])
         self.assertIsNone(payload["kind"])
         self.assertIsNone(payload["gpu"]["vram_pct"])
+        self.assertIsNone(payload["host"]["cpu_pct"])
         self.assertEqual(payload["stage"], "idle")
         self.assertEqual(payload["tokens"], 0)
         self.assertEqual(payload["waiters"], 0)
@@ -240,6 +243,7 @@ class SaverSanitizeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["profile"], "flux")
         self.assertEqual(payload["typical_s"], 37)
         self.assertIsNone(payload["gpu"]["utilization_pct"])
+        self.assertIn("host", payload)
         self.assertNotIn("bob", repr(payload))
 
     async def test_saver_state_busy_from_generate_post_before_occupancy(self):
@@ -263,6 +267,32 @@ class SaverSanitizeTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(payload["busy"])
         self.assertEqual(payload["stage"], "prefill")
         self.assertEqual(payload["kind"], "chat")
+
+    async def test_saver_state_includes_cpu_pct(self):
+        snap = mock.Mock(return_value={"busy": False, "kind": None, "live": False})
+        with (
+            mock.patch("ui.occupancy.snapshot", snap),
+            mock.patch("ui.manager.cached_nvidia_stats", return_value={}),
+            mock.patch("ui.manager.ensure_gpu_cache"),
+            mock.patch(
+                "ui.manager._host_live",
+                return_value={"cpu_pct": 22.5, "ram_pct": 40.0, "load1": 1.1},
+            ),
+            mock.patch("common.live_decode.snapshot", return_value={"tokens": 0, "stage": "idle"}),
+            mock.patch("images.jobs.active_mcp_image_job", return_value=None),
+            mock.patch("ui.flight.iter_live_flights", return_value=[]),
+            mock.patch("common.phrase_switch.switch_lock_held", return_value=False),
+            mock.patch("common.phrase_switch.switch_lock_name", return_value=""),
+            mock.patch("common.gpu_mode.read_mode", return_value={"mode": "llm"}),
+            mock.patch("images.jobs.loaded_tabby_name", return_value="Qwen"),
+            mock.patch("common.phrase_switch.profile_alias_for_model", return_value="qwen"),
+            mock.patch("common.phrase_switch.last_llm_profile_name", return_value="qwen"),
+            mock.patch("select_model.last_profile", return_value="qwen"),
+        ):
+            payload = await saver.saver_state()
+        self.assertEqual(payload["host"]["cpu_pct"], 22.5)
+        self.assertNotIn("ram_pct", payload["host"])
+        self.assertNotIn("load1", payload["host"])
 
 
 class SaverKioskSceneTests(unittest.TestCase):
@@ -296,6 +326,7 @@ class SaverKioskSceneTests(unittest.TestCase):
         self.assertEqual(cap("thinking"), "Thinking")
         self.assertEqual(cap("settling"), "Settling")
         self.assertEqual(cap("loading llm"), "Loading LLM")
+        self.assertEqual(cap("cpu"), "CPU")
         self.assertEqual(cap("restarting api"), "Restarting API")
         self.assertEqual(cap("resetting generator"), "Resetting Generator")
 
@@ -521,6 +552,120 @@ class SaverKioskSceneTests(unittest.TestCase):
         self.assertEqual(
             _last_xy(ha.blits, "GPU   3%   VRAM   5%    41°C"),
             _last_xy(hb.blits, "GPU  99%   VRAM 100%    99°C"),
+        )
+
+    def test_hud_shows_cpu_usage(self):
+        idle = self.kiosk.scene_from_state(
+            {
+                "gpu_mode": "llm",
+                "profile": "qwen",
+                "busy": False,
+                "gpu": {"utilization_pct": 3, "vram_pct": 70, "temperature_c": 41},
+                "host": {"cpu_pct": 28.4},
+            },
+            True,
+        )
+        idle["clock"] = "14:20:07"
+        idle["date"] = "Sat 5 Sep"
+        idle_screen = _FakeScreen()
+        self.kiosk.draw_hud(idle_screen, _FakeFont(), _FakeFont(), idle)
+        idle_text = " ".join(str(item) for item in idle_screen.blits)
+        self.assertIn("CPU  28%   VRAM  70%    41°C", idle_text)
+        hot = self.kiosk.scene_from_state(
+            {
+                "gpu_mode": "llm",
+                "kind": "chat",
+                "busy": True,
+                "profile": "qwen",
+                "gpu": {"utilization_pct": 62, "vram_pct": 70, "temperature_c": 61},
+                "host": {"cpu_pct": 28.4},
+            },
+            True,
+        )
+        hot_screen = _FakeScreen()
+        self.kiosk.draw_hud(hot_screen, _FakeFont(), _FakeFont(), hot)
+        hot_text = " ".join(str(item) for item in hot_screen.blits)
+        self.assertIn("CPU  28%   GPU  62%   VRAM  70%    61°C", hot_text)
+        self.assertTrue(hot["has_cpu"])
+        self.assertAlmostEqual(hot["cpu"], 28.4)
+        cpu_only = self.kiosk.scene_from_state(
+            {
+                "gpu_mode": "llm",
+                "kind": "chat",
+                "busy": True,
+                "profile": "qwen",
+                "host": {"cpu_pct": 7},
+            },
+            True,
+        )
+        cpu_screen = _FakeScreen()
+        self.kiosk.draw_hud(cpu_screen, _FakeFont(), _FakeFont(), cpu_only)
+        cpu_text = " ".join(str(item) for item in cpu_screen.blits)
+        self.assertIn("CPU   7%", cpu_text)
+        self.assertNotIn("GPU 0%", cpu_text)
+        self.assertNotIn("VRAM 0%", cpu_text)
+
+    def test_hud_cpu_keeps_anchor(self):
+        font = _PropFont()
+        idle_narrow = self.kiosk.scene_from_state(
+            {
+                "gpu_mode": "llm",
+                "profile": "qwen",
+                "busy": False,
+                "gpu": {"utilization_pct": 3, "vram_pct": 5, "temperature_c": 41},
+                "host": {"cpu_pct": 3},
+            },
+            True,
+        )
+        idle_wide = self.kiosk.scene_from_state(
+            {
+                "gpu_mode": "llm",
+                "profile": "qwen",
+                "busy": False,
+                "gpu": {"utilization_pct": 99, "vram_pct": 100, "temperature_c": 99},
+                "host": {"cpu_pct": 99},
+            },
+            True,
+        )
+        idle_narrow["clock"] = "11:11:11"
+        idle_wide["clock"] = "08:08:08"
+        a = _FakeScreen()
+        b = _FakeScreen()
+        self.kiosk.draw_hud(a, font, font, idle_narrow)
+        self.kiosk.draw_hud(b, font, font, idle_wide)
+        self.assertEqual(
+            _last_xy(a.blits, "CPU   3%   VRAM   5%    41°C"),
+            _last_xy(b.blits, "CPU  99%   VRAM 100%    99°C"),
+        )
+        hot_n = self.kiosk.scene_from_state(
+            {
+                "gpu_mode": "llm",
+                "kind": "chat",
+                "busy": True,
+                "profile": "qwen",
+                "gpu": {"utilization_pct": 3, "vram_pct": 5, "temperature_c": 41},
+                "host": {"cpu_pct": 3},
+            },
+            True,
+        )
+        hot_w = self.kiosk.scene_from_state(
+            {
+                "gpu_mode": "llm",
+                "kind": "chat",
+                "busy": True,
+                "profile": "qwen",
+                "gpu": {"utilization_pct": 99, "vram_pct": 100, "temperature_c": 99},
+                "host": {"cpu_pct": 99},
+            },
+            True,
+        )
+        ha = _FakeScreen()
+        hb = _FakeScreen()
+        self.kiosk.draw_hud(ha, font, font, hot_n)
+        self.kiosk.draw_hud(hb, font, font, hot_w)
+        self.assertEqual(
+            _last_xy(ha.blits, "CPU   3%   GPU   3%   VRAM   5%    41°C"),
+            _last_xy(hb.blits, "CPU  99%   GPU  99%   VRAM 100%    99°C"),
         )
 
     def test_idle_hud_alpha_holds_then_fades(self):
@@ -1164,6 +1309,7 @@ class SaverKioskSceneTests(unittest.TestCase):
         text = " ".join(str(item) for item in screen.blits)
         self.assertNotIn("GPU 0%", text)
         self.assertNotIn("VRAM 0%", text)
+        self.assertNotIn("CPU 0%", text)
         self.assertIn("Thinking", text)
 
     def test_hud_type_is_large_with_a_halo(self):

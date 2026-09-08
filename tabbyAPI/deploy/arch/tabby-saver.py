@@ -625,6 +625,7 @@ class SceneFollow:
         self.util = 0.0
         self.vram = 0.0
         self.temp = 40.0
+        self.cpu = 0.0
         self.st = 0.0
         # Wall-clock seed so a restart is not always the same blue/pink family.
         self.hue = (time.time() * 0.007) % 1.0
@@ -649,6 +650,7 @@ class SceneFollow:
         self._last_chat = 0.0
         self.stage = "idle"
         self.has_gpu = False
+        self.has_cpu = False
         self.image_n = 0.0
         self.image_of = 0.0
         self.image_file = ""
@@ -740,6 +742,7 @@ class SceneFollow:
         self.temp = _exp_approach(
             self.temp, float(target["temp"]), dt, 0.55 if (want_live or held) else 1.6
         )
+        self.cpu = _exp_approach(self.cpu, float(target.get("cpu") or 0.0), dt, 1.6)
         self.st += self.speed * dt
         dest = str(target.get("palette") or "idle")
         if dest not in self.weights:
@@ -779,6 +782,7 @@ class SceneFollow:
         self.hue = (self.hue + _chat_hue_rate(self.speed, self.token_rate, chatty) * dt) % 1.0
         self.stage = stage_now
         self.has_gpu = bool(target.get("has_gpu"))
+        self.has_cpu = bool(target.get("has_cpu"))
         self.image_n = _exp_approach(
             self.image_n, float(target.get("image_n") or 0.0), dt, 0.4
         )
@@ -881,6 +885,7 @@ class SceneFollow:
             "util": self.util,
             "vram": self.vram,
             "temp": self.temp,
+            "cpu": self.cpu,
             "connected": self.connected,
             "overlay": self.overlay,
             "cycle": self.cycle,
@@ -891,6 +896,7 @@ class SceneFollow:
             "step_s": step_s,
             "stage": self.stage,
             "has_gpu": self.has_gpu,
+            "has_cpu": self.has_cpu,
             "image_n": self.image_n,
             "image_of": self.image_of,
             "image_file": self.image_file,
@@ -919,13 +925,17 @@ def scene_from_state(
 ) -> dict[str, Any]:
     data = data or {}
     gpu = data.get("gpu") if isinstance(data.get("gpu"), dict) else {}
+    host = data.get("host") if isinstance(data.get("host"), dict) else {}
     util_raw = gpu.get("utilization_pct")
     vram_raw = gpu.get("vram_pct")
     temp_raw = gpu.get("temperature_c")
+    cpu_raw = host.get("cpu_pct")
     has_gpu = any(value is not None and value != "" for value in (util_raw, vram_raw, temp_raw))
+    has_cpu = cpu_raw is not None and cpu_raw != ""
     util = _num(util_raw) if util_raw is not None else 0.0
     vram = _num(vram_raw) if vram_raw is not None else 0.0
     temp = _num(temp_raw, 40.0) if temp_raw is not None else 40.0
+    cpu = _num(cpu_raw) if has_cpu else 0.0
     kind = str(data.get("kind") or "")
     mode = str(data.get("gpu_mode") or "").strip() or "—"
     profile = profile_from_state(data) or str(data.get("profile") or "").strip() or "—"
@@ -1040,8 +1050,10 @@ def scene_from_state(
         "util": util,
         "vram": vram,
         "temp": temp,
+        "cpu": cpu,
         "connected": connected,
         "has_gpu": has_gpu,
+        "has_cpu": has_cpu,
         "tokens": tokens,
         "run_tokens": max(
             _num(data.get("run_tokens")) if data.get("run_tokens") is not None else tokens,
@@ -1988,8 +2000,60 @@ def draw_field(
 
 
 HUD_CLOCK_SLOT = "00:00:00"
-HUD_WHISPER_SLOT = "VRAM 100%   100°C"
-HUD_STATS_SLOT = "GPU 100%   VRAM 100%   100°C"
+HUD_CPU_SLOT = "CPU 100%"
+HUD_WHISPER_GPU_SLOT = "VRAM 100%   100°C"
+HUD_WHISPER_SLOT = "CPU 100%   VRAM 100%   100°C"
+HUD_STATS_GPU_SLOT = "GPU 100%   VRAM 100%   100°C"
+HUD_STATS_SLOT = "CPU 100%   GPU 100%   VRAM 100%   100°C"
+
+
+def _hud_pct(value: Any) -> str:
+    try:
+        number = int(round(float(value or 0.0)))
+    except (TypeError, ValueError):
+        number = 0
+    return f"{number:3d}%"
+
+
+def hud_whisper_text(scene: dict[str, Any]) -> str:
+    parts: list[str] = []
+    if scene.get("has_cpu"):
+        parts.append(f"CPU {_hud_pct(scene.get('cpu'))}")
+    if scene.get("has_gpu"):
+        parts.append(f"VRAM {_hud_pct(scene.get('vram'))}")
+        try:
+            temp = int(round(float(scene.get("temp") or 0.0)))
+        except (TypeError, ValueError):
+            temp = 0
+        parts.append(f"{temp:3d}°C")
+    return "   ".join(parts)
+
+
+def hud_stats_text(scene: dict[str, Any]) -> str:
+    parts: list[str] = []
+    if scene.get("has_cpu"):
+        parts.append(f"CPU {_hud_pct(scene.get('cpu'))}")
+    if scene.get("has_gpu"):
+        parts.append(f"GPU {_hud_pct(scene.get('util'))}")
+        parts.append(f"VRAM {_hud_pct(scene.get('vram'))}")
+        try:
+            temp = int(round(float(scene.get("temp") or 0.0)))
+        except (TypeError, ValueError):
+            temp = 0
+        parts.append(f"{temp:3d}°C")
+    return "   ".join(parts)
+
+
+def hud_metric_slot(scene: dict[str, Any], *, idle: bool) -> str:
+    has_cpu = bool(scene.get("has_cpu"))
+    has_gpu = bool(scene.get("has_gpu"))
+    if has_cpu and has_gpu:
+        return HUD_WHISPER_SLOT if idle else HUD_STATS_SLOT
+    if has_gpu:
+        return HUD_WHISPER_GPU_SLOT if idle else HUD_STATS_GPU_SLOT
+    if has_cpu:
+        return HUD_CPU_SLOT
+    return ""
 
 
 def hud_font_sizes(height: int) -> tuple[int, int, int]:
@@ -2011,10 +2075,11 @@ def hud_anchor_right(face: Any, template: str, right: int) -> int:
 
 
 def hud_caption(text: str) -> str:
-    """Title-case HUD words. Keep times and API/LLM/GPU as acronyms."""
+    """Title-case HUD words. Keep times and API/LLM/CPU/GPU as acronyms."""
     special = {
         "api": "API",
         "llm": "LLM",
+        "cpu": "CPU",
         "gpu": "GPU",
         "vram": "VRAM",
         "comfy": "Comfy",
@@ -2198,11 +2263,7 @@ def draw_hud(
         if hud_alpha <= HUD_IDLE_HIDE_ALPHA:
             return
         fade_amt = hud_alpha
-        whisper = ""
-        if scene.get("has_gpu"):
-            vram = int(round(scene["vram"]))
-            temp = int(round(scene["temp"]))
-            whisper = f"VRAM {vram:3d}%   {temp:3d}°C"
+        whisper = hud_whisper_text(scene)
         fact = str(scene.get("idle_fact") or "").strip()
         if not fact:
             fact = pick_idle_fact(idle_fact_lines(load_idle_times(), float(scene.get("idle_s") or 0.0)), time.time())
@@ -2213,12 +2274,13 @@ def draw_hud(
         blit(clock, (cx, cy), TEXT)
         if date:
             blit(date, (cx, cy + main_h + gap), MUTED, use_small=True)
-        whisper_w = small.size(HUD_WHISPER_SLOT)[0] if whisper else 0
+        whisper_slot = hud_metric_slot(scene, idle=True)
+        whisper_w = small.size(whisper_slot)[0] if whisper else 0
         fact_max = max(80, w - pad * 2 - (whisper_w + pad if whisper else 0))
         if fact:
             blit(_hud_fit(small, hud_caption(fact), fact_max), (pad, h - pad - small_h), MUTED, use_small=True)
         if whisper:
-            blit(whisper, (hud_anchor_right(small, HUD_WHISPER_SLOT, w - pad), h - pad - small_h), MUTED, use_small=True)
+            blit(whisper, (hud_anchor_right(small, whisper_slot, w - pad), h - pad - small_h), MUTED, use_small=True)
         return
 
     phase = str(scene["phase"])
@@ -2233,16 +2295,16 @@ def draw_hud(
     if typical_n >= 1.0 and str(scene.get("phase") or "") not in _CHAT_RUN_PHASES:
         phase = f"{phase}   ~{_fmt_runtime(typical_n)} typical"
     note = str(scene.get("note") or "").strip()
-    if scene["connected"] and scene.get("has_gpu") and not down:
-        util = int(round(scene["util"]))
-        vram = int(round(scene["vram"]))
-        temp = int(round(scene["temp"]))
-        stats = f"GPU {util:3d}%   VRAM {vram:3d}%   {temp:3d}°C"
+    if scene["connected"] and not down:
+        stats = hud_stats_text(scene)
+        stats_slot = hud_metric_slot(scene, idle=False)
     elif scene["connected"]:
         stats = ""
+        stats_slot = ""
     else:
         stats = "API Down"
-    max_left = max(80, w - pad - small.size(HUD_STATS_SLOT)[0] - pad) if stats else w - pad * 2
+        stats_slot = "API Down"
+    max_left = max(80, w - pad - small.size(stats_slot)[0] - pad) if stats else w - pad * 2
 
     dest = str(scene.get("image_file") or "").strip()
     what = str(scene.get("image_what") or "").strip()
@@ -2310,7 +2372,7 @@ def draw_hud(
         y += (info_h if face is info_font else small_h) + gap
     blit(hud_caption(phase), (pad, h - pad - main_h), phase_color)
     if stats:
-        blit(stats, (hud_anchor_right(small, HUD_STATS_SLOT, w - pad), h - pad - small_h), MUTED, use_small=True)
+        blit(stats, (hud_anchor_right(small, stats_slot, w - pad), h - pad - small_h), MUTED, use_small=True)
 
 
 def tty_nr(name: str) -> int:
