@@ -2431,7 +2431,7 @@ valid_seconds() {
 
 apply_saver_defaults() {
   TABBY_SAVER_IDLE_S="${TABBY_SAVER_IDLE_S:-120}"
-  TABBY_SAVER_LOGOUT_IDLE_S="${TABBY_SAVER_LOGOUT_IDLE_S:-10}"
+  TABBY_SAVER_LOGOUT_IDLE_S="${TABBY_SAVER_LOGOUT_IDLE_S:-5}"
   TABBY_SAVER_HUD_S="${TABBY_SAVER_HUD_S:-300}"
   TABBY_SAVER_TTY="${TABBY_SAVER_TTY:-tty8}"
   TABBY_SAVER_USER_TTY="${TABBY_SAVER_USER_TTY:-tty1}"
@@ -2491,7 +2491,7 @@ TABBY_NETWORK_PORT=$TABBY_NETWORK_PORT
 TABBY_MODELS=$MODEL_SET
 TABBY_SAVER_ENABLED=${TABBY_SAVER_ENABLED:-1}
 TABBY_SAVER_IDLE_S=${TABBY_SAVER_IDLE_S:-120}
-TABBY_SAVER_LOGOUT_IDLE_S=${TABBY_SAVER_LOGOUT_IDLE_S:-10}
+TABBY_SAVER_LOGOUT_IDLE_S=${TABBY_SAVER_LOGOUT_IDLE_S:-5}
 TABBY_SAVER_HUD_S=${TABBY_SAVER_HUD_S:-300}
 TABBY_SAVER_TTY=${TABBY_SAVER_TTY:-tty8}
 TABBY_SAVER_USER_TTY=${TABBY_SAVER_USER_TTY:-tty1}
@@ -2974,12 +2974,12 @@ before the screensaver returns. Default 120 (2 minutes)." \
       fi
       v=$(ui_input "Screensaver" \
 "Seconds after logging out of the console (or idle at the login
-prompt) before the screensaver returns. Default 10." \
+prompt) before the screensaver returns. Default 5." \
 "${TABBY_SAVER_LOGOUT_IDLE_S}") || return 0
-      TABBY_SAVER_LOGOUT_IDLE_S="${v:-10}"
+      TABBY_SAVER_LOGOUT_IDLE_S="${v:-5}"
       if ! valid_seconds "$TABBY_SAVER_LOGOUT_IDLE_S"; then
         ui_msg "Invalid logout timeout" "Use a number of seconds from 0 to 86400." || true
-        TABBY_SAVER_LOGOUT_IDLE_S=10
+        TABBY_SAVER_LOGOUT_IDLE_S=5
       fi
       ;;
     *) TABBY_SAVER_ENABLED=0 ;;
@@ -4056,8 +4056,8 @@ TTY screensaver (spare VT, default tty8; on unless a desktop owns the GPU)
   Do not leave it enabled beside Omarchy. Settings / tsctl can disable it.
   tsctl screensaver enable
   tsctl screensaver timeout=120
-  tsctl screensaver logout-timeout=10
-  Idle 2 min while logged in; 10 s after logout (defaults). Boot starts it immediately.
+  tsctl screensaver logout-timeout=5
+  Idle 2 min while logged in; 5 s after logout (defaults). Boot starts it immediately.
   Probe in a window: /usr/bin/python $DEST_TABBY/deploy/arch/tabby-saver.py --window
   Stop: tsctl screensaver disable
   VTs: TABBY_SAVER_TTY=tty8 TABBY_SAVER_USER_TTY=tty1

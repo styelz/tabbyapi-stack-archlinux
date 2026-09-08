@@ -2546,8 +2546,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--logout-idle",
         type=float,
-        default=float(os.environ.get("TABBY_SAVER_LOGOUT_IDLE_S", "10")),
-        help="Seconds without input after logout / at the login prompt (default 10)",
+        default=float(os.environ.get("TABBY_SAVER_LOGOUT_IDLE_S", "5")),
+        help="Seconds without input after logout / at the login prompt (default 5)",
     )
     parser.add_argument(
         "--hud-idle",

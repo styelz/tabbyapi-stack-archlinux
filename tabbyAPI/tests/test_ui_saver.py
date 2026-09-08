@@ -1123,7 +1123,7 @@ class SaverKioskSceneTests(unittest.TestCase):
     def test_parse_args_idle_default_is_two_minutes(self):
         args = self.kiosk.parse_args([])
         self.assertEqual(args.idle, 120.0)
-        self.assertEqual(args.logout_idle, 10.0)
+        self.assertEqual(args.logout_idle, 5.0)
         self.assertEqual(args.hud_idle, 300.0)
         self.assertEqual(args.poll, 0.1)
         self.assertEqual(args.width, 480)

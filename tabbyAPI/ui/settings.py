@@ -112,7 +112,7 @@ SAVER_FIELDS = (
         "description": "Seconds after console logout, or idle at the login prompt, before the field returns. Boot and service start take the console immediately; this wait starts after you dismiss it.",
         "kind": "int",
         "optional": False,
-        "default": 10,
+        "default": 5,
     },
     {
         "name": "hud_timeout",
