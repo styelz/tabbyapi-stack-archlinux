@@ -29,7 +29,8 @@ Options
   --git         Git pull only. No pip, missing OS packages, or Code sandbox
                 Docker rebuild. A TTY asks before restarting tabbyapi
                 (default Skip unless API Python changed). Status Update git
-                does the same in the UI.
+                does the same in the UI. tabby-saver restarts on its own
+                when the screensaver files in that pull changed.
   --all         Pull, then apply code, Python deps, and reload tabbyapi.
   --comfy       Also git pull ComfyUI and ComfyUI-GGUF. Update all then
                 reinstalls their Python requirements; git-only only pulls.
@@ -406,12 +407,23 @@ reexec_args() {
   printf '%s\n' "${args[@]}"
 }
 
-# Python the running process already imported. Tests, docs, and install
-# wrappers do not need a bounce.
+# Python the running API process already imported. Tests, docs, install
+# wrappers, and the TTY kiosk (a separate systemd unit) do not need a bounce.
 path_needs_api_restart() {
   case "$1" in
     tabbyAPI/tests/*) return 1 ;;
+    tabbyAPI/deploy/arch/tabby-saver.py) return 1 ;;
     tabbyAPI/*.py) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Kiosk process is systemd tabby-saver, not tabbyapi. Restart it separately.
+path_needs_saver_restart() {
+  case "$1" in
+    tabbyAPI/deploy/arch/tabby-saver.py|tabbyAPI/deploy/arch/tabby-saver.service)
+      return 0
+      ;;
     *) return 1 ;;
   esac
 }
@@ -420,6 +432,7 @@ collect_restart_files() {
   local from="$1" to="$2"
   local f
   RESTART_FILES=()
+  SAVER_FILES=()
   [[ -n "$to" ]] || return 0
   if [[ -z "$from" || "$from" == none || "$from" == "$to" ]]; then
     return 0
@@ -429,7 +442,25 @@ collect_restart_files() {
     if path_needs_api_restart "$f"; then
       RESTART_FILES+=("$f")
     fi
+    if path_needs_saver_restart "$f"; then
+      SAVER_FILES+=("$f")
+    fi
   done < <(git -C "$DEST" diff --name-only "$from" "$to")
+}
+
+export_saver_changed() {
+  local new_head=""
+  new_head="$(git -C "$DEST" rev-parse HEAD 2>/dev/null || true)"
+  collect_restart_files "${TABBY_UPDATE_FROM_REV:-none}" "$new_head"
+  TABBY_SAVER_CHANGED=0
+  if ((${#SAVER_FILES[@]} > 0)); then
+    TABBY_SAVER_CHANGED=1
+  fi
+  export TABBY_UPDATE_FROM_REV TABBY_SAVER_CHANGED
+  if [[ "$TABBY_SAVER_CHANGED" == 1 ]]; then
+    printf '%s\n' "==> Screensaver files changed (${#SAVER_FILES[@]})" >> "$UPDATE_LOG"
+    printf '    %s\n' "${SAVER_FILES[@]}" >> "$UPDATE_LOG"
+  fi
 }
 
 format_restart_file_list() {
@@ -654,6 +685,64 @@ install_tabby_gpu() {
   rm -f "$tmp"
 }
 
+load_saver_unit_vars() {
+  local f="$DEST/tabbyAPI/deploy/arch/tabby.env"
+  local v=""
+  load_tabby_port
+  TABBY_SAVER_TTY="${TABBY_SAVER_TTY:-tty8}"
+  TABBY_SAVER_USER_TTY="${TABBY_SAVER_USER_TTY:-tty1}"
+  [[ -f "$f" ]] || return 0
+  v="$(sed -n 's/^TABBY_SAVER_TTY=//p' "$f" | tail -n 1 | tr -d "\"' ")"
+  [[ -n "$v" ]] && TABBY_SAVER_TTY="$v"
+  v="$(sed -n 's/^TABBY_SAVER_USER_TTY=//p' "$f" | tail -n 1 | tr -d "\"' ")"
+  [[ -n "$v" ]] && TABBY_SAVER_USER_TTY="$v"
+}
+
+# Git-only path does not run install.sh. Refresh the unit and bounce the
+# kiosk when origin changed it. --no-restart only skips tabbyapi.
+install_tabby_saver() {
+  local src="$DEST/tabbyAPI/deploy/arch/tabby-saver.service"
+  local tabby="$DEST/tabbyAPI"
+  local saver_tty user_tty tmp
+  [[ -f "$src" ]] || return 0
+  if [[ ! -f "$DEST/tabbyAPI/deploy/arch/tabby.env" ]]; then
+    printf '%s\n' "==> No tabby.env; skipping tabby-saver unit refresh" >> "$UPDATE_LOG"
+    return 0
+  fi
+  load_saver_unit_vars
+  saver_tty="${TABBY_SAVER_TTY:-tty8}"
+  user_tty="${TABBY_SAVER_USER_TTY:-tty1}"
+  if [[ "$saver_tty" == "$user_tty" ]]; then
+    saver_tty=tty8
+  fi
+  tmp="$(mktemp)"
+  sed \
+    -e "s|__TABBY_DIR__|$tabby|g" \
+    -e "s|__SAVER_USER__|$USER|g" \
+    -e "s|__SAVER_HOME__|$HOME|g" \
+    -e "s|__SAVER_TTY__|$saver_tty|g" \
+    -e "s|__USER_TTY__|$user_tty|g" \
+    -e "s|__SAVER_URL__|http://127.0.0.1:${TABBY_NETWORK_PORT}|g" \
+    "$src" > "$tmp"
+  if sudo -n install -m 644 "$tmp" /etc/systemd/system/tabby-saver.service 2>/dev/null; then
+    sudo -n systemctl daemon-reload 2>/dev/null || true
+    printf '%s\n' "==> Wrote /etc/systemd/system/tabby-saver.service" >> "$UPDATE_LOG"
+  else
+    printf '%s\n' "WARNING: could not write tabby-saver.service" >> "$UPDATE_LOG"
+  fi
+  rm -f "$tmp"
+  if ((${#SAVER_FILES[@]} == 0)); then
+    return 0
+  fi
+  if ! systemctl is-active --quiet tabby-saver 2>/dev/null; then
+    printf '%s\n' "==> tabby-saver is not active; not restarting" >> "$UPDATE_LOG"
+    return 0
+  fi
+  printf '%s\n' "==> Restarting tabby-saver" >> "$UPDATE_LOG"
+  sudo -n systemctl restart tabby-saver >>"$UPDATE_LOG" 2>&1 || \
+    printf '%s\n' "WARNING: could not restart tabby-saver" >> "$UPDATE_LOG"
+}
+
 git_should_auto_restart() {
   ((${#RESTART_FILES[@]} > 0)) && return 0
   api_unit_running || return 0
@@ -667,8 +756,9 @@ finish_git_update() {
   install_tsos_motd
   install_tsctl
   install_tabby_gpu
-  collect_restart_files "${TABBY_UPDATE_FROM_REV:-none}" "$new_head"
-  printf '%s\n' "==> from_rev=${TABBY_UPDATE_FROM_REV:-none} to_rev=$new_head restart_files=${#RESTART_FILES[@]} restart=${RESTART_API:-auto}" >> "$UPDATE_LOG"
+  export_saver_changed
+  install_tabby_saver
+  printf '%s\n' "==> from_rev=${TABBY_UPDATE_FROM_REV:-none} to_rev=$new_head restart_files=${#RESTART_FILES[@]} saver_files=${#SAVER_FILES[@]} restart=${RESTART_API:-auto}" >> "$UPDATE_LOG"
   write_restart_prompt_json
 
   local pulled=0
@@ -1037,6 +1127,7 @@ fi
 progress 100 "Code pulled; applying deps and restart"
 trap - EXIT
 progress_stop
+export_saver_changed
 export TABBY_UPDATE_LOG="$UPDATE_LOG"
 printf '%s\n' "==> handing off to install.sh --update" >> "$UPDATE_LOG"
 exec bash "$DEST/install.sh" --update

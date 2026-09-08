@@ -37,6 +37,13 @@ class UpdateShRestartOptionTests(unittest.TestCase):
         self.assertIn("needs_restart", src)
         self.assertIn("TABBY_PROMPT_NEEDS", src)
         self.assertIn("git_should_auto_restart && default_yes=1", src)
+        self.assertIn("path_needs_saver_restart", src)
+        self.assertIn("tabbyAPI/deploy/arch/tabby-saver.py) return 1 ;;", src)
+        self.assertIn("install_tabby_saver", src)
+        self.assertIn("export_saver_changed", src)
+        self.assertIn("TABBY_SAVER_CHANGED", src)
+        self.assertIn("systemctl restart tabby-saver", src)
+        self.assertIn("saver_files=", src)
         self.assertIn("fetch --progress origin", src)
         self.assertIn("log_run()", src)
         self.assertIn("tr '\\r' '\\n'", src)
@@ -142,11 +149,95 @@ class UpdateShFfPullTests(unittest.TestCase):
             self.assertTrue(data["needs_restart"])
             self.assertTrue(data["default_yes"])
 
+    def test_git_update_restarts_screensaver_without_api_python(self):
+        script = UPDATE_SH.read_text()
+        git_env = {
+            **os.environ,
+            "GIT_AUTHOR_NAME": "test",
+            "GIT_AUTHOR_EMAIL": "test@test",
+            "GIT_COMMITTER_NAME": "test",
+            "GIT_COMMITTER_EMAIL": "test@test",
+            "GIT_TERMINAL_PROMPT": "0",
+            "TABBY_INSTALL_VERBOSE": "1",
+        }
+
+        def git(cwd, *args):
+            subprocess.check_call(["git", "-c", "init.defaultBranch=main", *args], cwd=cwd, env=git_env)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            origin = tmp / "origin.git"
+            live = tmp / "live"
+            origin.mkdir()
+            git(origin, "init", "--bare")
+
+            seed = tmp / "seed"
+            seed.mkdir()
+            git(seed, "init")
+            git(seed, "config", "user.email", "test@test")
+            git(seed, "config", "user.name", "test")
+            (seed / "install.sh").write_text("#!/bin/bash\necho install\n")
+            (seed / "tabbyAPI" / "deploy" / "arch").mkdir(parents=True)
+            (seed / "tabbyAPI" / "main.py").write_text("print('ok')\n")
+            (seed / "tabbyAPI" / "deploy" / "arch" / "tabby-saver.py").write_text("print('saver-v1')\n")
+            (seed / "tabbyAPI" / "deploy" / "arch" / "tabby-saver.service").write_text("[Service]\nExecStart=/usr/bin/python\n")
+            (seed / "update.sh").write_text(script)
+            git(
+                seed,
+                "add",
+                "install.sh",
+                "update.sh",
+                "tabbyAPI/main.py",
+                "tabbyAPI/deploy/arch/tabby-saver.py",
+                "tabbyAPI/deploy/arch/tabby-saver.service",
+            )
+            git(seed, "commit", "-m", "seed")
+            git(seed, "remote", "add", "origin", str(origin))
+            git(seed, "push", "-u", "origin", "HEAD:main")
+
+            git(tmp, "clone", str(origin), str(live))
+            git(live, "config", "user.email", "test@test")
+            git(live, "config", "user.name", "test")
+            os.chmod(live / "update.sh", 0o755)
+
+            (seed / "tabbyAPI" / "deploy" / "arch" / "tabby-saver.py").write_text("print('saver-v2')\n")
+            git(seed, "add", "tabbyAPI/deploy/arch/tabby-saver.py")
+            git(seed, "commit", "-m", "screensaver newer")
+            git(seed, "push", "origin", "HEAD:main")
+
+            proc = subprocess.run(
+                ["bash", str(live / "update.sh"), "--git", "--no-restart"],
+                cwd=live,
+                env=git_env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=60,
+            )
+            log = (live / "tabby-update.log").read_text() if (live / "tabby-update.log").exists() else proc.stdout
+            self.assertEqual(proc.returncode, 0, log)
+            self.assertEqual(
+                (live / "tabbyAPI" / "deploy" / "arch" / "tabby-saver.py").read_text(),
+                "print('saver-v2')\n",
+            )
+            self.assertIn("Screensaver files changed", log)
+            self.assertIn("tabbyAPI/deploy/arch/tabby-saver.py", log)
+            self.assertIn("saver_files=1", log)
+            prompt = json.loads((live / "tabby-update-prompt.json").read_text())
+            self.assertNotIn("tabbyAPI/deploy/arch/tabby-saver.py", prompt.get("restart_files") or [])
+
 
 INSTALL_SH = Path(__file__).resolve().parents[2] / "install.sh"
 
 
 class InstallShHeadlessUpdateTests(unittest.TestCase):
+    def test_update_restarts_active_screensaver_when_files_changed(self):
+        src = INSTALL_SH.read_text()
+        self.assertIn("TABBY_SAVER_CHANGED", src)
+        self.assertIn("Restarting tabby-saver (screensaver files changed)", src)
+        self.assertIn("systemctl restart tabby-saver", src)
+        self.assertIn("systemctl start tabby-saver", src)
+
     def test_text_gauge_requires_writable_tty(self):
         src = INSTALL_SH.read_text()
         self.assertIn("tty_writable()", src)

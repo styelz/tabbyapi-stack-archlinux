@@ -3908,8 +3908,16 @@ if [[ -f "$SAVER_UNIT_SRC" ]]; then
         fi
       fi
       # ISO chroot has no target GPU/TTY; first real boot starts the enabled unit.
+      # start is a no-op if the kiosk is already running, so an update that
+      # changed tabby-saver.py / the unit must restart to load the new files.
       if [[ "${TABBY_ISO_CHROOT:-}" != 1 ]]; then
-        sudo -n systemctl start tabby-saver >>"$INSTALL_LOG" 2>&1 || true
+        if [[ "$UPDATE_MODE" -eq 1 && "${TABBY_SAVER_CHANGED:-1}" == 1 ]] && \
+           systemctl is-active --quiet tabby-saver 2>/dev/null; then
+          echo "Restarting tabby-saver (screensaver files changed)" >> "$INSTALL_LOG"
+          sudo -n systemctl restart tabby-saver >>"$INSTALL_LOG" 2>&1 || true
+        else
+          sudo -n systemctl start tabby-saver >>"$INSTALL_LOG" 2>&1 || true
+        fi
       fi
     fi
   else
