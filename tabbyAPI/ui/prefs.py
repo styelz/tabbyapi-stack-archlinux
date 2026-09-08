@@ -321,5 +321,8 @@ def inject_index_prefs(html: str, prefs: dict[str, Any]) -> str:
 
 
 def index_page_html(username: str) -> str:
+    from ui.epoch import inject_index_epoch
+
     html = (Path(__file__).resolve().parent / "static" / "index.html").read_text(encoding="utf-8")
-    return inject_index_prefs(html, load_prefs(username))
+    html = inject_index_prefs(html, load_prefs(username))
+    return inject_index_epoch(html)

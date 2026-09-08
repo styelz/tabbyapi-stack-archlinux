@@ -12,6 +12,7 @@
       const response = await fetch(`${base}/auth/login`, {
         method: "POST",
         credentials: "same-origin",
+        cache: "no-store",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify({
           username: document.getElementById("username").value,

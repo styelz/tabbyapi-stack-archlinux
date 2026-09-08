@@ -31,6 +31,7 @@
       return i >= 0 ? p.slice(0, i + m.length) : m;
     })();
     window.TABBY_UI_PREFS = null;
+    window.TABBY_UI_EPOCH = null;
     window.TABBY_REVEAL_UI = function () {
       document.documentElement.classList.remove("ui-loading");
     };
@@ -93,8 +94,31 @@
         document.documentElement.style.setProperty("--ui-zoom", String(n / 100));
       })();
     })();
+    // Leftover tabby-ui-* keys from an earlier machine at this LAN URL must not
+    // hydrate Chat/Code. Keep only the install epoch so a new ISO is noticed.
+    (function () {
+      var EPOCH_KEY = "tabby-ui-epoch";
+      var epoch = window.TABBY_UI_EPOCH || "";
+      function dropPrefixed(storage, keep) {
+        try {
+          var drop = [];
+          for (var i = 0; i < storage.length; i += 1) {
+            var key = storage.key(i);
+            if (key && key.indexOf("tabby-ui-") === 0 && key !== keep) drop.push(key);
+          }
+          drop.forEach(function (key) { storage.removeItem(key); });
+        } catch (err) { /* ignore */ }
+      }
+      var known = "";
+      try { known = localStorage.getItem(EPOCH_KEY) || ""; } catch (err) { /* ignore */ }
+      dropPrefixed(localStorage, epoch && known === epoch ? EPOCH_KEY : "");
+      dropPrefixed(sessionStorage, "");
+      if (epoch) {
+        try { localStorage.setItem(EPOCH_KEY, epoch); } catch (err) { /* ignore */ }
+      }
+    })();
     // Bust browser/proxy caches when chat status UI changes.
-    window.TABBY_UI_ASSET_V = "20260905-imagehold";
+    window.TABBY_UI_ASSET_V = "20260908-epoch";
     // document.write keeps CSS render-blocking. createElement("link") does not,
     // and unhiding on the first sheet's onload flashed the unstyled shell.
     document.write('<link rel="stylesheet" href="' + TABBY_UI_BASE + "/assets/styles.css?v=" + TABBY_UI_ASSET_V + '">');

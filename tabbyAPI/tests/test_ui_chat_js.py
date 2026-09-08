@@ -384,8 +384,10 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
         login_src = login.read_text(encoding="utf-8")
         app_src = app.read_text(encoding="utf-8")
         self.assertIn("window.TABBY_UI_PREFS = null;", html_src)
-        self.assertNotIn("localStorage", html_src)
-        self.assertNotIn("localStorage", login_src)
+        self.assertIn("window.TABBY_UI_EPOCH = null;", html_src)
+        self.assertIn("dropPrefixed(localStorage", html_src)
+        self.assertIn("dropPrefixed(localStorage)", login_src)
+        self.assertIn('cache: "no-store"', utils_src)
         self.assertNotIn("localStorage", utils_src)
         self.assertNotIn("sessionStorage", utils_src)
         self.assertNotIn("localStorage.setItem", self.src)
@@ -403,6 +405,10 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
         )[0]
         self.assertIn("wipeClientUiStorage()", load_store)
         self.assertNotIn("imported", load_store)
+        self.assertNotIn("persist()", load_store)
+        self.assertIn("persistReady = fetched", load_store)
+        self.assertIn("TABBY_UI_EPOCH", load_store)
+        self.assertIn('cache: "reload"', load_store)
         self.assertIn("TabbyUI.flushPrefs", app_src)
 
 

@@ -25,6 +25,18 @@ class ChatStoreNormalizeTests(unittest.TestCase):
         self.assertEqual(store["lastByMode"], {"chat": "c1", "code": "p1"})
         self.assertEqual([c["mode"] for c in store["chats"]], ["chat", "code"])
 
+    def test_ignores_install_epoch_on_payload(self):
+        store = normalize_store(
+            {
+                "epoch": "not-a-chat",
+                "chats": [
+                    {"id": "c1", "mode": "chat", "title": "Hi", "messages": []},
+                ],
+            }
+        )
+        self.assertNotIn("epoch", store)
+        self.assertEqual([chat["id"] for chat in store["chats"]], ["c1"])
+
     def test_keeps_chat_folder(self):
         store = normalize_store(
             {

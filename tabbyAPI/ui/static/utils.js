@@ -90,7 +90,11 @@
     const url = apiUrl(path);
     let response;
     try {
-      response = await fetch(url, Object.assign({ credentials: "same-origin" }, options, { headers }));
+      response = await fetch(url, Object.assign(
+        { credentials: "same-origin", cache: "no-store" },
+        options,
+        { headers }
+      ));
     } catch (err) {
       if (err && err.name === "AbortError") throw err;
       throw new Error("API unreachable — service may be restarting");

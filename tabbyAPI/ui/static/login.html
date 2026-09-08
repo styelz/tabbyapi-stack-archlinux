@@ -42,7 +42,21 @@
       root.style.setProperty("--boot-bg", "#0b0d12");
       root.style.background = "#0b0d12";
     })();
-    window.TABBY_UI_ASSET_V = "20260904-prefs";
+    (function () {
+      function dropPrefixed(storage) {
+        try {
+          var drop = [];
+          for (var i = 0; i < storage.length; i += 1) {
+            var key = storage.key(i);
+            if (key && key.indexOf("tabby-ui-") === 0) drop.push(key);
+          }
+          drop.forEach(function (key) { storage.removeItem(key); });
+        } catch (err) { /* ignore */ }
+      }
+      dropPrefixed(localStorage);
+      dropPrefixed(sessionStorage);
+    })();
+    window.TABBY_UI_ASSET_V = "20260908-epoch";
     document.write('<link rel="stylesheet" href="' + TABBY_UI_BASE + "/assets/styles.css?v=" + TABBY_UI_ASSET_V + '">');
   </script>
 </head>

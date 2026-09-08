@@ -10,7 +10,13 @@ from typing import Any
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    StreamingResponse,
+)
 from starlette.background import BackgroundTask
 from sse_starlette import EventSourceResponse
 
@@ -74,6 +80,10 @@ def _private_response(response: Response) -> Response:
     response.headers["Cache-Control"] = "no-store"
     response.headers["Vary"] = "Cookie"
     return response
+
+
+def _private_json(payload: Any) -> Response:
+    return _private_response(JSONResponse(content=payload))
 
 
 def _wants_ndjson(request: Request) -> bool:
@@ -466,7 +476,7 @@ async def ui_users_delete(name: str, _admin: str = Depends(require_ui_admin)):
 async def ui_prefs_get(_user: str = Depends(require_ui_user)):
     from ui.prefs import load_prefs
 
-    return load_prefs(_user)
+    return _private_json(load_prefs(_user))
 
 
 @router.put("/prefs", include_in_schema=False)
@@ -477,7 +487,7 @@ async def ui_prefs_put(request: Request, _user: str = Depends(require_ui_user)):
         body = await request.json()
     except Exception as exc:
         raise HTTPException(400, "JSON body required") from exc
-    return save_prefs(_user, body)
+    return _private_json(save_prefs(_user, body))
 
 
 @router.get("/backup", include_in_schema=False)
@@ -761,8 +771,11 @@ async def ui_stack_backup_restore(
 @router.get("/chats", include_in_schema=False)
 async def ui_chats_get(_user: str = Depends(require_ui_user)):
     from ui.chats import load_store
+    from ui.epoch import load_epoch
 
-    return load_store(_user)
+    payload = dict(load_store(_user))
+    payload["epoch"] = load_epoch()
+    return _private_json(payload)
 
 
 @router.put("/chats", include_in_schema=False)
@@ -773,7 +786,7 @@ async def ui_chats_put(request: Request, _user: str = Depends(require_ui_user)):
         body = await request.json()
     except Exception as exc:
         raise HTTPException(400, "JSON body required") from exc
-    return save_store(_user, body)
+    return _private_json(save_store(_user, body))
 
 
 @router.get("/workspaces", include_in_schema=False)

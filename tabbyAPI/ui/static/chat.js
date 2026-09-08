@@ -1296,7 +1296,7 @@ function mountChat(root) {
       const drop = [];
       for (let i = 0; i < storage.length; i += 1) {
         const key = storage.key(i);
-        if (key && key.startsWith("tabby-ui-")) drop.push(key);
+        if (key && key.startsWith("tabby-ui-") && key !== "tabby-ui-epoch") drop.push(key);
       }
       drop.forEach((key) => storage.removeItem(key));
     };
@@ -14680,21 +14680,32 @@ function mountChat(root) {
   document.addEventListener("keydown", onGlobalKey);
   document.addEventListener("keydown", onCodeShortcut, true);
   async function loadStore() {
+    wipeClientUiStorage();
     let incoming = null;
     let fetched = false;
+    const epoch = window.TABBY_UI_EPOCH || "";
+    const acceptServerStore = (raw) => {
+      if (!raw || typeof raw !== "object") return null;
+      // Cached GET /chats from the previous machine at this LAN URL.
+      if (epoch && raw.epoch !== epoch) return null;
+      return raw;
+    };
     try {
-      incoming = await TabbyUI.api("chats");
-      fetched = true;
+      incoming = acceptServerStore(await TabbyUI.api("chats"));
+      if (!incoming && epoch) {
+        incoming = acceptServerStore(await TabbyUI.api("chats", { cache: "reload" }));
+      }
+      fetched = Boolean(incoming);
     } catch {
       incoming = null;
     }
     // Never copy browser leftovers onto the server. A fresh ISO at the same
-    // LAN URL used to re-import the previous machine's chats from localStorage.
+    // LAN URL used to re-import the previous machine's chats from localStorage
+    // or a cached GET /chats, then write them back.
     store = normalizeStore(incoming);
     messages = cloneMessages(store.chats.find((chat) => chat.id === store.activeId).messages);
-    persistReady = true;
+    persistReady = fetched;
     wipeClientUiStorage();
-    if (fetched) persist();
     renderLog();
     paintToolbar();
     renderSidebar();

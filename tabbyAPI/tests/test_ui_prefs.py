@@ -115,7 +115,13 @@ class PrefsIndexInjectTests(unittest.TestCase):
         self.assertNotIn('file_response("index.html")', router)
         html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
         self.assertIn(prefs.PREFS_BOOT_MARK, html)
-        self.assertNotIn("localStorage", html)
+        self.assertIn("window.TABBY_UI_EPOCH = null;", html)
+        self.assertIn("dropPrefixed(localStorage", html)
+        self.assertIn("tabby-ui-epoch", html)
+        self.assertNotIn("localStorage.getItem(\"tabby-ui-chat", html)
+        router_src = router
+        self.assertIn("_private_json(load_prefs(_user))", router_src)
+        self.assertIn('payload["epoch"] = load_epoch()', router_src)
 
     def test_inject_replaces_mark(self):
         html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
@@ -126,14 +132,20 @@ class PrefsIndexInjectTests(unittest.TestCase):
         self.assertNotIn("</script>", prefs_js_literal({"theme": "ember"}))
 
     def test_index_page_html_uses_saved_prefs(self):
+        from ui import epoch
+
         tmp = tempfile.TemporaryDirectory()
         prefs.set_prefs_dir(Path(tmp.name))
+        epoch.set_epoch_path(Path(tmp.name) / "ui_epoch")
         try:
             prefs.save_prefs("alice", {"theme": "moss", "mode": "light"})
             html = prefs.index_page_html("alice")
             self.assertIn('"theme":"moss"', html)
             self.assertIn('"mode":"light"', html)
+            self.assertIn("window.TABBY_UI_EPOCH = ", html)
+            self.assertNotIn("window.TABBY_UI_EPOCH = null;", html)
         finally:
+            epoch.set_epoch_path(None)
             prefs.set_prefs_dir(None)
             tmp.cleanup()
 

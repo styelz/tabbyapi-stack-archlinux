@@ -155,6 +155,9 @@ class IsoBuildSmallTests(unittest.TestCase):
         src = install.read_text(encoding="utf-8")
         self.assertIn("clear_fresh_install_ui_state()", src)
         self.assertIn('rm -rf "$DEST_TABBY/pasted-images"', src)
+        epoch = ROOT / "tabbyAPI" / "ui" / "epoch.py"
+        self.assertTrue(epoch.is_file())
+        self.assertIn("pasted-images", epoch.read_text(encoding="utf-8"))
         self.assertIn('[[ "${UPDATE_MODE:-0}" -eq 0 ]] || return 0', src)
         self.assertIn("--exclude 'pasted-images/'", src)
 
