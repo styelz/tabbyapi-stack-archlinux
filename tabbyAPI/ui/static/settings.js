@@ -161,7 +161,7 @@ function mountSettings(root) {
   }
 
   function showSection(name) {
-    const sections = [...(payload && payload.tabby || []), payload && payload.screensaver, payload && payload.gpu, payload && payload.system].filter(Boolean);
+    const sections = [...(payload && payload.tabby || []), payload && payload.screensaver, payload && payload.updates, payload && payload.gpu, payload && payload.system].filter(Boolean);
     const names = sections.map((section) => section.name);
     const next = names.includes(name) ? name : names[0] || "";
     selectedSec = next;
@@ -179,7 +179,7 @@ function mountSettings(root) {
 
   function paint(data) {
     payload = data;
-    const sections = [...(data.tabby || []), data.screensaver, data.gpu, data.system].filter(Boolean);
+    const sections = [...(data.tabby || []), data.screensaver, data.updates, data.gpu, data.system].filter(Boolean);
     nav.innerHTML = sections
       .map((section) => (
         `<button type="button" class="settings-nav-item" data-sec="${TabbyUI.escapeHtml(section.name)}">${TabbyUI.escapeHtml(prettyLabel(section.label || section.name))}</button>`
@@ -264,12 +264,16 @@ function mountSettings(root) {
     (payload.screensaver && payload.screensaver.fields || []).forEach((field) => {
       specs[`screensaver.${field.name}`] = field;
     });
+    (payload.updates && payload.updates.fields || []).forEach((field) => {
+      specs[`updates.${field.name}`] = field;
+    });
     (payload.gpu && payload.gpu.fields || []).forEach((field) => {
       specs[`gpu.${field.name}`] = field;
     });
     const tabby = {};
     const system = {};
     const screensaver = {};
+    const updates = {};
     const gpu = {};
     body.querySelectorAll(".settings-field").forEach((wrap) => {
       const section = wrap.dataset.section;
@@ -285,13 +289,14 @@ function mountSettings(root) {
       if (value === undefined) return;
       if (section === "system") system[name] = value;
       else if (section === "screensaver") screensaver[name] = value;
+      else if (section === "updates") updates[name] = value;
       else if (section === "gpu") gpu[name] = value;
       else {
         if (!tabby[section]) tabby[section] = {};
         tabby[section][name] = value;
       }
     });
-    return { tabby, system, screensaver, gpu };
+    return { tabby, system, screensaver, updates, gpu };
   }
 
   async function load() {

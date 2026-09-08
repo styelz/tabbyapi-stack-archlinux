@@ -142,7 +142,7 @@ class IsoBuildSmallTests(unittest.TestCase):
         self.assertIn("nvidia-drm.modeset=1${SPLASH_CMDLINE}", chroot)
         self.assertNotIn("plymouth-quit.service", chroot)
 
-    def test_iso_and_install_drop_runtime_ui_data(self):
+    def test_installer_installs_plymouth_on_full_arch(self):
         overlay = INSTALLER.read_text(encoding="utf-8").split(
             "overlay_local_tabby_sources()"
         )[1].split("chown_target_user_tree()")[0]
@@ -157,3 +157,17 @@ class IsoBuildSmallTests(unittest.TestCase):
         self.assertIn('rm -rf "$DEST_TABBY/pasted-images"', src)
         self.assertIn('[[ "${UPDATE_MODE:-0}" -eq 0 ]] || return 0', src)
         self.assertIn("--exclude 'pasted-images/'", src)
+
+    def test_installer_uses_github_main_when_online(self):
+        src = INSTALLER.read_text(encoding="utf-8")
+        self.assertIn("pull_tabbyapi_stack_from_github()", src)
+        self.assertIn("should_overlay_local_tabby()", src)
+        self.assertIn("TABBY_STACK_FROM_GITHUB=1", src)
+        self.assertIn("hub_edit_updates()", src)
+        self.assertIn("TABBY_AUTO_UPDATE", src)
+        self.assertIn("--no-auto-update", src)
+        self.assertIn("origin/main", src)
+        install = (ROOT / "install.sh").read_text(encoding="utf-8")
+        self.assertIn("inst_edit_updates()", install)
+        self.assertIn("auto-update.sh", install)
+        self.assertIn("tabbyapi-auto-update.timer", install)

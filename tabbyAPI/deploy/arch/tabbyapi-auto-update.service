@@ -1,0 +1,16 @@
+[Unit]
+Description=tabbyapi-stack automatic update
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=__STACK_ROOT__
+EnvironmentFile=-__TABBY_DIR__/deploy/arch/tabby.env
+Environment=TABBY_INSTALL_ROOT=__STACK_ROOT__
+ExecStart=__TABBY_DIR__/deploy/arch/auto-update.sh
+Nice=10
+TimeoutStartSec=7200
+
+[Install]
+WantedBy=default.target

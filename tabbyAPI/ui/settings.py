@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, Optional, Union, get_args, get_origin
 
@@ -149,6 +150,50 @@ SAVER_ENV_NAMES = frozenset(item["env"] for item in SAVER_FIELDS) | {
     "TABBY_SAVER_USER_TTY",
     "TABBY_SAVER_URL",
 }
+
+UPDATE_FIELDS = (
+    {
+        "name": "enabled",
+        "env": "TABBY_AUTO_UPDATE",
+        "label": "Enable auto-update",
+        "description": "Pull GitHub origin/main on a timer. Skips while a chat or image job is running.",
+        "kind": "bool",
+        "optional": False,
+        "default": True,
+    },
+    {
+        "name": "interval_days",
+        "env": "TABBY_AUTO_UPDATE_DAYS",
+        "label": "Interval (days)",
+        "description": "Days between automatic updates. The timer checks daily. Default 7.",
+        "kind": "int",
+        "optional": False,
+        "default": 7,
+    },
+    {
+        "name": "full",
+        "env": "TABBY_AUTO_UPDATE_FULL",
+        "label": "Update all (git + deps)",
+        "description": "On = Update all (refresh Python deps and restart). Off = git pull only.",
+        "kind": "bool",
+        "optional": False,
+        "default": True,
+    },
+)
+
+UPDATE_ALIASES = {
+    "enabled": "enabled",
+    "enable": "enabled",
+    "interval": "interval_days",
+    "interval_days": "interval_days",
+    "days": "interval_days",
+    "interval-days": "interval_days",
+    "full": "full",
+    "update_all": "full",
+    "update-all": "full",
+}
+
+UPDATE_ENV_NAMES = frozenset(item["env"] for item in UPDATE_FIELDS)
 
 GPU_FIELDS = (
     {
@@ -415,7 +460,7 @@ def _parse_env(path: Path) -> dict[str, str]:
 
 
 def _system_schema(file_values: dict[str, str]) -> list[dict[str, Any]]:
-    known = {item["name"] for item in SYSTEM_FIELDS} | set(SAVER_ENV_NAMES) | set(GPU_ENV_NAMES)
+    known = {item["name"] for item in SYSTEM_FIELDS} | set(SAVER_ENV_NAMES) | set(GPU_ENV_NAMES) | set(UPDATE_ENV_NAMES)
     fields = []
     for item in SYSTEM_FIELDS:
         field = dict(item)
@@ -723,6 +768,181 @@ def _apply_screensaver(updates: dict[str, Any]) -> str:
     return apply_saver_unit(enabled=enabled)
 
 
+def normalize_update_key(name: str) -> str:
+    key = str(name or "").strip()
+    if key in UPDATE_ALIASES:
+        return UPDATE_ALIASES[key]
+    env_match = next((item["name"] for item in UPDATE_FIELDS if item["env"] == key), None)
+    if env_match:
+        return env_match
+    raise SettingsError(f"Unknown updates setting {name}")
+
+
+def _update_stamp_path() -> Path:
+    return TABBY_ROOT.parent / "tabby-auto-update.stamp"
+
+
+def _user_systemctl(args: list[str], *, what: str = "updates") -> str:
+    import subprocess
+
+    from common.gpu_mode import user_systemd_env
+
+    try:
+        result = subprocess.run(
+            ["systemctl", "--user", *args],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=user_systemd_env(),
+        )
+    except Exception as exc:
+        return f"tabby.env saved; run tsctl {what} from a terminal ({exc})"
+    if result.returncode != 0:
+        err = (result.stderr or result.stdout or "").strip() or f"exit {result.returncode}"
+        return f"tabby.env saved; systemd: {err}. Try: tsctl {what}"
+    return ""
+
+
+def _user_systemctl_is(action: str, unit: str) -> bool:
+    import subprocess
+
+    from common.gpu_mode import user_systemd_env
+
+    try:
+        result = subprocess.run(
+            ["systemctl", "--user", action, unit],
+            capture_output=True,
+            text=True,
+            timeout=8,
+            env=user_systemd_env(),
+        )
+    except Exception:
+        return False
+    return result.returncode == 0
+
+
+def apply_auto_update_unit(enabled: Optional[bool] = None) -> str:
+    """Write tabby.env, then enable or disable the user auto-update timer."""
+    import subprocess
+
+    from common.gpu_mode import user_systemd_env
+
+    script = TABBY_ROOT / "deploy" / "arch" / "auto-update.sh"
+    if script.is_file():
+        try:
+            env = user_systemd_env()
+            env["TABBY_INSTALL_ROOT"] = str(TABBY_ROOT.parent)
+            proc = subprocess.run(
+                ["bash", str(script), "--install-units"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                env=env,
+            )
+            if proc.returncode != 0:
+                err = (proc.stderr or proc.stdout or "").strip() or f"exit {proc.returncode}"
+                return f"tabby.env saved; auto-update timer: {err}"
+        except Exception as exc:
+            return f"tabby.env saved; run tsctl updates ({exc})"
+        return ""
+    if enabled is False:
+        return _user_systemctl(
+            ["disable", "--now", "tabbyapi-auto-update.timer"],
+            what="updates disable",
+        )
+    return _user_systemctl(
+        ["enable", "--now", "tabbyapi-auto-update.timer"],
+        what="updates enable",
+    )
+
+
+def _auto_update_payload(env_values: dict[str, str]) -> dict[str, Any]:
+    fields = []
+    for item in UPDATE_FIELDS:
+        field = dict(item)
+        raw = env_values.get(item["env"], "")
+        if item["kind"] == "bool":
+            if str(raw).strip() == "":
+                value: Any = bool(item.get("default"))
+            else:
+                value = _env_truthy(raw)
+        elif item["kind"] == "int":
+            if str(raw).strip() == "":
+                value = item.get("default")
+            else:
+                try:
+                    value = int(str(raw).strip())
+                except ValueError:
+                    value = item.get("default")
+        else:
+            value = raw
+        field["value"] = value
+        field["set"] = bool(str(raw).strip())
+        field["live"] = value
+        fields.append(field)
+    stamp = _update_stamp_path()
+    last = ""
+    if stamp.is_file():
+        try:
+            last = datetime.fromtimestamp(stamp.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            last = "unknown"
+    timer_on = _user_systemctl_is("is-enabled", "tabbyapi-auto-update.timer")
+    enabled = bool(fields[0]["value"]) if fields else True
+    days = fields[1]["value"] if len(fields) > 1 else 7
+    bits = [
+        f"timer {'on' if timer_on else 'off'}",
+        f"every {days} days" if enabled else "disabled",
+    ]
+    if last:
+        bits.append(f"last {last}")
+    return {
+        "name": "updates",
+        "label": "Updates",
+        "description": (
+            "Automatic GitHub updates. The timer checks daily and runs Update all "
+            f"when the interval has elapsed. {' · '.join(bits)}."
+        ),
+        "path": str(ENV_PATH),
+        "fields": fields,
+        "status": " · ".join(bits),
+        "timer_enabled": timer_on,
+        "last_run": last,
+    }
+
+
+def _apply_updates(updates: dict[str, Any]) -> str:
+    env_updates: dict[str, Optional[str]] = {}
+    enabled: Optional[bool] = None
+    for key, raw in updates.items():
+        name = normalize_update_key(str(key))
+        spec = next(item for item in UPDATE_FIELDS if item["name"] == name)
+        try:
+            coerced = _coerce_field(spec, raw)
+        except Exception as exc:
+            raise SettingsError(f"updates.{name}: {exc}") from exc
+        if spec["kind"] == "bool":
+            flag = bool(coerced)
+            env_updates[spec["env"]] = "1" if flag else "0"
+            if name == "enabled":
+                enabled = flag
+        elif name == "interval_days":
+            if coerced is None:
+                env_updates[spec["env"]] = str(spec.get("default", 7))
+            else:
+                days = int(coerced)
+                if days < 1 or days > 365:
+                    raise SettingsError("updates.interval_days must be 1-365")
+                env_updates[spec["env"]] = str(days)
+        elif coerced is None:
+            env_updates[spec["env"]] = str(spec.get("default", ""))
+        else:
+            env_updates[spec["env"]] = str(coerced)
+    if env_updates:
+        _write_env(env_updates)
+    return apply_auto_update_unit(enabled=enabled)
+
+
 def normalize_gpu_key(name: str) -> str:
     key = str(name or "").strip()
     if key in GPU_ALIASES:
@@ -897,9 +1117,10 @@ def load_settings() -> dict[str, Any]:
             "fields": system,
         },
         "screensaver": _saver_payload(env_values),
+        "updates": _auto_update_payload(env_values),
         "gpu": _gpu_payload(env_values),
         "paths": {"config": str(CONFIG_PATH), "env": str(ENV_PATH)},
-        "restart_hint": "Network, model, and tabby.env changes apply after Restart API. Screensaver enable/timeouts apply to tabby-saver. GPU fan/power apply to tabby-gpu immediately.",
+        "restart_hint": "Network, model, and tabby.env changes apply after Restart API. Screensaver enable/timeouts apply to tabby-saver. GPU fan/power apply to tabby-gpu immediately. Auto-update enable/interval apply to the user timer.",
     }
 
 
@@ -907,6 +1128,7 @@ def save_settings(body: dict[str, Any]) -> dict[str, Any]:
     tabby = body.get("tabby")
     system = body.get("system")
     screensaver = body.get("screensaver")
+    updates = body.get("updates")
     gpu = body.get("gpu")
     if tabby is not None:
         if not isinstance(tabby, dict):
@@ -915,24 +1137,29 @@ def save_settings(body: dict[str, Any]) -> dict[str, Any]:
     if system is not None:
         if not isinstance(system, dict):
             raise SettingsError("system must be an object")
-        updates: dict[str, Optional[str]] = {}
+        env_updates: dict[str, Optional[str]] = {}
         for key, raw in system.items():
             name = str(key).strip()
             if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name):
                 raise SettingsError(f"Invalid environment key {name}")
             if raw is None:
-                updates[name] = None
+                env_updates[name] = None
             elif name in SECRET_KEYS and str(raw) == "":
                 continue
             else:
-                updates[name] = str(raw)
-        if updates:
-            _write_env(updates)
+                env_updates[name] = str(raw)
+        if env_updates:
+            _write_env(env_updates)
     saver_warning = ""
     if screensaver is not None:
         if not isinstance(screensaver, dict):
             raise SettingsError("screensaver must be an object")
         saver_warning = _apply_screensaver(screensaver)
+    update_warning = ""
+    if updates is not None:
+        if not isinstance(updates, dict):
+            raise SettingsError("updates must be an object")
+        update_warning = _apply_updates(updates)
     gpu_warning = ""
     if gpu is not None:
         if not isinstance(gpu, dict):
@@ -944,7 +1171,9 @@ def save_settings(body: dict[str, Any]) -> dict[str, Any]:
     except Exception as exc:
         reload_warning = f"Saved, but live reload failed: {exc}"
     data = load_settings()
-    warning = " ".join(part for part in (reload_warning, saver_warning, gpu_warning) if part)
+    warning = " ".join(
+        part for part in (reload_warning, saver_warning, update_warning, gpu_warning) if part
+    )
     if warning:
         data = dict(data)
         data["reload_warning"] = warning

@@ -1,0 +1,11 @@
+[Unit]
+Description=Check for tabbyapi-stack updates
+
+[Timer]
+OnCalendar=*-*-* 04:17:00
+Persistent=true
+RandomizedDelaySec=1800
+AccuracySec=15min
+
+[Install]
+WantedBy=timers.target

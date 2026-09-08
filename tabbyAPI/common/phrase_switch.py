@@ -584,7 +584,7 @@ def help_text(api_base: Optional[str] = None, request=None) -> str:
         "- **Gallery:** generated output images only.",
         "- **Logs:** live and historical server output.",
         "- **Users:** administrator-only Tabby accounts (not Linux users).",
-        "- **Settings:** administrator-only Tabby `config.yml`, system `tabby.env`, screensaver, and GPU fan/power (`tsctl`).",
+        "- **Settings:** administrator-only Tabby `config.yml`, system `tabby.env`, screensaver, auto-update, and GPU fan/power (`tsctl`).",
         "- **Account menu:** Download backup / Restore backup for this account's chats, Code files, prefs, and gallery. Other accounts are not in the zip.",
         "",
         "## Connection",

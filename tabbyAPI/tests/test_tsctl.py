@@ -53,6 +53,10 @@ class TsctlTests(unittest.TestCase):
                 "name": "screensaver",
                 "fields": [{"name": "enabled", "kind": "bool", "value": False}],
             },
+            "updates": {
+                "name": "updates",
+                "fields": [{"name": "enabled", "kind": "bool", "value": True}],
+            },
             "system": {"name": "system", "fields": []},
         }
         with mock.patch.object(self.tsctl, "load_settings", return_value=payload):
@@ -60,19 +64,43 @@ class TsctlTests(unittest.TestCase):
                 self.tsctl.dispatch(["screensaver", "enable"])
         self.assertEqual(save.call_args[0][0]["screensaver"]["enabled"], True)
 
+    def test_dispatch_updates_interval(self):
+        payload = {
+            "ok": True,
+            "tabby": [],
+            "updates": {
+                "name": "updates",
+                "label": "Updates",
+                "fields": [
+                    {"name": "enabled", "kind": "bool", "value": True},
+                    {"name": "interval_days", "kind": "int", "value": 7},
+                    {"name": "full", "kind": "bool", "value": True},
+                ],
+            },
+            "system": {"name": "system", "fields": []},
+        }
+        with mock.patch.object(self.tsctl, "load_settings", return_value=payload):
+            with mock.patch.object(self.tsctl, "save_settings", return_value={"ok": True}) as save:
+                code = self.tsctl.dispatch(["updates", "interval_days=14"])
+        self.assertEqual(code, 0)
+        save.assert_called_once()
+        self.assertEqual(save.call_args[0][0]["updates"]["interval_days"], 14)
+
     def test_complete_lists_sections(self):
         payload = {
             "tabby": [{"name": "network", "fields": [{"name": "host"}]}],
             "screensaver": {"name": "screensaver", "fields": [{"name": "timeout"}]},
+            "updates": {"name": "updates", "fields": [{"name": "interval_days"}]},
             "system": {"name": "system", "fields": []},
         }
         with mock.patch.object(self.tsctl, "load_settings", return_value=payload):
             words = self.tsctl.complete_words(1, ["tsctl"])
         self.assertIn("screensaver", words)
+        self.assertIn("updates", words)
         self.assertIn("network", words)
         with mock.patch.object(self.tsctl, "load_settings", return_value=payload):
-            keys = self.tsctl.complete_words(2, ["tsctl", "screensaver"])
-        self.assertIn("timeout", keys)
+            keys = self.tsctl.complete_words(2, ["tsctl", "updates"])
+        self.assertIn("interval_days", keys)
         self.assertIn("enable", keys)
 
     def test_backup_dry_run_prints_plan_without_copying(self):

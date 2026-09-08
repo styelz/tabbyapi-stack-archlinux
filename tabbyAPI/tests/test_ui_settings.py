@@ -80,3 +80,43 @@ class SettingsJsTests(unittest.TestCase):
         self.assertIn("showError(data.reload_warning)", src)
         self.assertIn("data.screensaver", src)
         self.assertIn("section === \"screensaver\"", src)
+        self.assertIn("data.updates", src)
+        self.assertIn("section === \"updates\"", src)
+
+
+class AutoUpdateSettingsTests(unittest.TestCase):
+    def test_load_includes_updates_section(self):
+        data = settings.load_settings()
+        self.assertIn("updates", data)
+        names = [field["name"] for field in data["updates"]["fields"]]
+        self.assertEqual(names, ["enabled", "interval_days", "full"])
+
+    def test_updates_save_writes_env(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            env = Path(tmp) / "tabby.env"
+            env.write_text("COMFYUI_URL=http://127.0.0.1:8188\n", encoding="utf-8")
+            with mock.patch.object(settings, "ENV_PATH", env):
+                with mock.patch.object(settings, "apply_auto_update_unit", return_value="") as apply_unit:
+                    with mock.patch.object(settings, "_reload_live"):
+                        settings.save_settings(
+                            {
+                                "updates": {
+                                    "enabled": True,
+                                    "interval_days": 14,
+                                    "full": False,
+                                }
+                            }
+                        )
+            text = env.read_text(encoding="utf-8")
+            self.assertIn("TABBY_AUTO_UPDATE=1", text)
+            self.assertIn("TABBY_AUTO_UPDATE_DAYS=14", text)
+            self.assertIn("TABBY_AUTO_UPDATE_FULL=0", text)
+            apply_unit.assert_called()
+
+    def test_normalize_update_aliases(self):
+        self.assertEqual(settings.normalize_update_key("interval"), "interval_days")
+        self.assertEqual(settings.normalize_update_key("TABBY_AUTO_UPDATE_DAYS"), "interval_days")
+        self.assertEqual(settings.normalize_update_key("update-all"), "full")
+        self.assertEqual(settings.normalize_update_key("enable"), "enabled")

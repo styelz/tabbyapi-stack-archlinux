@@ -17,7 +17,7 @@ DRY_RUN=0
 ASSUME_YES=0
 DISABLE_LINGER=0
 
-UNITS=(tabbyapi comfyui tabby-install-resume)
+UNITS=(tabbyapi comfyui tabby-install-resume tabbyapi-auto-update)
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 RESUME_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/tabbyapi-stack"
 OLD_RESUME_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/tabby-stack"
@@ -350,6 +350,7 @@ fi
 echo
 echo "Stopping services"
 if need_cmd systemctl; then
+  run systemctl --user disable --now tabbyapi-auto-update.timer
   for u in "${UNITS[@]}"; do
     if ! systemctl --user cat "$u.service" >/dev/null 2>&1; then
       continue
@@ -410,6 +411,8 @@ for u in "${UNITS[@]}"; do
   remove_path "$UNIT_DIR/$u.service"
   remove_path "$UNIT_DIR/default.target.wants/$u.service"
 done
+remove_path "$UNIT_DIR/tabbyapi-auto-update.timer"
+remove_path "$UNIT_DIR/timers.target.wants/tabbyapi-auto-update.timer"
 remove_path "$RESUME_DIR"
 remove_path "$OLD_RESUME_DIR"
 remove_path "$AUTOSTART"

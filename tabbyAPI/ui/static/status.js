@@ -274,6 +274,22 @@ function mountStatus(root) {
     return parts.join(" · ");
   }
 
+  function autoUpdateLabel(info) {
+    const data = info || {};
+    if (data.enabled === false) return "off";
+    const days = Number(data.interval_days || 7);
+    return `every ${days} day${days === 1 ? "" : "s"}`;
+  }
+
+  function autoUpdateExtra(info) {
+    const data = info || {};
+    const bits = [];
+    if (data.full === false) bits.push("git only");
+    else bits.push("git + deps");
+    if (data.last_run) bits.push(`last ${data.last_run}`);
+    return bits.join(" · ");
+  }
+
   function fact(title, value, extra = "") {
     const sub = extra ? `<span class="fact-x">${TabbyUI.escapeHtml(extra)}</span>` : "";
     const plain = `${title}: ${String(value).replace(/<[^>]+>/g, "")}${extra ? ` (${extra})` : ""}`;
@@ -477,7 +493,8 @@ function mountStatus(root) {
         `<span class="fact-pill ${healthClass}">${healthLabel}</span>`,
         (health.issues || []).join("; ") || "no issues"
       ),
-      fact("Uptime", TabbyUI.escapeHtml(TabbyUI.formatDuration(data.uptime_s)), data.api_base || ""),
+            fact("Uptime", TabbyUI.escapeHtml(TabbyUI.formatDuration(data.uptime_s)), data.api_base || ""),
+      fact("Updates", TabbyUI.escapeHtml(autoUpdateLabel(data.auto_update)), autoUpdateExtra(data.auto_update)),
       fact("CPU", host.cpu_pct != null ? `${host.cpu_pct}%` : "—", host.load1 != null ? `load ${host.load1}` : ""),
       fact("RAM", host.ram_pct != null ? `${host.ram_pct}%` : "—", ""),
       fact(

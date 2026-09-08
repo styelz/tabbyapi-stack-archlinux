@@ -5,7 +5,9 @@
 # then install tabbyapi-stack in the chroot (venvs, weights) so first boot
 # only starts the API (linger). The TSOS ISO autologins tty1 into this script.
 # After the network is up, this script fetches a newer copy of itself from
-# GitHub when SCRIPT_VERSION on main is higher.
+# GitHub when SCRIPT_VERSION on main is higher. The tabbyapi-stack tree is
+# then cloned from GitHub origin/main when the network allows (ISO snapshot
+# is only the fallback).
 #
 # Run as root from the Arch Linux live ISO. The target disk is wiped
 # unless you pass --resume-tabby (finish install.sh on an already-mounted /mnt).
@@ -25,7 +27,7 @@ SCRIPT_NAME="${0##*/}"
 if [[ "$SCRIPT_NAME" == "bash" || "$SCRIPT_NAME" == "-bash" || "$SCRIPT_NAME" == "sh" || "$SCRIPT_NAME" == "-sh" ]]; then
   SCRIPT_NAME="tsos-installer.sh"
 fi
-SCRIPT_VERSION="1.0.60"
+SCRIPT_VERSION="1.0.61"
 
 # Generic defaults. Do not default TARGET_HOSTNAME from $HOSTNAME — the live
 # ISO sets HOSTNAME=archiso.
@@ -42,6 +44,11 @@ OMARCHY_USER_NAME="${OMARCHY_USER_NAME:-}"
 OMARCHY_USER_EMAIL="${OMARCHY_USER_EMAIL:-}"
 TABBY_REPO="${TABBY_REPO:-https://github.com/styelz/tabbyapi-stack-archlinux.git}"
 TABBY_LOCAL_SRC="${TABBY_LOCAL_SRC:-}"
+TABBY_LOCAL_SRC_CLI="${TABBY_LOCAL_SRC_CLI:-}"
+TABBY_STACK_FROM_GITHUB="${TABBY_STACK_FROM_GITHUB:-0}"
+TABBY_AUTO_UPDATE="${TABBY_AUTO_UPDATE:-1}"
+TABBY_AUTO_UPDATE_DAYS="${TABBY_AUTO_UPDATE_DAYS:-7}"
+TABBY_AUTO_UPDATE_FULL="${TABBY_AUTO_UPDATE_FULL:-1}"
 TABBY_MODELS="${TABBY_MODELS:-core}"
 TABBY_NETWORK_HOST="${TABBY_NETWORK_HOST:-0.0.0.0}"
 TABBY_NETWORK_PORT="${TABBY_NETWORK_PORT:-5000}"
@@ -73,6 +80,7 @@ TIMEZONE_FROM_CLI=""
 MODELS_FROM_CLI=""
 CACHE_FROM_CLI=""
 BACKUP_FROM_CLI=""
+AUTO_UPDATE_FROM_CLI=""
 DEFAULT_DISK=/dev/sda
 TUI=""
 USE_TUI=0
@@ -142,7 +150,7 @@ OPTIONS
                            LUKS unless --encrypt.
   --advanced               Review menu for every setting (encryption,
                            Omarchy, cache, models, bind address, public
-                           URL, SSH tunnel)
+                           URL, SSH tunnel, auto-update)
   --restore-backup PATH    Restore a Status / tsctl stack backup. Prefills
                            hostname, user, models, listen settings, and
                            extras from PATH; only asks which disk to wipe
@@ -160,7 +168,10 @@ OPTIONS
   --tabby-cache PATH       Optional weights cache. Asked here (before wipe)
                            so a USB under /mnt can be bind-mounted aside.
   --tabby-repo URL         Git remote to clone (default: tabbyapi-stack-archlinux)
-  --tabby-local-src PATH   Overlay this tabbyapi-stack tree after clone (install.sh, etc.)
+  --tabby-local-src PATH   Overlay this tabbyapi-stack tree after clone (ISO testing)
+  --auto-update            Enable the 7-day stack auto-updater (default)
+  --no-auto-update         Leave the auto-updater off
+  --auto-update-days N     Auto-update interval in days (default 7)
   --resume-tabby           Do not wipe. Finish install.sh in an already-mounted
                            system at /mnt (after a chroot install.sh failure)
   --confirm-wipe PATH      Non-interactive wipe confirmation; must equal --disk
@@ -182,6 +193,7 @@ ENVIRONMENT
   OMARCHY_USER_NAME, OMARCHY_USER_EMAIL, OMARCHY_MODE (now|skip)
   TABBY_REPO, TABBY_LOCAL_SRC, TABBY_MODELS, TABBY_NETWORK_HOST, TABBY_NETWORK_PORT
   TABBY_CACHE, TABBY_PUBLIC_BASE, COMFYUI_URL, HF_TOKEN
+  TABBY_AUTO_UPDATE, TABBY_AUTO_UPDATE_DAYS, TABBY_AUTO_UPDATE_FULL
   TSOS_SKIP_SELF_UPDATE    1 to keep the ISO copy of this script
 
 One password is used for the user, root, and disk encryption (when enabled)
@@ -1477,6 +1489,30 @@ valid_port() {
   [[ "$1" =~ ^[0-9]+$ ]] && ((10#$1 >= 1 && 10#$1 <= 65535))
 }
 
+valid_auto_update_days() {
+  [[ "$1" =~ ^[0-9]+$ ]] && ((10#$1 >= 1 && 10#$1 <= 365))
+}
+
+normalize_auto_update() {
+  case "${TABBY_AUTO_UPDATE:-1}" in
+    1 | yes | true | on) TABBY_AUTO_UPDATE=1 ;;
+    0 | no | false | off) TABBY_AUTO_UPDATE=0 ;;
+    *) TABBY_AUTO_UPDATE=1 ;;
+  esac
+  if ! valid_auto_update_days "${TABBY_AUTO_UPDATE_DAYS:-7}"; then
+    TABBY_AUTO_UPDATE_DAYS=7
+  fi
+}
+
+auto_update_label() {
+  normalize_auto_update
+  if [[ "$TABBY_AUTO_UPDATE" == 1 ]]; then
+    printf 'on (every %s days)' "$TABBY_AUTO_UPDATE_DAYS"
+  else
+    printf 'off'
+  fi
+}
+
 ask_until() {
   local prompt=$1
   local default=$2
@@ -1825,6 +1861,9 @@ load_backup_tabby_env() {
       TABBY_SAVER_HUD_S) TABBY_SAVER_HUD_S=$value ;;
       TABBY_SAVER_TTY) TABBY_SAVER_TTY=$value ;;
       TABBY_SAVER_USER_TTY) TABBY_SAVER_USER_TTY=$value ;;
+      TABBY_AUTO_UPDATE) TABBY_AUTO_UPDATE=$value ;;
+      TABBY_AUTO_UPDATE_DAYS) TABBY_AUTO_UPDATE_DAYS=$value ;;
+      TABBY_AUTO_UPDATE_FULL) TABBY_AUTO_UPDATE_FULL=$value ;;
       TABBY_INSTALL_ROOT)
         if [[ -z "${USER_FROM_CLI:-}" ]]; then
           user=$(linux_user_from_install_root "$value" || true)
@@ -2046,6 +2085,10 @@ apply_simple_defaults() {
   TABBY_SSH_FORWARD=""
   TABBY_SSH_KEY=""
   TABBY_SAVER_ENABLED=1
+  if [[ -z "${AUTO_UPDATE_FROM_CLI:-}" ]]; then
+    TABBY_AUTO_UPDATE=1
+    TABBY_AUTO_UPDATE_DAYS=7
+  fi
 }
 
 simple_plan_notes() {
@@ -2064,6 +2107,7 @@ tunnels later in Settings, or re-run and pick Advanced.
   encryption:    $(encrypt_label)
   Omarchy:       not installed
   screensaver:   on (tty8)
+  auto-update:   $(auto_update_label)
   timezone:      ${TIMEZONE:-UTC}
 
 EOF
@@ -2792,6 +2836,36 @@ Default is fine unless your key has another name." \
   TABBY_SSH_KEY="${key:-/home/${TARGET_USER}/.ssh/id_ed25519}"
 }
 
+hub_edit_updates() {
+  local rc=0 yn=1 days
+  normalize_auto_update
+  [[ "$TABBY_AUTO_UPDATE" == 1 ]] && yn=1 || yn=0
+  ui_yesno "Auto-update" \
+"Pull GitHub updates automatically after install?
+
+On by default. Every ${TABBY_AUTO_UPDATE_DAYS} days the stack
+runs Update all (git + deps) and restarts the API when idle.
+Turn this off to only update from Status or update.sh.
+
+Change later in Settings → Updates, or: tsctl updates enable" \
+    "$yn" || rc=$?
+  case "$rc" in
+    2) return 0 ;;
+    0)
+      TABBY_AUTO_UPDATE=1
+      days=$(ui_ask_until "Auto-update interval (days)" \
+"How many days between automatic updates.
+
+Default 7. Allowed range is 1–365.
+The timer checks daily and skips if you are in the
+middle of a chat or image job." \
+        "${TABBY_AUTO_UPDATE_DAYS:-7}" valid_auto_update_days) || return 0
+      TABBY_AUTO_UPDATE_DAYS="${days:-7}"
+      ;;
+    *) TABBY_AUTO_UPDATE=0 ;;
+  esac
+}
+
 hub_edit_access() {
   local host
   host=$(ui_listen_access "Who can connect") || return 0
@@ -2830,6 +2904,7 @@ prompt_review_hub() {
     if [[ "$kind" == advanced ]]; then
       items+=(network "$(hub_desc "$(access_label)")")
       items+=(tunnel "$(hub_desc "$(tunnel_label)")")
+      items+=(updates "$(hub_desc "$(auto_update_label)")")
     else
       items+=(access "$(hub_desc "$(access_label)")")
     fi
@@ -2860,6 +2935,7 @@ bar, and the live log." \
         ;;
       network) hub_edit_network ;;
       tunnel) hub_edit_tunnel ;;
+      updates) hub_edit_updates ;;
       access)
         if [[ -z "${HOST_FROM_CLI:-}" ]]; then
           hub_edit_access
@@ -2972,6 +3048,16 @@ on TabbyAPI here at 127.0.0.1:${TABBY_NETWORK_PORT}."
   else
     TABBY_SSH_FORWARD=""
     TABBY_SSH_KEY=""
+  fi
+  local auto_answer
+  auto_answer=$(ask_until "Auto-update the stack from GitHub (yes / no)" \
+    "$( [[ "${TABBY_AUTO_UPDATE:-1}" == 1 ]] && printf yes || printf no )" valid_yes_no)
+  if [[ "$auto_answer" == "yes" ]]; then
+    TABBY_AUTO_UPDATE=1
+    TABBY_AUTO_UPDATE_DAYS=$(ask_until "Auto-update interval (days)" \
+      "${TABBY_AUTO_UPDATE_DAYS:-7}" valid_auto_update_days)
+  else
+    TABBY_AUTO_UPDATE=0
   fi
   printf '\n' >/dev/tty
 }
@@ -3455,6 +3541,8 @@ self_test() {
   check "$ENCRYPT" 0 "simple encrypt off"
   check "$TABBY_MODELS" core "simple models core"
   check "$TABBY_SAVER_ENABLED" 1 "simple screensaver on"
+  check "$TABBY_AUTO_UPDATE" 1 "simple auto-update on"
+  check "$TABBY_AUTO_UPDATE_DAYS" 7 "simple auto-update days"
   ENCRYPT=1
   ENCRYPT_FROM_CLI=1
   OMARCHY_MODE=now
@@ -3493,6 +3581,43 @@ self_test() {
   apply_simple_defaults
   check "$TABBY_NETWORK_HOST" "127.0.0.1" "simple --tabby-host kept"
   HOST_FROM_CLI=""
+
+  TABBY_AUTO_UPDATE=0
+  TABBY_AUTO_UPDATE_DAYS=30
+  AUTO_UPDATE_FROM_CLI=""
+  apply_simple_defaults
+  check "$TABBY_AUTO_UPDATE" 1 "simple auto-update default on"
+  check "$TABBY_AUTO_UPDATE_DAYS" 7 "simple auto-update default days"
+  TABBY_AUTO_UPDATE=0
+  TABBY_AUTO_UPDATE_DAYS=14
+  AUTO_UPDATE_FROM_CLI=1
+  apply_simple_defaults
+  check "$TABBY_AUTO_UPDATE" 0 "simple --no-auto-update kept"
+  check "$TABBY_AUTO_UPDATE_DAYS" 14 "simple --auto-update-days kept"
+  AUTO_UPDATE_FROM_CLI=""
+  TABBY_STACK_FROM_GITHUB=1
+  TABBY_LOCAL_SRC_CLI=""
+  TSOS_SKIP_SELF_UPDATE=0
+  on=0
+  should_overlay_local_tabby || on=1
+  check "$on" 1 "github tree skips ISO overlay"
+  TABBY_LOCAL_SRC_CLI=1
+  on=0
+  should_overlay_local_tabby || on=1
+  check "$on" 0 "explicit local src still overlays"
+  TABBY_LOCAL_SRC_CLI=""
+  TSOS_SKIP_SELF_UPDATE=1
+  on=0
+  should_overlay_local_tabby || on=1
+  check "$on" 0 "ISO test overlay still allowed"
+  TSOS_SKIP_SELF_UPDATE=0
+  TABBY_STACK_FROM_GITHUB=0
+  if valid_auto_update_days 7 && valid_auto_update_days 1 && ! valid_auto_update_days 0 && ! valid_auto_update_days 400; then
+    printf 'ok   auto-update days 1-365\n'
+  else
+    printf 'FAIL auto-update days should be 1-365\n' >&2
+    failed=1
+  fi
 
   if valid_install_mode restore && valid_install_mode simple && ! valid_install_mode nope; then
     printf 'ok   install mode simple/advanced/restore\n'
@@ -3858,6 +3983,22 @@ parse_args() {
         ;;
       --tabby-local-src)
         TABBY_LOCAL_SRC=${2:?}
+        TABBY_LOCAL_SRC_CLI=1
+        shift 2
+        ;;
+      --auto-update)
+        TABBY_AUTO_UPDATE=1
+        AUTO_UPDATE_FROM_CLI=1
+        shift
+        ;;
+      --no-auto-update)
+        TABBY_AUTO_UPDATE=0
+        AUTO_UPDATE_FROM_CLI=1
+        shift
+        ;;
+      --auto-update-days)
+        TABBY_AUTO_UPDATE_DAYS=${2:?}
+        AUTO_UPDATE_FROM_CLI=1
         shift 2
         ;;
       --resume-tabby)
@@ -3920,6 +4061,7 @@ validate_names() {
   valid_esp_size "$ESP_SIZE" || die "invalid EFI size: $ESP_SIZE"
   valid_models "$TABBY_MODELS" || die "invalid TABBY_MODELS: $TABBY_MODELS (core, all, or comma-separated ids)"
   valid_port "$TABBY_NETWORK_PORT" || die "invalid TabbyAPI port: $TABBY_NETWORK_PORT"
+  normalize_auto_update
   normalize_encrypt
   if [[ "$OMARCHY_MODE" == "now" && "$ENCRYPT" -eq 0 ]]; then
     die "Omarchy requires LUKS. Re-run with encryption, or skip Omarchy."
@@ -5243,6 +5385,9 @@ write_tabby_bootstrap() {
     printf 'TABBY_SSH_KEY=%q\n' "$TABBY_SSH_KEY"
     printf 'COMFYUI_URL=%q\n' "$COMFYUI_URL"
     printf 'TABBY_INSTALL_ROOT=%q\n' "$stack_home"
+    printf 'TABBY_AUTO_UPDATE=%q\n' "$TABBY_AUTO_UPDATE"
+    printf 'TABBY_AUTO_UPDATE_DAYS=%q\n' "$TABBY_AUTO_UPDATE_DAYS"
+    printf 'TABBY_AUTO_UPDATE_FULL=%q\n' "$TABBY_AUTO_UPDATE_FULL"
   } >"$conf_dir/install.conf"
   chmod 0644 "$conf_dir/install.conf"
   if [[ -n "${HF_TOKEN:-}" ]]; then
@@ -5542,8 +5687,59 @@ PROFILE
     git clone "$TABBY_REPO" "$stack_home"; then
     die "git clone failed. Check network, then re-run. Repo: $TABBY_REPO"
   fi
-  overlay_local_tabby_sources "$TARGET$stack_home"
+  pull_tabbyapi_stack_from_github "$stack_home"
+  if should_overlay_local_tabby; then
+    overlay_local_tabby_sources "$TARGET$stack_home"
+  fi
   install_tsos_motd_from_tree
+}
+
+# Production ISO: GitHub origin/main wins. Overlay the ISO snapshot only
+# when GitHub is unreachable, --tabby-local-src was passed, or this is an
+# ISO test that skipped the installer self-update.
+should_overlay_local_tabby() {
+  [[ -n "${TABBY_LOCAL_SRC_CLI:-}" ]] && return 0
+  [[ "${TSOS_SKIP_SELF_UPDATE:-0}" == 1 ]] && return 0
+  [[ "${TABBY_STACK_FROM_GITHUB:-0}" == 1 ]] && return 1
+  return 0
+}
+
+pull_tabbyapi_stack_from_github() {
+  local stack_home="$1"
+  TABBY_STACK_FROM_GITHUB=0
+  [[ -z "$TSOS_OFFLINE_ROOT" ]] || return 0
+  [[ -d "$TARGET$stack_home/.git" ]] || return 0
+  log "Fetching latest tabbyapi-stack from GitHub"
+  if ! arch-chroot "$TARGET" /usr/bin/runuser -u "$TARGET_USER" -- env GIT_TERMINAL_PROMPT=0 \
+       git -C "$stack_home" fetch --prune origin; then
+    warn "git fetch from GitHub failed; using the tree already on disk"
+    return 0
+  fi
+  local branch=""
+  if arch-chroot "$TARGET" /usr/bin/runuser -u "$TARGET_USER" -- \
+       git -C "$stack_home" rev-parse --verify -q origin/main >/dev/null; then
+    branch=main
+  elif arch-chroot "$TARGET" /usr/bin/runuser -u "$TARGET_USER" -- \
+       git -C "$stack_home" rev-parse --verify -q origin/master >/dev/null; then
+    branch=master
+  else
+    warn "GitHub remote has no origin/main; using the tree already on disk"
+    return 0
+  fi
+  if arch-chroot "$TARGET" /usr/bin/runuser -u "$TARGET_USER" -- env GIT_TERMINAL_PROMPT=0 \
+       git -C "$stack_home" checkout -f -B "$branch" "origin/$branch"; then
+    TABBY_STACK_FROM_GITHUB=1
+  elif arch-chroot "$TARGET" /usr/bin/runuser -u "$TARGET_USER" -- env GIT_TERMINAL_PROMPT=0 \
+       git -C "$stack_home" reset --hard "origin/$branch"; then
+    TABBY_STACK_FROM_GITHUB=1
+  else
+    warn "Could not check out origin/$branch; using the tree already on disk"
+    return 0
+  fi
+  local rev=""
+  rev=$(arch-chroot "$TARGET" /usr/bin/runuser -u "$TARGET_USER" -- \
+    git -C "$stack_home" rev-parse --short HEAD 2>/dev/null || true)
+  log "Using GitHub origin/${branch}${rev:+ ($rev)}"
 }
 
 # curl | bash clones GitHub. A local tree (this script's directory, or
@@ -5627,26 +5823,19 @@ ensure_target_user_file() {
   chmod 0644 "$host_path" || true
 }
 
-# After a failed chroot install.sh, pull origin/main then overlay a local
-# tree so fixes that are not on the ISO copy get used.
+# After a failed chroot install.sh, pull origin/main (GitHub wins). Overlay
+# a local tree only for ISO testing or when GitHub is unreachable.
 refresh_tabbyapi_stack_in_target() {
   local stack_home="/home/${TARGET_USER}/tabbyapi-stack"
   [[ -d "$TARGET$stack_home" ]] || die "missing $stack_home on the new system"
-  if [[ -d "$TARGET$stack_home/.git" && -z "$TSOS_OFFLINE_ROOT" ]]; then
-    log "Updating tabbyapi-stack in the chroot from origin"
-    arch-chroot "$TARGET" /usr/bin/runuser -u "$TARGET_USER" -- \
-      git -C "$stack_home" fetch --prune origin || \
-      warn "git fetch failed; using the tree already on disk"
-    if ! arch-chroot "$TARGET" /usr/bin/runuser -u "$TARGET_USER" -- \
-         git -C "$stack_home" merge --ff-only origin/main; then
-      arch-chroot "$TARGET" /usr/bin/runuser -u "$TARGET_USER" -- \
-        git -C "$stack_home" pull --ff-only || \
-        warn "git pull failed; using the tree already on disk"
-    fi
-  elif [[ -n "$TSOS_OFFLINE_ROOT" ]]; then
+  if [[ -n "$TSOS_OFFLINE_ROOT" ]]; then
     log "Using tabbyapi-stack sources from the offline ISO"
+  else
+    pull_tabbyapi_stack_from_github "$stack_home"
   fi
-  overlay_local_tabby_sources "$TARGET$stack_home"
+  if should_overlay_local_tabby; then
+    overlay_local_tabby_sources "$TARGET$stack_home"
+  fi
   install_tsos_motd_from_tree
 }
 
@@ -5737,6 +5926,9 @@ run_tabby_install_chroot() {
     TABBY_SSH_KEY="${TABBY_SSH_KEY:-}"
     COMFYUI_URL="${COMFYUI_URL:-http://127.0.0.1:8188}"
     TABBY_SAVER_ENABLED="${TABBY_SAVER_ENABLED:-$saver_default}"
+    TABBY_AUTO_UPDATE="${TABBY_AUTO_UPDATE:-1}"
+    TABBY_AUTO_UPDATE_DAYS="${TABBY_AUTO_UPDATE_DAYS:-7}"
+    TABBY_AUTO_UPDATE_FULL="${TABBY_AUTO_UPDATE_FULL:-1}"
     DISPLAY=
     WAYLAND_DISPLAY=
   )

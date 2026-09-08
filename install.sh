@@ -1255,6 +1255,9 @@ write_resume_env() {
     printf 'TABBY_SAVER_IDLE_S=%q\n' "${TABBY_SAVER_IDLE_S-}"
     printf 'TABBY_SAVER_LOGOUT_IDLE_S=%q\n' "${TABBY_SAVER_LOGOUT_IDLE_S-}"
     printf 'TABBY_SAVER_HUD_S=%q\n' "${TABBY_SAVER_HUD_S-}"
+    printf 'TABBY_AUTO_UPDATE=%q\n' "${TABBY_AUTO_UPDATE-}"
+    printf 'TABBY_AUTO_UPDATE_DAYS=%q\n' "${TABBY_AUTO_UPDATE_DAYS-}"
+    printf 'TABBY_AUTO_UPDATE_FULL=%q\n' "${TABBY_AUTO_UPDATE_FULL-}"
     printf 'TABBY_INSTALL_VERBOSE=%q\n' "${TABBY_INSTALL_VERBOSE-}"
     printf 'TABBY_INSTALL_SH=%q\n' "$DEST/install.sh"
   } > "$f"
@@ -2054,6 +2057,9 @@ load_backup_tabby_env() {
       TABBY_SAVER_HUD_S) TABBY_SAVER_HUD_S=$value ;;
       TABBY_SAVER_TTY) TABBY_SAVER_TTY=$value ;;
       TABBY_SAVER_USER_TTY) TABBY_SAVER_USER_TTY=$value ;;
+      TABBY_AUTO_UPDATE) TABBY_AUTO_UPDATE=$value ;;
+      TABBY_AUTO_UPDATE_DAYS) TABBY_AUTO_UPDATE_DAYS=$value ;;
+      TABBY_AUTO_UPDATE_FULL) TABBY_AUTO_UPDATE_FULL=$value ;;
     esac
   done < "$envf"
 }
@@ -2444,6 +2450,34 @@ apply_saver_defaults() {
   fi
 }
 
+valid_auto_update_days() {
+  [[ "$1" =~ ^[0-9]+$ ]] && ((10#$1 >= 1 && 10#$1 <= 365))
+}
+
+apply_auto_update_defaults() {
+  case "${TABBY_AUTO_UPDATE:-1}" in
+    1 | yes | true | on) TABBY_AUTO_UPDATE=1 ;;
+    0 | no | false | off) TABBY_AUTO_UPDATE=0 ;;
+    *) TABBY_AUTO_UPDATE=1 ;;
+  esac
+  if ! valid_auto_update_days "${TABBY_AUTO_UPDATE_DAYS:-7}"; then
+    TABBY_AUTO_UPDATE_DAYS=7
+  fi
+  case "${TABBY_AUTO_UPDATE_FULL:-1}" in
+    1 | yes | true | on) TABBY_AUTO_UPDATE_FULL=1 ;;
+    *) TABBY_AUTO_UPDATE_FULL=0 ;;
+  esac
+}
+
+auto_update_label() {
+  apply_auto_update_defaults
+  if [[ "$TABBY_AUTO_UPDATE" == 1 ]]; then
+    printf 'on (every %s days)' "$TABBY_AUTO_UPDATE_DAYS"
+  else
+    printf 'off'
+  fi
+}
+
 write_tabby_env() {
   local env_file="$1"
   mkdir -p "$(dirname "$env_file")"
@@ -2461,6 +2495,9 @@ TABBY_SAVER_LOGOUT_IDLE_S=${TABBY_SAVER_LOGOUT_IDLE_S:-10}
 TABBY_SAVER_HUD_S=${TABBY_SAVER_HUD_S:-300}
 TABBY_SAVER_TTY=${TABBY_SAVER_TTY:-tty8}
 TABBY_SAVER_USER_TTY=${TABBY_SAVER_USER_TTY:-tty1}
+TABBY_AUTO_UPDATE=${TABBY_AUTO_UPDATE:-1}
+TABBY_AUTO_UPDATE_DAYS=${TABBY_AUTO_UPDATE_DAYS:-7}
+TABBY_AUTO_UPDATE_FULL=${TABBY_AUTO_UPDATE_FULL:-1}
 EOF
   if [[ -n "$TABBY_SSH_REMOTE" ]]; then
     cat >> "$env_file" <<EOF
@@ -2949,6 +2986,38 @@ prompt) before the screensaver returns. Default 10." \
   esac
 }
 
+inst_edit_updates() {
+  local rc=0 yn=1 days
+  apply_auto_update_defaults
+  [[ "${TABBY_AUTO_UPDATE}" == "1" ]] && yn=1 || yn=0
+  ui_yesno "Auto-update" \
+"Pull GitHub updates automatically after install?
+
+On by default. Every ${TABBY_AUTO_UPDATE_DAYS} days the stack
+runs Update all (git + deps) and restarts the API when idle.
+Turn this off to only update from Status or update.sh.
+
+Change later in Settings → Updates, or: tsctl updates enable" \
+    "$yn" || rc=$?
+  case "$rc" in
+    2) return 0 ;;
+    0)
+      TABBY_AUTO_UPDATE=1
+      days=$(ui_input "Auto-update interval (days)" \
+"How many days between automatic updates.
+
+Default 7. Allowed range is 1–365." \
+"${TABBY_AUTO_UPDATE_DAYS}") || return 0
+      TABBY_AUTO_UPDATE_DAYS="${days:-7}"
+      if ! valid_auto_update_days "$TABBY_AUTO_UPDATE_DAYS"; then
+        ui_msg "Invalid interval" "Use a whole number of days from 1 to 365." || true
+        TABBY_AUTO_UPDATE_DAYS=7
+      fi
+      ;;
+    *) TABBY_AUTO_UPDATE=0 ;;
+  esac
+}
+
 prompt_advanced_install() {
   if [[ "${TABBY_ISO_CHROOT:-}" == 1 ]]; then
     ui_msg "tabbyapi-stack" \
@@ -2957,7 +3026,7 @@ prompt_advanced_install() {
 The weights cache was set before the wipe (or Hugging Face).
 
 A review menu lists models, listen address, optional public
-URL / SSH, and screensaver. Open a row to change it."
+URL / SSH, screensaver, and auto-update. Open a row to change it."
     DEST="${TABBY_INSTALL_ROOT:-$DEFAULT_DEST}"
     DEST="${DEST:-$DEFAULT_DEST}"
     WIN_ROOT="${TABBY_CACHE:-}"
@@ -2991,7 +3060,8 @@ Esc on the review menu cancels. Esc on a setting goes back."
   MODEL_SET="${TABBY_MODELS:-core}"
   apply_network_defaults
   apply_saver_defaults
-  local choice wlabel slabel
+  apply_auto_update_defaults
+  local choice wlabel slabel ulabel
   while true; do
     apply_choices
     if [[ -z "$TABBY_SSH_REMOTE" ]]; then
@@ -3008,6 +3078,7 @@ Esc on the review menu cancels. Esc on a setting goes back."
     else
       slabel="off"
     fi
+    ulabel="$(auto_update_label)"
     local -a items=()
     if [[ "${TABBY_ISO_CHROOT:-}" != 1 ]]; then
       items+=(dest "$(hub_desc "$DEST")")
@@ -3018,6 +3089,7 @@ Esc on the review menu cancels. Esc on a setting goes back."
     items+=(public "$(hub_desc "${TABBY_PUBLIC_BASE:- (local only)}")")
     items+=(tunnel "$(hub_desc "${TABBY_SSH_REMOTE:- (none)}")")
     items+=(saver "$(hub_desc "$slabel")")
+    items+=(updates "$(hub_desc "$ulabel")")
     items+=(go "Start install")
     choice=$(ui_menu "Review install plan" \
 "Open a row to change it. Choose Start install when the plan
@@ -3034,6 +3106,7 @@ Esc aborts. The next screen is a progress bar and the live log." \
       public) inst_edit_public ;;
       tunnel) inst_edit_tunnel ;;
       saver) inst_edit_saver ;;
+      updates) inst_edit_updates ;;
       go)
         UI_ALLOW_BACK=0
         apply_choices
@@ -3043,6 +3116,7 @@ Esc aborts. The next screen is a progress bar and the live log." \
           TABBY_SSH_KEY=""
         fi
         apply_saver_defaults
+        apply_auto_update_defaults
         if ! valid_model_set "$MODEL_SET"; then
           ui_msg "Invalid model set" "Pick at least one model (got ${MODEL_SET:-empty})."
           continue
@@ -3101,6 +3175,7 @@ if [[ "$INTERACTIVE" -eq 0 ]]; then
   apply_choices
   apply_network_defaults
   apply_saver_defaults
+  apply_auto_update_defaults
   if ! valid_model_set "$MODEL_SET"; then
     echo "Model set must be core, all, or comma-separated ids (got $MODEL_SET)."
     exit 1
@@ -3140,6 +3215,7 @@ fi
 
 apply_network_defaults
 apply_saver_defaults
+apply_auto_update_defaults
 if [[ -z "$TABBY_SSH_REMOTE" ]]; then
   TABBY_SSH_FORWARD=""
   TABBY_SSH_KEY=""
@@ -3855,6 +3931,20 @@ mkdir -p "$WANTS_DIR"
 ln -sfn ../tabbyapi.service "$WANTS_DIR/tabbyapi.service"
 echo "Enabled tabbyapi via $WANTS_DIR/tabbyapi.service" >> "$INSTALL_LOG"
 
+install_auto_update_units() {
+  local script="$DEST_TABBY/deploy/arch/auto-update.sh"
+  [[ -f "$script" ]] || return 0
+  apply_auto_update_defaults
+  export TABBY_INSTALL_ROOT="$DEST"
+  export TABBY_AUTO_UPDATE TABBY_AUTO_UPDATE_DAYS TABBY_AUTO_UPDATE_FULL
+  if bash "$script" --install-units >>"$INSTALL_LOG" 2>&1; then
+    echo "Configured tabbyapi-auto-update.timer ($(auto_update_label))" >> "$INSTALL_LOG"
+  else
+    echo "WARNING: could not install tabbyapi-auto-update.timer" >> "$INSTALL_LOG"
+  fi
+}
+install_auto_update_units
+
 # Refresh the TSOS login banner when this is a tabbyapi-stack OS install.
 if [[ -f "$DEST_TABBY/deploy/arch/tsos-motd" ]] && \
    { [[ -e /usr/local/bin/tsos-motd ]] || [[ -d /etc/tsos ]]; }; then
@@ -3972,6 +4062,13 @@ TTY screensaver (spare VT, default tty8; on unless a desktop owns the GPU)
   Stop: tsctl screensaver disable
   VTs: TABBY_SAVER_TTY=tty8 TABBY_SAVER_USER_TTY=tty1
 
+Auto-update (user timer, default every 7 days)
+  Status / Settings → Updates, or:
+  tsctl updates enable
+  tsctl updates interval_days=7
+  tsctl updates disable
+  Skips while a chat or image job is running.
+
   tsctl                         interactive settings (dialog)
   tsctl list                    every Settings section
   tsctl network host=0.0.0.0
@@ -3985,7 +4082,7 @@ Management UI ($API_URL/v1/ui)
   Sign in with the Linux user that runs tabbyapi (admin), or a Tabby-only account.
   Chat     conversations, vision, model commands, image generation; follow-up queue
   Code     project folder on this host (Monaco, file tools, preview, container terminal)
-  Status   GPU mode, occupancy, profile, health; load LLM / Comfy; restart; Update git / Update all
+  Status   GPU mode, occupancy, profile, health; load LLM / Comfy; restart; Update git / Update all; auto-update
   Gallery  generated images (admin can see all users)
   Logs     live journalctl for TabbyAPI (and Comfy when up)
   Users    admin-only: create/reset/delete Tabby accounts (not Linux users)

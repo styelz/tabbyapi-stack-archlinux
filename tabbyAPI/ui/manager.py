@@ -283,6 +283,23 @@ def _model_card() -> dict[str, Any]:
     }
 
 
+def _auto_update_status() -> dict[str, Any]:
+    try:
+        from ui.settings import _auto_update_payload, _parse_env, ENV_PATH
+
+        payload = _auto_update_payload(_parse_env(ENV_PATH))
+    except Exception:
+        return {"enabled": True, "interval_days": 7, "full": True}
+    fields = {item["name"]: item.get("value") for item in payload.get("fields") or []}
+    return {
+        "enabled": bool(fields.get("enabled", True)),
+        "interval_days": int(fields.get("interval_days") or 7),
+        "full": bool(fields.get("full", True)),
+        "last_run": payload.get("last_run") or "",
+        "timer_enabled": bool(payload.get("timer_enabled")),
+    }
+
+
 async def stack_status(request=None, username: str = "") -> dict[str, Any]:
     from common.gpu_mode import comfy_up, public_api_base, read_mode
     from common.health import HealthManager
@@ -361,6 +378,7 @@ async def stack_status(request=None, username: str = "") -> dict[str, Any]:
         "user": os.environ.get("USER") or "",
         "now": datetime.now(timezone.utc).isoformat(),
         "stack_queue": stack_queue_snapshot(username),
+        "auto_update": _auto_update_status(),
     }
 
 

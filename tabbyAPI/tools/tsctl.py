@@ -19,6 +19,7 @@ from ui.settings import (  # noqa: E402
     load_settings,
     normalize_gpu_key,
     normalize_saver_key,
+    normalize_update_key,
     save_settings,
 )
 
@@ -35,6 +36,8 @@ tsctl — tabbyapi-stack settings
   tsctl <section> <key> <value>
   tsctl screensaver enable|disable|status
   tsctl screensaver hud-timeout=300   idle clock seconds; 0 hides it
+  tsctl updates enable|disable|status
+  tsctl updates interval_days=7
   tsctl gpu                     settings plus live sensors
   tsctl gpu status              temperature, fan, power
   tsctl gpu auto|quiet|balanced|performance|custom
@@ -45,7 +48,7 @@ tsctl — tabbyapi-stack settings
   tsctl backup DEST [--config] [--users] [--chats] [--dry-run]
   tsctl restore SOURCE [--models] [--config] [--users] [--chats] [--dry-run]
 
-Sections match Settings: network, model, screensaver, gpu, system, …
+Sections match Settings: network, model, screensaver, updates, gpu, system, …
 """
 
 
@@ -54,6 +57,8 @@ def _sections(data: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     out = list(payload.get("tabby") or [])
     if payload.get("screensaver"):
         out.append(payload["screensaver"])
+    if payload.get("updates"):
+        out.append(payload["updates"])
     if payload.get("gpu"):
         out.append(payload["gpu"])
     if payload.get("system"):
@@ -75,6 +80,8 @@ def field_by_name(section: dict[str, Any], key: str) -> dict[str, Any]:
     want = key.strip()
     if section.get("name") == "screensaver":
         want = normalize_saver_key(want)
+    elif section.get("name") == "updates":
+        want = normalize_update_key(want)
     elif section.get("name") == "gpu":
         want = normalize_gpu_key(want)
     for field in section.get("fields") or []:
@@ -129,6 +136,8 @@ def apply_sets(section_name: str, pairs: list[tuple[str, str]]) -> dict[str, Any
         updates[field["name"]] = coerce_cli(field, raw)
     if name == "screensaver":
         return save_settings({"screensaver": updates})
+    if name == "updates":
+        return save_settings({"updates": updates})
     if name == "gpu":
         return save_settings({"gpu": updates})
     if name == "system":
@@ -154,6 +163,35 @@ def saver_status() -> int:
     )
     print()
     print(f"  systemd     {(active.stdout or '').strip() or 'unknown'} / {(enabled.stdout or '').strip() or 'unknown'}")
+    return 0
+
+
+def updates_status() -> int:
+    data = load_settings()
+    section = find_section("updates", data)
+    print_section(section)
+    from common.gpu_mode import user_systemd_env
+
+    env = user_systemd_env()
+    active = subprocess.run(
+        ["systemctl", "--user", "is-active", "tabbyapi-auto-update.timer"],
+        capture_output=True,
+        text=True,
+        timeout=8,
+        env=env,
+    )
+    enabled = subprocess.run(
+        ["systemctl", "--user", "is-enabled", "tabbyapi-auto-update.timer"],
+        capture_output=True,
+        text=True,
+        timeout=8,
+        env=env,
+    )
+    print()
+    print(f"  systemd     {(active.stdout or '').strip() or 'unknown'} / {(enabled.stdout or '').strip() or 'unknown'}")
+    extra = str(section.get("status") or "").strip()
+    if extra:
+        print(f"  {extra}")
     return 0
 
 
@@ -205,7 +243,7 @@ def report_save(data: dict[str, Any]) -> int:
 def complete_words(cword: int, words: list[str]) -> list[str]:
     data = load_settings()
     sections = [str(section["name"]) for section in _sections(data)]
-    extra = ["list", "help", "restart", "backup", "restore", "screensaver", "gpu"]
+    extra = ["list", "help", "restart", "backup", "restore", "screensaver", "updates", "gpu"]
     if cword <= 1:
         return sorted(set(sections + extra))
     if len(words) > 1 and words[1] in ("backup", "restore"):
@@ -222,6 +260,8 @@ def complete_words(cword: int, words: list[str]) -> list[str]:
     names = [str(field["name"]) for field in section.get("fields") or []]
     if section.get("name") == "screensaver":
         names.extend(["enable", "disable", "status", "timeout", "logout-timeout"])
+    if section.get("name") == "updates":
+        names.extend(["enable", "disable", "status", "interval_days", "interval-days"])
     if section.get("name") == "gpu":
         names.extend([*GPU_PROFILE_NAMES, "status", "apply", "fan-speed", "power-limit"])
     if cword == 2:
@@ -305,6 +345,8 @@ def tui_dialog() -> int:
             extra = []
             if section["name"] == "screensaver":
                 extra = ["enable", "Turn unit on", "disable", "Turn unit off"]
+            elif section["name"] == "updates":
+                extra = ["enable", "Turn timer on", "disable", "Turn timer off"]
             elif section["name"] == "gpu":
                 extra = [
                     "status",
@@ -339,10 +381,10 @@ def tui_dialog() -> int:
             if code != 0 or not key:
                 break
             if key in ("enable", "disable"):
-                body = save_settings({"screensaver": {"enabled": key == "enable"}})
+                body = save_settings({section["name"]: {"enabled": key == "enable"}})
                 run_dialog(["--msgbox", str(body.get("reload_warning") or "ok"), "8", "60"])
                 data = load_settings()
-                section = find_section("screensaver", data)
+                section = find_section(str(section["name"]), data)
                 continue
             if section["name"] == "gpu" and key == "status":
                 from common.gpu_control import format_status
@@ -681,6 +723,11 @@ def dispatch(argv: list[str]) -> int:
         if rest[0] == "status":
             return saver_status()
         body = save_settings({"screensaver": {"enabled": rest[0] == "enable"}})
+        return report_save(body)
+    if section_name == "updates" and rest and rest[0] in ("enable", "disable", "status"):
+        if rest[0] == "status":
+            return updates_status()
+        body = save_settings({"updates": {"enabled": rest[0] == "enable"}})
         return report_save(body)
     if section_name == "gpu":
         if not rest or rest[0] == "status":

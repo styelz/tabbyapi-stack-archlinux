@@ -23,7 +23,7 @@ cd "$HOME/tabbyapi-stack"
 bash install.sh
 ```
 
-The menu defaults to **Simple** (timezone, LAN access, minimal coding and image models from Hugging Face, plus GPU-compatible optional models with disk-size estimates). The default is Qwen 9B, the CPU embedder, and Qwen-Image (~29 GiB of weights); 8 GB GPUs use Flux instead. Choose **Advanced** for encryption, full model control, bind address, public URL, reverse SSH, Omarchy, or to turn the screensaver off. **Restore from backup** reuses a Status / `tsctl` stack backup (models plus any saved config, users, and chats) and, on the ISO, only asks which disk to wipe.
+The menu defaults to **Simple** (timezone, LAN access, minimal coding and image models from Hugging Face, plus GPU-compatible optional models with disk-size estimates). The default is Qwen 9B, the CPU embedder, and Qwen-Image (~29 GiB of weights); 8 GB GPUs use Flux instead. Choose **Advanced** for encryption, full model control, bind address, public URL, reverse SSH, Omarchy, auto-update, or to turn the screensaver off. **Restore from backup** reuses a Status / `tsctl` stack backup (models plus any saved config, users, and chats) and, on the ISO, only asks which disk to wipe.
 
 Re-run is safe: existing weights are skipped. USB caches, unattended install, and recovery: [Arch install guide](tabbyAPI/deploy/arch/README.md).
 
@@ -122,7 +122,7 @@ On the GPU host:
 bash "$HOME/tabbyapi-stack/update.sh"
 ```
 
-**Update git** pulls code. **Update all** also refreshes dependencies and restarts. Status can do the same. Config, `tabby.env`, weights, and the venv stay. This is not a full Arch upgrade.
+**Update git** pulls code. **Update all** also refreshes dependencies and restarts. Status can do the same. Auto-update (default every 7 days) runs Update all when the API is idle; **Settings → Updates** or `tsctl updates disable` turns it off. Config, `tabby.env`, weights, and the venv stay. This is not a full Arch upgrade.
 
 ## More
 

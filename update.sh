@@ -1021,6 +1021,11 @@ if [[ "$UPDATE_COMFY" -eq 1 ]]; then
   fi
 fi
 
+if [[ -f "$DEST/tabbyAPI/deploy/arch/auto-update.sh" ]]; then
+  bash "$DEST/tabbyAPI/deploy/arch/auto-update.sh" --install-units >>"$UPDATE_LOG" 2>&1 || \
+    printf '%s\n' "WARNING: could not refresh auto-update timer" >>"$UPDATE_LOG"
+fi
+
 AFTER_UPDATE_SH="$(hash_ignore_cr <"$DEST/update.sh")"
 if [[ "$BEFORE_UPDATE_SH" != "$AFTER_UPDATE_SH" ]]; then
   progress 98 "Restarting with the new update.sh"

@@ -31,7 +31,10 @@ fallback on physical GPUs while keeping the centered TSOS logo and spinner over
 early userspace. They stay up until the first installer question. The same
 Plymouth theme is copied onto the installed Arch system, so reboot shows the
 TSOS logo and spinner until login (Plymouth then quits for the getty). Plug in
-Ethernet (or set up Wi-Fi from Alt+F2 with `iwctl`). The first menu is Simple,
+Ethernet (or set up Wi-Fi from Alt+F2 with `iwctl`). The installer uses the latest
+tabbyapi-stack from GitHub when the network is up (the copy on the USB is the
+fallback). Auto-update every 7 days is on by default; Advanced can turn it off.
+The first menu is Simple,
 Advanced, or Restore from backup (a Status
 / `tsctl` folder on USB). Choose **Mount a drive or device** there to mount a
 backup or model-weight filesystem under `/run/media/tsos`, then return to the
