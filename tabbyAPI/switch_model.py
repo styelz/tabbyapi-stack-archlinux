@@ -15,11 +15,13 @@ from common.gpu_mode import (
     COMFY_DIR,
     COMFY_PYTHON,
     GPU_ALIASES,
+    comfy_up,
     persisted_jobs_block_llm_load,
     start_comfy_if_needed,
     stop_comfy,
     write_mode,
 )
+from common.switch_times import record_ready
 
 from common.vram_recover import (
     FALLBACK_PROFILE,
@@ -42,6 +44,27 @@ from select_model import (
 from common.load_fields import load_payload
 
 LOCK = Path(__file__).resolve().parent / "switch-model.lock"
+AUTH_FILE = Path(__file__).resolve().parent / "api_tokens.yml"
+
+
+def admin_headers() -> dict[str, str]:
+    """X-Admin-Key for /v1/model/* and the sampler switch.
+
+    TABBY_ADMIN_KEY wins; otherwise the admin_key in api_tokens.yml next to
+    this script. Empty when neither exists (disable_auth installs).
+    """
+    key = (os.environ.get("TABBY_ADMIN_KEY") or "").strip()
+    if not key and AUTH_FILE.is_file():
+        try:
+            _, data = load_yaml(AUTH_FILE)
+        except Exception:
+            data = None
+        if isinstance(data, dict):
+            key = str(data.get("admin_key") or "").strip()
+    if not key:
+        return {}
+    # Admin routes read X-Admin-Key; chat/model routes read Authorization.
+    return {"X-Admin-Key": key, "Authorization": f"Bearer {key}"}
 
 
 def api_base() -> str:
@@ -56,7 +79,7 @@ def api_base() -> str:
 
 def request_json(method: str, url: str, payload: dict | None = None, timeout: float = 30):
     data = None
-    headers = {}
+    headers = admin_headers()
     if payload is not None:
         data = json.dumps(payload).encode()
         headers["Content-Type"] = "application/json"
@@ -109,7 +132,11 @@ def load_model(base: str, model_name: str, model_cfg: dict):
     req = Request(
         f"{base}/v1/model/load",
         data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json", "Accept": "text/event-stream"},
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+            **admin_headers(),
+        },
         method="POST",
     )
     finished = False
@@ -264,8 +291,9 @@ def recover_after_vram(base: str, name: str, model_name: str, model_cfg: dict, p
     return load_fallback(base, name)
 
 
-def switch_to_comfy(base: str) -> dict:
+def switch_to_comfy(base: str, record: bool = True) -> dict:
     started = time.time()
+    was_up = comfy_up()
     if server_up(base):
         unload_tabby(base)
     else:
@@ -276,6 +304,9 @@ def switch_to_comfy(base: str) -> dict:
     print("GPU mode: comfy")
     print("Remote clients: describe the image in chat or POST /v1/images/generations")
     print(f"Comfy ready ({elapsed:.0f}s)")
+    if record and not was_up:
+        # Only a real Comfy start is a warm switch worth learning from.
+        record_ready("comfy", elapsed)
     return {"ready_s": elapsed, "mode": "comfy"}
 
 
@@ -293,11 +324,14 @@ def switch_to_llm(
     base: str | None = None,
     force: bool = False,
     recover: bool = True,
+    record: bool = True,
 ) -> dict:
     """Apply a profile, free Comfy, and load the model. Returns timing metadata.
 
     recover=True (chat / CLI): leftover retry, one bounce, then qwen.
     recover=False (calibrate / bench): raise on the first load failure.
+    record=True: blend a clean warm load into switch_times.json (the
+    screensaver / chat "typical"). Bench passes False; it writes raw numbers.
     """
     profile = apply_profile(name)
     model_cfg = profile.get("model") or {}
@@ -316,6 +350,7 @@ def switch_to_llm(
 
     started = time.time()
     wait_out_image_jobs()
+    from_comfy = comfy_up()
     stop_comfy()
     write_mode("llm", profile=name)
     loaded = current_model(base)
@@ -349,6 +384,11 @@ def switch_to_llm(
     if recovered:
         print(f"  recover: {recovered}")
     print("GPU mode: llm")
+    if record and not recovered and loaded == model_name:
+        record_ready(name, elapsed)
+        if from_comfy:
+            # "switch to llm" / restore-after-pictures includes the Comfy stop.
+            record_ready("llm", elapsed)
     return {
         "ready_s": elapsed,
         "already": False,

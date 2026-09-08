@@ -48,7 +48,7 @@ class CalibrateDocsTests(unittest.TestCase):
         self.assertNotIn("calibrate.py", block)
         self.assertIn("| `switch to qwen` | Daily coding, 9B | 262k | ~10 seconds |", block)
         self.assertIn("| `switch to qwen35` | Long or hard agent work | 131k | ~2 minutes |", block)
-        self.assertIn("Thinking (vision off on Test GPU 8 GB)", block)
+        self.assertIn("Thinking chat only (no coding tools; vision off on Test GPU 8 GB)", block)
         self.assertIn("65k (model max)", block)
         self.assertIn("Flux ~40 seconds", block)
         self.assertIn("~55 seconds", block)

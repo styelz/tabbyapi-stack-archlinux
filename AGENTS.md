@@ -32,21 +32,21 @@ Do not SSH into the GPU host just to change models. Send a chat phrase, use Stat
 
 ## Switch models
 
-Send a message that is **only** one of these. Times are warm switches on this RTX 4070 Ti 12 GB (first boot can compile Triton longer). Chat replies use `tabbyAPI/model_profiles/switch_times.json`.
+Send a message that is **only** one of these. Times are warm switches on this RTX 4070 Ti 12 GB (first boot can compile Triton longer). Chat replies use `tabbyAPI/model_profiles/switch_times.json`; every real load blends its time into the screensaver and chat typicals.
 
 | Phrase | Use | Context | Ready |
 |---|---|---|---|
 | `help` | Full usage guide | — | — |
 | `list models` | Show installed profiles | — | — |
-| `restart` | Bounce the API; last model reloads | — | ~65 seconds |
-| `switch to qwen` | Daily coding, 9B | 262k | ~65 seconds |
-| `switch to qwen35` | Long or hard agent work | 131k | ~3 minutes |
-| `switch to qwen36` | Long or hard agent work | 98k | ~85 seconds |
-| `switch to gemma` | General | 262k | ~65 seconds |
+| `restart` | Bounce the API; last model reloads | — | ~50 seconds |
+| `switch to qwen` | Daily coding, 9B | 262k | ~75 seconds |
+| `switch to qwen35` | Long or hard agent work | 131k | ~65 seconds |
+| `switch to qwen36` | Long or hard agent work | 98k | ~2 minutes |
+| `switch to gemma` | General | 262k | ~85 seconds |
 | `switch to gemma26` | General | 262k | ~2 minutes |
-| `switch to glm` | Thinking chat only (no coding tools; vision off on RTX 4070 Ti 12 GB) | 65k (model max) | ~15 seconds |
-| `switch to comfy` / `flux` | Unload the LLM; image gen | — | ~35 seconds (then Flux ~3 minutes / Qwen-Image ~4 minutes for the first picture) |
-| `switch to llm` | Free Comfy; reload the last LLM | — | ~65 seconds |
+| `switch to glm` | Thinking chat only (no coding tools; vision off on RTX 4070 Ti 12 GB) | 65k (model max) | ~40 seconds |
+| `switch to comfy` / `flux` | Unload the LLM; image gen | — | ~4 seconds (then Flux ~2 minutes / Qwen-Image ~3 minutes for the first picture) |
+| `switch to llm` | Free Comfy; reload the last LLM | — | ~50 seconds |
 
 The GPU is exclusive: **LLM or Comfy, not both**. `Qwen3-Embedding-0.6B` stays on CPU (`POST /v1/embeddings`). After `switch to comfy`, Flux Schnell is for drafts; Qwen-Image is for text / posters / UI, or a `qwen-image:` prefix.
 

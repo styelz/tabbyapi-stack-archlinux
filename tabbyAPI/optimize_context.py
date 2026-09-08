@@ -120,7 +120,7 @@ def try_seq(name: str, seq: int) -> tuple[bool, str]:
     write_seq(name, seq)
     base = api_base()
     try:
-        info = switch_to_llm(name, base=base, force=True, recover=False)
+        info = switch_to_llm(name, base=base, force=True, recover=False, record=False)
     except (SystemExit, RuntimeError, OSError) as exc:
         print(f"  fail load: {exc}")
         recover()

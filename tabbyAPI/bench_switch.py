@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 from common.gpu_mode import comfy_up, generate_image, save_generated_image
-from common.switch_times import TIMES_PATH, detect_gpu
+from common.switch_times import LOCAL_TIMES_PATH, TIMES_PATH, detect_gpu
 from select_model import available_profiles, last_profile
 from switch_model import (
     api_base,
@@ -52,6 +52,9 @@ def _write_times(path: Path, data: dict) -> None:
             data[key] = merged[key]
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    if path.resolve() == TIMES_PATH.resolve():
+        # A fresh bench is the new baseline; live EMA learning starts over.
+        LOCAL_TIMES_PATH.unlink(missing_ok=True)
 
 
 def _stop_comfy_unit() -> None:
@@ -90,7 +93,7 @@ def ping_chat(base: str, timeout: float = 180) -> float:
 
 def _load_or_retry(name: str, base: str) -> dict:
     try:
-        return switch_to_llm(name, base=base, force=True, recover=False)
+        return switch_to_llm(name, base=base, force=True, recover=False, record=False)
     except (SystemExit, RuntimeError, OSError) as exc:
         print(f"  load failed ({exc}); unloading leftovers, stopping idle Comfy, retrying")
         try:
@@ -99,7 +102,7 @@ def _load_or_retry(name: str, base: str) -> dict:
             pass
         _stop_comfy_unit()
         time.sleep(3)
-        return switch_to_llm(name, base=base, force=True, recover=False)
+        return switch_to_llm(name, base=base, force=True, recover=False, record=False)
 
 
 def bench_llm(name: str, base: str, results: dict) -> None:
@@ -125,7 +128,7 @@ def bench_llm(name: str, base: str, results: dict) -> None:
 
 def bench_comfy(base: str, results: dict, skip_images: bool) -> None:
     print("\n=== Comfy ===")
-    info = switch_to_comfy(base)
+    info = switch_to_comfy(base, record=False)
     results["comfy"] = {
         "ready_s": round(float(info.get("ready_s") or 0), 1),
     }
@@ -163,7 +166,7 @@ def bench_comfy(base: str, results: dict, skip_images: bool) -> None:
 def bench_restore(base: str, results: dict) -> None:
     print("\n=== switch to llm ===")
     name = last_profile() or RESTORE_PROFILE
-    info = switch_to_llm(name, base=base, force=False, recover=False)
+    info = switch_to_llm(name, base=base, force=False, recover=False, record=False)
     results["llm"] = {
         "ready_s": round(float(info.get("ready_s") or 0), 1),
         "profile": name,
@@ -228,7 +231,7 @@ def run_bench(
 
     if not no_restore:
         print(f"\n=== restore {RESTORE_PROFILE} ===")
-        switch_to_llm(RESTORE_PROFILE, base=base, force=False, recover=False)
+        switch_to_llm(RESTORE_PROFILE, base=base, force=False, recover=False, record=False)
         results["restored"] = RESTORE_PROFILE
         _write_times(dest, results)
 

@@ -190,6 +190,7 @@ switch-model.log
 model_profiles/last.json
 model_profiles/gpu_mode.json
 model_profiles/vram_recover.json
+model_profiles/switch_times.local.json
 deploy/arch/tabby.env
 HOW-TO-ARCH.txt
 
@@ -210,6 +211,7 @@ templates/*
 sampler_overrides/*
 !sampler_overrides/sample_preset.yml
 !sampler_overrides/safe_defaults.yml
+!sampler_overrides/gemma4.yml
 
 # Gpu lib preferences file
 gpu_lib.txt

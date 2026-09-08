@@ -1,0 +1,27 @@
+# Gemma 4 defaults, used by the gemma / gemma26 profiles (override_preset: gemma4).
+# Google's recommended sampling for Gemma: temperature 1.0, top_p 0.95, top_k 64.
+# Clients that send their own values still win (force: false).
+
+temperature:
+  override: 1.0
+  force: false
+
+top_p:
+  override: 0.95
+  force: false
+
+top_k:
+  override: 64
+  force: false
+
+# OpenAI clients often omit max_tokens. ExLlama then reserves the rest of
+# the context window. Cap omitted replies; clients can still send more.
+max_tokens:
+  override: 8192
+  force: false
+
+# ExLlamaV3 stops mid-reply if it thinks tokens are repeating.
+# Agent tool XML and code trip that often; disable it for local coding.
+loop_detect_window:
+  override: 0
+  force: true

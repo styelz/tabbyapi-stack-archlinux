@@ -189,6 +189,33 @@ class SaverSanitizeTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(payload["typical_s"], 66)
 
+    def test_typical_s_uses_profile_when_no_lock_name(self):
+        times = {
+            "qwen": {"ready_s": 60},
+            "qwen35": {"ready_s": 150},
+            "comfy": {"ready_s": 30},
+            "llm": {"ready_s": 64},
+        }
+        with mock.patch(
+            "common.switch_times.load_switch_times", return_value=times
+        ):
+            # Phrase switch: the lock names the profile.
+            self.assertEqual(saver._typical_switch_s("qwen35", True, False, "switch"), 150)
+            # /v1/model/load straight from the API (bench, CLI): no lock, but
+            # config.yml already points at the profile being loaded.
+            self.assertEqual(
+                saver._typical_switch_s("", False, False, "switch", profile="qwen35", switch_target="llm"),
+                150,
+            )
+            self.assertEqual(
+                saver._typical_switch_s("", True, False, "switch", profile="qwen", switch_target="comfy"),
+                30,
+            )
+            # Nothing known: generic LLM restore time.
+            self.assertEqual(saver._typical_switch_s("", True, False, "switch"), 64)
+            self.assertEqual(saver._typical_switch_s("qwen35", True, True, "switch"), 64)
+            self.assertIsNone(saver._typical_switch_s("qwen35", False, False, "decode"))
+
     def test_unknown_stage_becomes_idle(self):
         payload = saver.sanitize_status({"stage": "secret-thoughts", "tokens": -3})
         self.assertEqual(payload["stage"], "idle")
@@ -241,7 +268,9 @@ class SaverSanitizeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["stage"], "switch")
         self.assertEqual(payload["switch_target"], "comfy")
         self.assertEqual(payload["profile"], "flux")
-        self.assertEqual(payload["typical_s"], 37)
+        from common.switch_times import ready_seconds
+
+        self.assertEqual(payload["typical_s"], ready_seconds("comfy"))
         self.assertIsNone(payload["gpu"]["utilization_pct"])
         self.assertIn("host", payload)
         self.assertNotIn("bob", repr(payload))
@@ -926,7 +955,9 @@ class SaverKioskSceneTests(unittest.TestCase):
         )
         self.assertEqual(scene["phase"], "restarting api")
         self.assertIn("qwen35", scene["note"])
-        self.assertIn("3 minutes", scene["note"])
+        wait = self.kiosk.format_wait_s(self.kiosk.wait_s_for("qwen35"))
+        self.assertTrue(wait)
+        self.assertIn(f"wait about {wait}", scene["note"])
         self.assertIn("process is running", scene["note"])
 
     def test_cold_boot_note_when_service_is_loading(self):
@@ -1449,6 +1480,39 @@ class SaverKioskSceneTests(unittest.TestCase):
         self.assertIn("Loading LLM", text)
         self.assertIn("0:42", text)
         self.assertIn("~1:06 Typical", text)
+
+    def test_idle_times_follow_live_switch_times_file(self):
+        import json
+        import os
+        import tempfile
+
+        kiosk = self.kiosk
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "switch_times.json"
+            path.write_text(json.dumps({"qwen": {"ready_s": 66}}), encoding="utf-8")
+            kiosk._IDLE_TIMES = None
+            kiosk._IDLE_TIMES_STAMP = None
+            kiosk._IDLE_TIMES_CHECKED = 0.0
+            try:
+                first = kiosk.load_idle_times(path, now=100.0)
+                self.assertEqual(first["qwen"]["ready_s"], 66)
+                # A live load blended a new typical into the file.
+                path.write_text(json.dumps({"qwen": {"ready_s": 70.5}}), encoding="utf-8")
+                os.utime(path, ns=(path.stat().st_atime_ns, path.stat().st_mtime_ns + 2_000_000_000))
+                # Within the recheck window the cached copy is served.
+                self.assertEqual(kiosk.load_idle_times(path, now=101.0)["qwen"]["ready_s"], 66)
+                # After it, the change is picked up without a saver restart.
+                self.assertEqual(kiosk.load_idle_times(path, now=110.0)["qwen"]["ready_s"], 70.5)
+                # Live loads write the untracked overlay next to it; it wins.
+                local = path.with_name("switch_times.local.json")
+                local.write_text(json.dumps({"qwen": {"ready_s": 68.2}}), encoding="utf-8")
+                merged = kiosk.load_idle_times(path, now=120.0)
+                self.assertEqual(merged["qwen"]["ready_s"], 68.2)
+                self.assertIn("qwen warm switch ~68s", kiosk.idle_fact_lines(merged, 5.0))
+            finally:
+                kiosk._IDLE_TIMES = None
+                kiosk._IDLE_TIMES_STAMP = None
+                kiosk._IDLE_TIMES_CHECKED = 0.0
 
     def test_idle_facts_from_switch_times(self):
         facts = self.kiosk.idle_fact_lines(

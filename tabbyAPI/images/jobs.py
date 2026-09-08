@@ -167,6 +167,8 @@ async def ensure_comfy() -> None:
         return
 
     set_switch_lock("comfy")
+    started = time.time()
+    was_up = comfy_up()
     try:
         if loaded_tabby_name():
             await model.unload_model(skip_wait=True)
@@ -176,6 +178,10 @@ async def ensure_comfy() -> None:
             raise RuntimeError("ComfyUI did not start")
     finally:
         clear_switch_lock()
+    if not was_up:
+        from common.switch_times import record_ready
+
+        record_ready("comfy", time.time() - started)
 
 
 async def _load_profile(profile_name: str) -> None:
@@ -266,6 +272,8 @@ async def reload_last_llm(name: Optional[str] = None, *, from_job: bool = False)
     # (systemd stop can take tens of seconds). The UI loading banner keys off it.
     set_switch_lock(profile_name)
     bounce = False
+    started = time.time()
+    from_comfy = comfy_up()
     try:
         await asyncio.to_thread(stop_comfy)
         await asyncio.to_thread(wait_gpu_vram_drain)
@@ -304,6 +312,15 @@ async def reload_last_llm(name: Optional[str] = None, *, from_job: bool = False)
         clear_switch_lock()
     if bounce:
         _bounce_after_vram_fail(profile_name)
+        return profile_name
+    # Clean warm load: teach the screensaver / chat "typical" what this box
+    # really does. A bounce is recovery, not a switch time.
+    from common.switch_times import record_ready
+
+    elapsed = time.time() - started
+    record_ready(profile_name, elapsed)
+    if from_comfy:
+        record_ready("llm", elapsed)
     return profile_name
 
 
@@ -1080,6 +1097,19 @@ async def wait_mcp_job_progress(job: McpImageJob, wait_s: float) -> None:
             break
 
 
+def _record_first_render(item: McpImageItem, seconds: float) -> None:
+    """First text-to-image picture after a Comfy start: the bench's flux_s /
+    qwen_image_s (checkpoint load plus one render). Cached renders and
+    img2img batches are not that number, so callers only pass the first."""
+    if item.source_image or max(1, int(item.count or 1)) != 1:
+        return
+    from common.gpu_mode import wants_qwen_image
+    from common.switch_times import record_ready
+
+    field = "qwen_image_s" if wants_qwen_image(item.prompt or "") else "flux_s"
+    record_ready("comfy", seconds, field=field)
+
+
 def _mark_job_items_failed(job: McpImageJob, reason: str) -> None:
     for item in job.items:
         if item.status in ("queued", "running"):
@@ -1109,6 +1139,7 @@ async def _run_mcp_image_job(job: McpImageJob, delay: float) -> None:
                 restore_name = restore_name or restore_llm_profile()
                 job.restore_name = restore_name
             was_llm = bool(loaded_tabby_name())
+            comfy_was_up = comfy_up()
             await ensure_comfy()
             started_comfy = True
             render_failed = False
@@ -1127,6 +1158,7 @@ async def _run_mcp_image_job(job: McpImageJob, delay: float) -> None:
                         continue
                     item.status = "running"
                     _signal(job)
+                    render_started = time.time()
                     paths = await _render_specs(
                         [
                             {
@@ -1140,6 +1172,8 @@ async def _run_mcp_image_job(job: McpImageJob, delay: float) -> None:
                         ],
                         owner=job.owner or None,
                     )
+                    if index == 0 and not comfy_was_up:
+                        _record_first_render(item, time.time() - render_started)
                     item.urls = [
                         public_image_url(path.name, api_base=job.api_base, bust=False)
                         for path in paths

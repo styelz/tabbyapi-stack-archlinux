@@ -48,7 +48,7 @@ USES = {
     "qwen36": "Long or hard agent work",
     "gemma": "General",
     "gemma26": "General",
-    "glm": "Thinking",
+    "glm": "Thinking chat only (no coding tools)",
 }
 
 ALIAS_ORDER = ("qwen", "qwen35", "qwen36", "gemma", "gemma26", "glm")
@@ -126,7 +126,8 @@ def agents_switch_block(
         "Send a message that is **only** one of these. "
         f"Times are warm switches on this {label} "
         "(first boot can compile Triton longer). "
-        "Chat replies use `tabbyAPI/model_profiles/switch_times.json`.",
+        "Chat replies use `tabbyAPI/model_profiles/switch_times.json`; "
+        "every real load blends its time into the screensaver and chat typicals.",
         "",
         "| Phrase | Use | Context | Ready |",
         "|---|---|---|---|",
@@ -138,7 +139,7 @@ def agents_switch_block(
         meta = _profile_meta(alias, profiles)
         use = USES.get(alias, alias)
         if alias == "glm" and meta.get("vision") is False:
-            use = f"Thinking (vision off on {label})"
+            use = f"Thinking chat only (no coding tools; vision off on {label})"
         ctx = _ctx_label(meta.get("seq"))
         if alias == "glm" and meta.get("seq") == ARCH_MAX.get("glm"):
             ctx = f"{ctx} (model max)"
@@ -258,7 +259,7 @@ def try_glm_vision() -> bool:
         yaml.dump(data, handle)
     _set_glm_pretty(True)
     try:
-        info = switch_to_llm("glm", force=True, recover=False)
+        info = switch_to_llm("glm", force=True, recover=False, record=False)
         if info.get("offline") or not info.get("loaded"):
             raise RuntimeError("glm did not load")
         print("  glm vision: loaded")

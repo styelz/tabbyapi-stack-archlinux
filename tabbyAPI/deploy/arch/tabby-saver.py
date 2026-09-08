@@ -271,21 +271,64 @@ def idle_hud_quiet(scene: dict[str, Any]) -> bool:
 
 
 _TIMES_PATH = Path(__file__).resolve().parents[2] / "model_profiles" / "switch_times.json"
+# Real loads EMA into this untracked overlay (common/switch_times.record_ready).
+_LOCAL_TIMES_PATH = _TIMES_PATH.with_name("switch_times.local.json")
 _LAST_PROFILE_PATH = Path(__file__).resolve().parents[2] / "model_profiles" / "last.json"
 _IDLE_TIMES: dict[str, Any] | None = None
+# (mtime_ns, size) of both times files when _IDLE_TIMES was read. Live loads
+# update the overlay, so the idle facts must follow it, not the boot copy.
+_IDLE_TIMES_STAMP: tuple | None = None
+_IDLE_TIMES_CHECKED: float = 0.0
+_IDLE_TIMES_RECHECK_S = 5.0
 _UNIT_STATE: tuple[float, str] = (0.0, "")
 _SKIP_PROFILES = frozenset({"", "—", "-", "comfy", "flux", "llm", "restart"})
 
 
-def load_idle_times() -> dict[str, Any]:
-    global _IDLE_TIMES
-    if _IDLE_TIMES is not None:
-        return _IDLE_TIMES
+def _times_stamp(path: Path) -> tuple[int, int] | None:
     try:
-        data = json.loads(_TIMES_PATH.read_text(encoding="utf-8"))
+        st = path.stat()
+    except OSError:
+        return None
+    return (int(st.st_mtime_ns), int(st.st_size))
+
+
+def _read_times_file(target: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(target.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, ValueError):
-        data = {}
-    _IDLE_TIMES = data if isinstance(data, dict) else {}
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def merge_times(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+    """Same rule as common.switch_times.merge_times: overlay fields win."""
+    out: dict[str, Any] = dict(base)
+    for key, value in overlay.items():
+        prev = out.get(key)
+        out[key] = {**prev, **value} if isinstance(value, dict) and isinstance(prev, dict) else value
+    return out
+
+
+def load_idle_times(
+    path: Path | None = None,
+    now: float | None = None,
+    local_path: Path | None = None,
+) -> dict[str, Any]:
+    """Bench baseline + live overlay, re-read when either file changes."""
+    global _IDLE_TIMES, _IDLE_TIMES_STAMP, _IDLE_TIMES_CHECKED
+    target = path or _TIMES_PATH
+    overlay_path = local_path or (
+        target.with_name("switch_times.local.json") if path is not None else _LOCAL_TIMES_PATH
+    )
+    t = time.monotonic() if now is None else now
+    if _IDLE_TIMES is not None and (t - _IDLE_TIMES_CHECKED) < _IDLE_TIMES_RECHECK_S:
+        return _IDLE_TIMES
+    _IDLE_TIMES_CHECKED = t
+    stamp = (_times_stamp(target), _times_stamp(overlay_path))
+    if _IDLE_TIMES is not None and stamp == _IDLE_TIMES_STAMP:
+        return _IDLE_TIMES
+    _IDLE_TIMES = merge_times(_read_times_file(target), _read_times_file(overlay_path))
+    _IDLE_TIMES_STAMP = stamp
     return _IDLE_TIMES
 
 

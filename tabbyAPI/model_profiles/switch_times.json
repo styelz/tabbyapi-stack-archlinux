@@ -1,13 +1,13 @@
 {
   "gpu": "RTX 4070 Ti 12 GB",
-  "note": "Warm switches. First boot may compile Triton longer. GLM loads as text-only on 12 GB (vision off).",
-  "measured_at": "2026-08-20T04:16:44",
-  "qwen": {"ready_s": 66, "first_token_s": 6.1},
-  "qwen35": {"ready_s": 170, "first_token_s": 4.0},
-  "qwen36": {"ready_s": 87, "first_token_s": 3.4},
-  "gemma": {"ready_s": 65, "first_token_s": 5.8},
-  "gemma26": {"ready_s": 99, "first_token_s": 5.5},
-  "glm": {"ready_s": 13, "first_token_s": 4.4, "vision": false, "cache_size": 65536},
-  "comfy": {"ready_s": 37, "flux_s": 202, "qwen_image_s": 230},
-  "llm": {"ready_s": 64, "profile": "qwen", "first_token_s": 0.2}
+  "note": "Warm switches. First boot may compile Triton longer. GLM loads as text-only on 12 GB (vision off). Real loads blend into these numbers (EMA).",
+  "measured_at": "2026-09-09T02:21:24",
+  "qwen": {"ready_s": 75, "first_token_s": 3.2},
+  "qwen35": {"ready_s": 65, "first_token_s": 3.1},
+  "qwen36": {"ready_s": 110, "first_token_s": 2.9},
+  "gemma": {"ready_s": 84, "first_token_s": 7.8},
+  "gemma26": {"ready_s": 113, "first_token_s": 9.8},
+  "glm": {"ready_s": 40, "first_token_s": 2.6, "vision": false, "cache_size": 65536},
+  "comfy": {"ready_s": 4, "flux_s": 117, "qwen_image_s": 196},
+  "llm": {"ready_s": 52, "profile": "qwen", "first_token_s": 0.3}
 }

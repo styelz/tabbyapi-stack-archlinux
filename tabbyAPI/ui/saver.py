@@ -373,8 +373,20 @@ def _compose_weather(
 
 
 def _typical_switch_s(
-    lock_name: str, switching: bool, restarting: bool, stage: str
+    lock_name: str,
+    switching: bool,
+    restarting: bool,
+    stage: str,
+    *,
+    profile: str = "",
+    switch_target: str | None = None,
 ) -> int | None:
+    """Typical seconds for the load in progress, from switch_times.json.
+
+    A load driven straight through /v1/model/load (bench, CLI) has no switch
+    lock name; then the profile config.yml points at is the better key than
+    the generic "llm" restore time.
+    """
     if not (switching or restarting or stage == "switch"):
         return None
     name = str(lock_name or "").strip().lower()
@@ -383,7 +395,10 @@ def _typical_switch_s(
     elif name in {"flux", "comfy"}:
         name = "comfy"
     elif not name:
-        name = "llm"
+        if switch_target == "comfy":
+            name = "comfy"
+        else:
+            name = str(profile or "").strip().lower() or "llm"
     from common.switch_times import ready_seconds
 
     return ready_seconds(name)
@@ -459,7 +474,14 @@ async def saver_state() -> dict[str, Any]:
         detail = str(notice.get("detail") or notice.get("phase") or "").strip()
         if detail:
             weather["image_what"] = _safe_image_what(detail)
-    typical_s = _typical_switch_s(lock_name, switching, restarting, str(weather.get("stage") or ""))
+    typical_s = _typical_switch_s(
+        lock_name,
+        switching,
+        restarting,
+        str(weather.get("stage") or ""),
+        profile=str(profile or ""),
+        switch_target=switch_target,
+    )
     elapsed_s = weather["elapsed_s"]
     if typical_s is not None:
         # Occupancy elapsed is the chat/job that holds StackGate. The HUD
