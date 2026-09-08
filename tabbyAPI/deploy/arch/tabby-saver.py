@@ -1437,17 +1437,25 @@ def draw_cycle_fx(pygame_mod: Any, screen: Any, scene: dict[str, Any]) -> None:
             pygame_mod.draw.circle(screen, _mix(BG, color, 0.18), (cx, cy), inner, 1)
 
 
-# Idle-only: faint ray-marched solids. Three persistent homes, well apart.
-# Drawn on the full framebuffer (not the 480×270 field) so motion is smooth.
+# Idle-only: faint ray-marched solids on the full framebuffer.
+# Three homes; at most two visible. Fade in/out with no rest gap.
 _SLEEP_KINDS = ("sphere", "box", "torus", "octa", "capsule")
 _SLEEP_HOMES = (
     (0.18, 0.28),
     (0.82, 0.32),
     (0.50, 0.78),
 )
+_SLEEP_SLOTS = (
+    (36.0, 0.00),
+    (36.0, 0.38),
+    (36.0, 0.72),
+)
 _SLEEP_MIN_SEP = 0.34
-_SLEEP_LIFE = 1.0
-_SLEEP_FADE = 0.0
+_SLEEP_LIFE = 0.56
+_SLEEP_FADE = 0.18
+_SLEEP_SPAN_FRAC = 0.48
+_SLEEP_SPAN_MAX = 520
+_SLEEP_RT_MAX = 256
 _SLEEP_TINT = (48, 72, 118)
 
 
@@ -1455,10 +1463,14 @@ def _sleep_unit(slot: int, cycle: int, salt: int) -> float:
     return _u01(slot + 3, int(cycle) * 10007 + salt)
 
 
-def idle_sleeper_envelope(u: float, life: float = _SLEEP_LIFE, fade: float = _SLEEP_FADE) -> float:
-    """Gentle breath. Never hits zero, so solids do not pop off and back on."""
-    del life, fade
-    return 0.72 + 0.28 * (0.5 + 0.5 * math.sin(float(u) * TWO_PI))
+def idle_sleeper_envelope(
+    u: float, life: float = _SLEEP_LIFE, fade: float = _SLEEP_FADE
+) -> float:
+    """Fade in, hold, fade out. Zero outside the life window (no pop, no rest)."""
+    if u < 0.0 or u > life:
+        return 0.0
+    fade = max(1e-6, min(float(life) * 0.49, float(fade)))
+    return _smoothstep(u / fade) * _smoothstep((life - u) / fade)
 
 
 def _sleep_xy(slot: int, st: float) -> tuple[float, float]:
@@ -1488,18 +1500,24 @@ def idle_sleeper_items(scene: dict[str, Any], width: int, height: int) -> list[d
     idle_hue = float(scene.get("idle_hue") or 0.0)
     w = max(1, int(width))
     h = max(1, int(height))
-    out: list[dict[str, Any]] = []
     n_kinds = len(_SLEEP_KINDS)
     short = min(w, h)
-    for slot in range(len(_SLEEP_HOMES)):
-        epoch = int(st / 160.0)
-        kind = _SLEEP_KINDS[(slot + epoch) % n_kinds]
+    candidates: list[dict[str, Any]] = []
+    for slot, (period, phase) in enumerate(_SLEEP_SLOTS):
+        period = max(1.0, float(period))
+        clock = st / period + phase
+        u = clock % 1.0
+        amt = idle_sleeper_envelope(u)
+        if amt <= 0.02:
+            continue
+        cycle = int(math.floor(clock - u + 1e-9))
+        kind = _SLEEP_KINDS[(slot + cycle) % n_kinds]
         x, y = _sleep_xy(slot, st)
-        scale = 0.92 + 0.16 * _sleep_unit(slot, epoch, 29)
-        yaw0 = TWO_PI * _sleep_unit(slot, epoch, 31)
-        pitch0 = (_sleep_unit(slot, epoch, 37) - 0.5) * 0.40
-        span = max(72, min(240, int(round(short * 0.30 * scale))))
-        out.append(
+        scale = 0.92 + 0.12 * _sleep_unit(slot, cycle, 29)
+        yaw0 = TWO_PI * _sleep_unit(slot, cycle, 31)
+        pitch0 = (_sleep_unit(slot, cycle, 37) - 0.5) * 0.40
+        span = max(160, min(_SLEEP_SPAN_MAX, int(round(short * _SLEEP_SPAN_FRAC * scale))))
+        candidates.append(
             {
                 "kind": kind,
                 "fx": x,
@@ -1507,14 +1525,15 @@ def idle_sleeper_items(scene: dict[str, Any], width: int, height: int) -> list[d
                 "x": x * (w - 1),
                 "y": y * (h - 1),
                 "size": span,
-                "amt": idle_sleeper_envelope(st * 0.11 + slot * 0.37),
+                "amt": amt,
                 "yaw": yaw0 + st * 0.055,
                 "pitch": pitch0 + 0.10 * math.sin(st * 0.048 + slot),
-                "tint": _sleep_tint_for(slot, epoch, idle_hue),
-                "seed": slot,
+                "tint": _sleep_tint_for(slot, cycle, idle_hue),
+                "seed": slot * 10007 + cycle,
             }
         )
-    return out
+    candidates.sort(key=lambda item: float(item["amt"]), reverse=True)
+    return candidates[:2]
 
 
 def _sleep_add_color(lift: float, tint: tuple[int, int, int] | None = None) -> tuple[int, int, int]:
@@ -1606,7 +1625,7 @@ def _sleep_rt_rgb(
             px = py = pz = 0.0
             closest = 8.0
             for _step in range(steps):
-                px, py, pz = rdx * t, rdy * t, 2.55 + rdz * t
+                px, py, pz = rdx * t, rdy * t, 2.05 + rdz * t
                 qx, qy, qz = _sleep_rotate(px, py, pz, yaw, pitch)
                 d = _sleep_sdf(kind, qx, qy, qz)
                 closest = min(closest, d if d > 0.0 else 0.0)
@@ -1705,7 +1724,7 @@ def _sleep_rt_rgb_numpy(
     for _step in range(14):
         px = rdx * t
         py = rdy * t
-        pz = np.float32(2.55) + rdz * t
+        pz = np.float32(2.05) + rdz * t
         qx, qy, qz = rotate(px, py, pz)
         d = sdf(qx, qy, qz)
         dmin = np.minimum(dmin, np.maximum(d, 0.0))
@@ -1715,7 +1734,7 @@ def _sleep_rt_rgb_numpy(
     live = hit & (t <= 6.0)
     px = rdx * t
     py = rdy * t
-    pz = np.float32(2.55) + rdz * t
+    pz = np.float32(2.05) + rdz * t
     eps = np.float32(0.014)
 
     def sdf_at(dx, dy, dz):
@@ -1757,19 +1776,22 @@ def _draw_sleeping_solid(pygame_mod: Any, screen: Any, item: dict[str, Any]) -> 
     amt = float(item.get("amt") or 0.0)
     if amt <= 0.02:
         return
-    span = max(48, min(240, int(item.get("size") or 72)))
+    span = max(80, min(_SLEEP_SPAN_MAX, int(item.get("size") or 160)))
+    rt = max(48, min(_SLEEP_RT_MAX, span))
     kind = str(item.get("kind") or "sphere")
     tint = item.get("tint") or _SLEEP_TINT
     rgb = _sleep_rt_rgb(
         kind,
-        span,
-        span,
+        rt,
+        rt,
         float(item.get("yaw") or 0.0),
         float(item.get("pitch") or 0.0),
         amt,
         tint,
     )
-    surf = pygame_mod.image.frombuffer(rgb, (span, span), "RGB").convert()
+    surf = pygame_mod.image.frombuffer(rgb, (rt, rt), "RGB").convert()
+    if span != rt:
+        surf = pygame_mod.transform.smoothscale(surf, (span, span))
     _blit_sleep_add(pygame_mod, screen, surf, float(item["x"]), float(item["y"]))
 
 

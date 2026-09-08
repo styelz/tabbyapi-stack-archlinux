@@ -368,25 +368,34 @@ class SaverKioskSceneTests(unittest.TestCase):
         idle["cycle"] = "idle"
         idle["overlay"] = 0.0
         idle["live"] = False
-        idle["st"] = 22.0
-        first = self.kiosk.idle_sleeper_items(idle, 480, 270)
-        idle["st"] = 22.5
-        second = self.kiosk.idle_sleeper_items(idle, 480, 270)
-        self.assertEqual(len(first), 3)
-        self.assertEqual(len(second), 3)
+        first = second = []
+        for st in (4.0, 8.0, 12.0, 18.0, 22.0):
+            idle["st"] = st
+            first = self.kiosk.idle_sleeper_items(idle, 480, 270)
+            if first:
+                idle["st"] = st + 0.4
+                second = self.kiosk.idle_sleeper_items(idle, 480, 270)
+                break
+        self.assertTrue(first)
+        self.assertLessEqual(len(first), 2)
         kinds = {item["kind"] for item in first}
         self.assertTrue(kinds <= set(self.kiosk._SLEEP_KINDS))
         by_seed = {item["seed"]: item for item in second}
+        held = False
         for item in first:
-            other = by_seed[item["seed"]]
+            other = by_seed.get(item["seed"])
+            if other is None:
+                continue
+            held = True
             self.assertLess(abs(item["fx"] - other["fx"]), 0.01)
             self.assertLess(abs(item["fy"] - other["fy"]), 0.01)
-            self.assertGreater(item["size"], 60)
-            self.assertGreater(item["amt"], 0.5)
+            self.assertGreater(item["size"], 120)
+        self.assertTrue(held)
         env = self.kiosk.idle_sleeper_envelope
-        self.assertGreater(env(0.0), 0.55)
-        self.assertGreater(env(0.40), 0.55)
-        self.assertGreater(env(0.74), 0.55)
+        self.assertEqual(env(-0.01), 0.0)
+        self.assertEqual(env(0.90), 0.0)
+        self.assertGreater(env(0.28), env(0.04))
+        self.assertGreater(env(0.28), env(0.50))
 
     def test_idle_sleepers_stay_spread_apart(self):
         idle = self.kiosk.scene_from_state(
@@ -396,15 +405,23 @@ class SaverKioskSceneTests(unittest.TestCase):
         idle["cycle"] = "idle"
         idle["overlay"] = 0.0
         idle["live"] = False
-        idle["st"] = 40.0
-        items = self.kiosk.idle_sleeper_items(idle, 1920, 1080)
-        self.assertEqual(len(items), 3)
-        for i, a in enumerate(items):
-            for b in items[i + 1 :]:
-                dx = a["fx"] - b["fx"]
-                dy = a["fy"] - b["fy"]
-                self.assertGreater(dx * dx + dy * dy, self.kiosk._SLEEP_MIN_SEP ** 2)
-        self.assertGreater(min(item["size"] for item in items), 140)
+        counts = []
+        pair = None
+        for step in range(80):
+            idle["st"] = step * 0.7
+            items = self.kiosk.idle_sleeper_items(idle, 1920, 1080)
+            self.assertLessEqual(len(items), 2)
+            counts.append(len(items))
+            if len(items) == 2 and pair is None:
+                pair = items
+        self.assertIn(1, counts)
+        self.assertIn(2, counts)
+        self.assertNotIn(3, counts)
+        self.assertTrue(pair)
+        dx = pair[0]["fx"] - pair[1]["fx"]
+        dy = pair[0]["fy"] - pair[1]["fy"]
+        self.assertGreater(dx * dx + dy * dy, self.kiosk._SLEEP_MIN_SEP ** 2)
+        self.assertGreater(min(item["size"] for item in pair), 400)
 
     def test_idle_rt_sphere_is_lit(self):
         rgb = self.kiosk._sleep_rt_rgb(
