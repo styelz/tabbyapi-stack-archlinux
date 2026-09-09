@@ -334,6 +334,63 @@ class UnpumpedAssistantTextTests(unittest.TestCase):
         self.assertEqual(extra.strip(), "")
 
 
+class PumpConsoleResultTests(unittest.IsolatedAsyncioTestCase):
+    async def test_live_stream_pumps_tool_calls_without_repeating_body(self):
+        from endpoints.OAI.types.chat_completion import (
+            ChatCompletionMessage,
+            ChatCompletionRequest,
+            ChatCompletionRespChoice,
+            ChatCompletionResponse,
+        )
+        from endpoints.OAI.types.tools import Tool, ToolCall
+        from ui.chat import _pump_console_result
+        from ui.flight import ConsoleFlight, reset_for_tests
+
+        reset_for_tests()
+        flight = ConsoleFlight("u", "c1", "code", "Create a landing page")
+        flight.streamed_live = True
+        flight.assembled = "writing the page"
+        data = ChatCompletionRequest(
+            messages=[ChatCompletionMessage(role="user", content="Create a landing page")],
+            stream=True,
+        )
+        result = ChatCompletionResponse(
+            model="gpt-4o",
+            choices=[
+                ChatCompletionRespChoice(
+                    finish_reason="tool_calls",
+                    message=ChatCompletionMessage(
+                        role="assistant",
+                        content=(
+                            "tabby-image-job: abc-123\nwriting the page\n"
+                            "Point img src at images/logo.png."
+                        ),
+                        tool_calls=[
+                            ToolCall(
+                                function=Tool(
+                                    name="Write",
+                                    arguments=(
+                                        '{"path":"index.html","contents":"<html></html>"}'
+                                    ),
+                                )
+                            )
+                        ],
+                    ),
+                )
+            ],
+        )
+        await _pump_console_result(flight, result, data)
+        blob = b"".join(flight.chunks).decode()
+        self.assertIn("tool_calls", blob)
+        self.assertIn("index.html", blob)
+        self.assertIn("Point img src", blob)
+        self.assertIn("tabby-image-job: abc-123", blob)
+        self.assertNotIn(
+            '"content": "tabby-image-job: abc-123\\nwriting the page\\nPoint img src',
+            blob,
+        )
+
+
 class ConsoleChatNotReadyTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         from ui.occupancy import reset_for_tests

@@ -1239,9 +1239,24 @@ def _code_reply(data: ChatCompletionRequest, job, code_response):
     elif hint and "Do not Write PNG" not in content:
         content = content.rstrip() + "\n" + hint.strip()
     calls = _tool_call_pairs(message)
+    payload = _console_live_reply_data(data)
     if calls:
-        return tool_call_response(data, calls, content=content)
-    return text_response(data, content)
+        return tool_call_response(payload, calls, content=content)
+    return text_response(payload, content)
+
+
+def _console_live_reply_data(data: ChatCompletionRequest) -> ChatCompletionRequest:
+    """After a live mixed-code stream, return an object the console pump can split.
+
+    Re-sending the whole SSE would repeat the page text and then immediately
+    POST the Write body on a connection that is still tearing down.
+    """
+    from ui.flight import current_console_flight
+
+    flight = current_console_flight()
+    if flight and getattr(flight, "streamed_live", False) and data.stream:
+        return data.model_copy(update={"stream": False})
+    return data
 
 
 def _curl_response(data: ChatCompletionRequest, job, code_response=None):

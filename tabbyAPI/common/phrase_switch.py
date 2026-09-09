@@ -1037,6 +1037,7 @@ async def stream_tool_calls(
     *,
     chunk_id: Optional[str] = None,
     created: Optional[int] = None,
+    include_content: bool = True,
 ):
     """OpenAI-shaped SSE deltas. Cursor ignores a whole ChatCompletionMessage dump."""
     chunk_id = chunk_id or f"chatcmpl-{uuid4().hex}"
@@ -1049,7 +1050,7 @@ async def stream_tool_calls(
 
     yield dump({"role": "assistant"})
     content = getattr(message, "content", None) or ""
-    if content:
+    if include_content and content:
         yield dump({"content": content})
     tool_payload = []
     for index, call in enumerate(message.tool_calls or []):

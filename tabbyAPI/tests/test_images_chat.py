@@ -174,6 +174,38 @@ class CodeReplyHintTests(unittest.TestCase):
         self.assertNotIn("Write the page now", content)
         self.assertNotIn("Do not Write PNG", content)
 
+    def test_live_console_stream_returns_completion_object(self):
+        from sse_starlette import EventSourceResponse
+        from ui.flight import (
+            ConsoleFlight,
+            bind_console_flight,
+            reset_for_tests,
+            unbind_console_flight,
+        )
+
+        reset_for_tests()
+        flight = ConsoleFlight("u", "c1", "code", "Create a website with a logo")
+        flight.streamed_live = True
+        token = bind_console_flight(flight)
+        try:
+            job = _job(id="abc-123", status="coding", code_turns=1)
+            data = _user("Create a website with a logo", stream=True)
+            response = _code_reply(data, job, _write_code_response())
+            self.assertNotIsInstance(response, EventSourceResponse)
+            self.assertEqual(response.choices[0].message.tool_calls[0].function.name, "Write")
+            self.assertIn("index.html", response.choices[0].message.tool_calls[0].function.arguments)
+        finally:
+            unbind_console_flight(token)
+            reset_for_tests()
+
+    def test_stream_without_live_tokens_stays_sse(self):
+        from sse_starlette import EventSourceResponse
+
+        job = _job(id="abc-123", status="coding", code_turns=1)
+        data = _user("Create a website with a logo", stream=True)
+        response = _code_reply(data, job, _write_code_response())
+        self.assertIsInstance(response, EventSourceResponse)
+
 
 class NestedGenerateHandlerTests(unittest.IsolatedAsyncioTestCase):
     async def test_handler_works_without_http_request(self):

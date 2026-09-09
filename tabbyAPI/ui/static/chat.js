@@ -25,6 +25,13 @@ function tabbyLooksLikeRestart(err, status) {
   return /API unavailable|API unreachable|service may be restarting/i.test(msg);
 }
 
+function tabbyNetworkErrorMessage(err) {
+  if (tabbyIsNetworkDrop(err)) {
+    return "Lost the connection to the API. Retry the message.";
+  }
+  return String((err && err.message) || err || "Request failed");
+}
+
 function tabbyCleanStatusLabel(text) {
   return String(text || "")
     .split(/\r?\n/)
@@ -7652,7 +7659,7 @@ function mountChat(root) {
     hidePopovers();
     startChecklistBuild(store.activeId);
     runLoop(prompt, { hidden: true }).catch((err) => {
-      addBubble("assistant", `Error: ${err.message}`);
+      addBubble("assistant", `Error: ${tabbyNetworkErrorMessage(err)}`);
       finishChecklistBuild({ chatId: store.activeId, stopped: true });
       persist();
     });
@@ -8300,7 +8307,7 @@ function mountChat(root) {
     const opts = { replay: true };
     if (replayAgent) opts.agent = replayAgent;
     runLoop(lastUser.content, opts).catch((err) => {
-      addBubble("assistant", `Error: ${err.message}`);
+      addBubble("assistant", `Error: ${tabbyNetworkErrorMessage(err)}`);
       persist();
     });
   }
@@ -12141,32 +12148,63 @@ function mountChat(root) {
     }).filter((item) => item.name);
   }
 
-  async function executeWorkspaceTool(chatId, name, args, agent, userText, historyRun) {
-    const response = await fetch(
-      TabbyUI.path(`workspace/${encodeURIComponent(chatId)}/tools`),
-      {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name,
-          arguments: args,
-          agent,
-          user_text: userText || "",
-          history_run: historyRun || "",
-        }),
-        signal: abortController && abortController.signal,
+  async function executeWorkspaceTool(chatId, name, args, agent, userText, historyRun, onRetry) {
+    const body = JSON.stringify({
+      name,
+      arguments: args,
+      agent,
+      user_text: userText || "",
+      history_run: historyRun || "",
+    });
+    const maxTries = 6;
+    let lastErr = null;
+    for (let attempt = 0; attempt < maxTries; attempt += 1) {
+      try {
+        const response = await fetch(
+          TabbyUI.path(`workspace/${encodeURIComponent(chatId)}/tools`),
+          {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body,
+            signal: abortController && abortController.signal,
+          }
+        );
+        const unavailable = response.status === 502 || response.status === 503 || response.status === 504;
+        if (unavailable && attempt < maxTries - 1) {
+          if (typeof onRetry === "function") onRetry();
+          await sleep(Math.min(2000, 300 * (attempt + 1)));
+          continue;
+        }
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          const detail = data.detail || (data.error && data.error.message) || data.error || "Tool failed";
+          return { label: "Tool error", result: String(detail), change: null };
+        }
+        return {
+          label: data.label || name,
+          result: String(data.result || ""),
+          change: normalizeToolChange(data.change),
+        };
+      } catch (err) {
+        if (err && err.name === "AbortError") throw err;
+        lastErr = err;
+        const retryable = tabbyIsNetworkDrop(err) || tabbyLooksLikeRestart(err);
+        if (!retryable || attempt >= maxTries - 1) {
+          return {
+            label: "Tool error",
+            result: tabbyNetworkErrorMessage(err),
+            change: null,
+          };
+        }
+        if (typeof onRetry === "function") onRetry();
+        await sleep(Math.min(2000, 300 * (attempt + 1)));
       }
-    );
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const detail = data.detail || (data.error && data.error.message) || data.error || "Tool failed";
-      return { label: "Tool error", result: String(detail), change: null };
     }
     return {
-      label: data.label || name,
-      result: String(data.result || ""),
-      change: normalizeToolChange(data.change),
+      label: "Tool error",
+      result: tabbyNetworkErrorMessage(lastErr),
+      change: null,
     };
   }
 
@@ -12511,7 +12549,7 @@ function mountChat(root) {
         if (restartLike && !stopKind) {
           if (await retryAfterRestart()) continue;
         }
-        assembled = assembled || `Error: ${err.message}`;
+        assembled = assembled || `Error: ${tabbyNetworkErrorMessage(err)}`;
         break;
       }
     }
@@ -12535,14 +12573,29 @@ function mountChat(root) {
         if (skipInspect) {
           ran = { label: "Skipped", result: SKIP_INSPECT_RESULT, change: null };
         } else {
-          ran = await executeWorkspaceTool(
-            workspace,
-            call.name,
-            call.arguments,
-            sendAgent,
-            userText,
-            historyRun
-          );
+          try {
+            ran = await executeWorkspaceTool(
+              workspace,
+              call.name,
+              call.arguments,
+              sendAgent,
+              userText,
+              historyRun,
+              () => {
+                working.setActivity("Reconnecting", {
+                  processing: true,
+                  note: "Lost the connection. Retrying the write.",
+                });
+              }
+            );
+          } catch (err) {
+            if (err && err.name === "AbortError") throw err;
+            ran = {
+              label: "Tool error",
+              result: tabbyNetworkErrorMessage(err),
+              change: null,
+            };
+          }
         }
         const toolStep = {
           type: "tool",
@@ -12897,7 +12950,7 @@ function mountChat(root) {
     // The reply lands in the log, so bring it back into view.
     activateTab("");
     runLoop(text).catch((err) => {
-      addBubble("assistant", `Error: ${err.message}`);
+      addBubble("assistant", `Error: ${tabbyNetworkErrorMessage(err)}`);
       persist();
     });
   });

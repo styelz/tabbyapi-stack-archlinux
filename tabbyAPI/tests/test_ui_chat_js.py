@@ -55,6 +55,19 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
         self.assertIn("if (data && data.down)", self.src)
         self.assertNotIn("Restarting. Chat is paused until the API is ready.", self.src)
 
+    def test_workspace_write_retries_a_dropped_fetch(self):
+        self.assertIn("function tabbyNetworkErrorMessage(err)", self.src)
+        self.assertIn("Lost the connection to the API. Retry the message.", self.src)
+        self.assertIn("Lost the connection. Retrying the write.", self.src)
+        self.assertIn("const maxTries = 6", self.src)
+        tool_src = self.src.split("async function executeWorkspaceTool(")[1].split(
+            "function normalizeToolChange("
+        )[0]
+        self.assertIn("tabbyIsNetworkDrop(err)", tool_src)
+        self.assertIn("tabbyLooksLikeRestart(err)", tool_src)
+        self.assertIn("typeof onRetry === \"function\"", tool_src)
+        self.assertNotIn("throw new Error", tool_src)
+
     def test_send_button_becomes_stop_during_session(self):
         self.assertIn('label: "Stop"', self.src)
         self.assertIn("abortSession(\"stop\")", self.src)

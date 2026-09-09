@@ -26,6 +26,7 @@ from common.phrase_switch import (
     start_restart,
     start_switch,
     stream_text,
+    stream_tool_calls,
     switch_reply_text,
     text_response,
 )
@@ -246,6 +247,14 @@ def _sse(content):
     )
 
 
+async def _pump_message_tool_calls(flight: ConsoleFlight, data, message) -> None:
+    calls = getattr(message, "tool_calls", None) if message is not None else None
+    if not calls:
+        return
+    async for chunk in stream_tool_calls(data, message, include_content=False):
+        await flight.publish(chunk)
+
+
 async def _pump_console_result(
     flight: ConsoleFlight, result, data: ChatCompletionRequest
 ) -> None:
@@ -253,14 +262,15 @@ async def _pump_console_result(
         async for item in _iter_sse(result):
             await flight.publish(item)
         return
+    message = _completion_message(result)
     if getattr(flight, "streamed_live", False):
-        message = _completion_message(result)
         extra = _unpumped_assistant_text(
             flight.assembled, str(getattr(message, "content", None) or "")
         )
         if extra.strip():
             async for chunk in stream_text(data, extra):
                 await flight.publish(chunk)
+        await _pump_message_tool_calls(flight, data, message)
         payload = usage_sse_data(getattr(result, "usage", None))
         if payload:
             await flight.publish(payload)
@@ -269,6 +279,7 @@ async def _pump_console_result(
     if text:
         async for chunk in stream_text(data, text):
             await flight.publish(chunk)
+    await _pump_message_tool_calls(flight, data, message)
     payload = usage_sse_data(getattr(result, "usage", None))
     if payload:
         await flight.publish(payload)
