@@ -1201,7 +1201,14 @@ run_quiet() {
   if [[ -n "${TABBY_UPDATE_LOG:-}" ]]; then
     printf '+ %s\n' "$*" >> "$TABBY_UPDATE_LOG"
     local rc=0
-    if command -v stdbuf >/dev/null 2>&1; then
+    # stdbuf only execs binaries (ensure_python312 is a function). A pipe
+    # would also subshell the function and drop assignments such as PY=.
+    if [[ "$(type -t "$1" 2>/dev/null || true)" == function ]]; then
+      if ! "$@" > >(tr '\r' '\n' | tee -a "$INSTALL_LOG" >> "$TABBY_UPDATE_LOG") 2>&1; then
+        rc=$?
+      fi
+      wait $! 2>/dev/null || true
+    elif command -v stdbuf >/dev/null 2>&1; then
       stdbuf -oL -eL "$@" 2>&1 | tr '\r' '\n' | tee -a "$INSTALL_LOG" >> "$TABBY_UPDATE_LOG" \
         || rc=${PIPESTATUS[0]:-1}
     else

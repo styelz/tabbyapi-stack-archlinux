@@ -246,3 +246,4 @@ class InstallShHeadlessUpdateTests(unittest.TestCase):
         self.assertIn(">/dev/tty 2>/dev/null || true", src)
         self.assertIn('if [[ -n "${TABBY_UPDATE_LOG:-}" ]]; then', src)
         self.assertIn('tee -a "$INSTALL_LOG" >> "$TABBY_UPDATE_LOG"', src)
+        self.assertIn('[[ "$(type -t "$1" 2>/dev/null || true)" == function ]]', src)
