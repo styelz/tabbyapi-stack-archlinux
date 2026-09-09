@@ -123,8 +123,16 @@ restore_tty() {
 progress_stop() {
   case "${GAUGE_MODE:-}" in
     dialog)
+      # Closing the fifo should EOF dialog. If wait says it is not a child
+      # (or it ignores EOF), SIGTERM so install.sh does not paint under it.
       exec 3>&- || true
-      wait "$GAUGE_PID" 2>/dev/null || true
+      if [[ -n "${GAUGE_PID:-}" ]]; then
+        wait "$GAUGE_PID" 2>/dev/null || true
+        if kill -0 "$GAUGE_PID" 2>/dev/null; then
+          kill "$GAUGE_PID" 2>/dev/null || true
+          wait "$GAUGE_PID" 2>/dev/null || true
+        fi
+      fi
       if [[ -n "$GAUGE_DIR" ]]; then
         rm -rf "$GAUGE_DIR"
       fi
@@ -1124,7 +1132,7 @@ if [[ "$UPDATE_KIND" == git ]]; then
   finish_git_update
 fi
 
-progress 100 "Code pulled; applying deps and restart"
+progress 70 "Applying deps and restart"
 trap - EXIT
 progress_stop
 export_saver_changed

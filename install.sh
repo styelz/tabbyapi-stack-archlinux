@@ -1843,6 +1843,19 @@ if [[ "$INTERACTIVE" -eq 1 ]]; then
     work_term
   fi
 fi
+# --update skips the question screens, but a TTY still gets the install
+# page. Otherwise progress() writes a text bar to /dev/tty under the
+# leftover update.sh dialog --gauge.
+if [[ "$UPDATE_MODE" -eq 1 && "$USE_TUI" -eq 0 ]] && tty_writable; then
+  case "${TERM:-}" in
+    "" | dumb | unknown) export TERM=linux ;;
+  esac
+  if need_cmd dialog; then
+    TUI=dialog
+  fi
+  USE_TUI=1
+  work_term
+fi
 
 DEFAULT_CACHE=""
 

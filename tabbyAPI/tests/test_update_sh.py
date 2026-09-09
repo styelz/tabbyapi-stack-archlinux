@@ -48,6 +48,8 @@ class UpdateShRestartOptionTests(unittest.TestCase):
         self.assertIn("log_run()", src)
         self.assertIn("tr '\\r' '\\n'", src)
         self.assertIn("stdbuf -oL -eL", src)
+        self.assertIn('kill "$GAUGE_PID"', src)
+        self.assertIn("Applying deps and restart", src)
         self.assertIn("restart_prompt_text", src)
         self.assertNotIn("tabbyapi is not running, so it was not restarted.", src)
         self.assertNotIn(
@@ -247,3 +249,7 @@ class InstallShHeadlessUpdateTests(unittest.TestCase):
         self.assertIn('if [[ -n "${TABBY_UPDATE_LOG:-}" ]]; then', src)
         self.assertIn('tee -a "$INSTALL_LOG" >> "$TABBY_UPDATE_LOG"', src)
         self.assertIn('[[ "$(type -t "$1" 2>/dev/null || true)" == function ]]', src)
+        self.assertIn(
+            'if [[ "$UPDATE_MODE" -eq 1 && "$USE_TUI" -eq 0 ]] && tty_writable; then',
+            src,
+        )
