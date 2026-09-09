@@ -248,7 +248,7 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(disk[-1]["items"][1]["status"], "queued")
                 await reset_mcp_image_jobs_for_tests()
 
-    async def test_coding_job_survives_restart_without_starting_comfy(self):
+    async def test_coding_job_is_abandoned_on_restart(self):
         from endpoints.core.image_jobs import (
             McpImageItem,
             McpImageJob,
@@ -284,10 +284,9 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
                 _persist_jobs()
                 await reset_mcp_image_jobs_for_tests()
                 recovered = get_mcp_image_job("job-coding")
-                self.assertEqual(recovered.status, "coding")
-                self.assertEqual(recovered.phase, "writing_code")
-                self.assertEqual(recovered.code_turns, 2)
-                self.assertEqual(active_mcp_image_job().id, "job-coding")
+                self.assertEqual(recovered.status, "error")
+                self.assertIn("restarted", (recovered.error or "").lower())
+                self.assertIsNone(active_mcp_image_job())
                 await reset_mcp_image_jobs_for_tests()
 
     async def test_persisted_error_job_clears_unfinished_items(self):

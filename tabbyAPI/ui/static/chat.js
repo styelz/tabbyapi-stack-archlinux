@@ -11800,7 +11800,7 @@ function mountChat(root) {
     return modelWait;
   }
 
-  async function pauseForRestart(working, activity) {
+  async function pauseForRestart(working, activity, note) {
     activity.kind = "restart";
     activity.target = "restart";
     const ready = await ensureModelWait(working, activity);
@@ -11808,7 +11808,7 @@ function mountChat(root) {
     if (working) {
       working.setActivity("Thinking", {
         processing: true,
-        note: "The API is back. Sending again.",
+        note: note || "The API is back. Sending again.",
       });
     }
     return Boolean(ready);
@@ -12293,11 +12293,19 @@ function mountChat(root) {
     async function retryAfterRestart() {
       if (stopKind || restartTries >= 4) return false;
       restartTries += 1;
-      streamResume = false;
+      // Chat can resend the last turn. Code must not start a new mixed
+      // generate after reboot — that looks like a prompt nobody sent.
+      streamResume = Boolean(sendAgent);
       assembled = "";
       reasoning = "";
       if (working.resetLive) working.resetLive({ replay: true });
-      return pauseForRestart(working, activity);
+      return pauseForRestart(
+        working,
+        activity,
+        sendAgent
+          ? "The API is back. Catching up if that reply is still running."
+          : "The API is back. Sending again."
+      );
     }
     agentTurn:
     while (true) {
@@ -12579,7 +12587,7 @@ function mountChat(root) {
       persist();
       toolRounds += 1;
       const allInspectSkipped = !ranMutate && !ranInspect && mutatedPaths.size;
-      if (!stopKind && allInspectSkipped && !visibleAnswerText(assembled) && agentDoneNudges < 1) {
+      if (!stopKind && !streamResume && allInspectSkipped && !visibleAnswerText(assembled) && agentDoneNudges < 1) {
         agentDoneNudges += 1;
         liveMessages(chatId).push({
           role: "user",
@@ -12597,7 +12605,7 @@ function mountChat(root) {
         working.setActivity("Summarizing", { processing: false });
         continue;
       }
-      if (!stopKind && toolRounds < MAX_AGENT_ROUNDS && !allInspectSkipped) {
+      if (!stopKind && !streamResume && toolRounds < MAX_AGENT_ROUNDS && !allInspectSkipped) {
         if (visibleAnswerText(assembled)) working.addStep({ type: "demote" });
         assembled = "";
         reasoning = "";
@@ -12615,6 +12623,7 @@ function mountChat(root) {
     if (
       sendAgent === "agent"
       && !stopKind
+      && !streamResume
       && !visibleAnswerText(assembled)
       && agentEmptyNudges < 1
       && !mutatedPaths.size

@@ -46,10 +46,12 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
 
     def test_chat_waits_out_api_restart_then_resends(self):
         self.assertIn("function tabbyLooksLikeRestart(err, status)", self.src)
-        self.assertIn("async function pauseForRestart(working, activity)", self.src)
+        self.assertIn("async function pauseForRestart(working, activity, note)", self.src)
         self.assertIn("async function retryAfterRestart()", self.src)
         self.assertIn("The API is restarting. This chat will continue when it is ready.", self.src)
         self.assertIn("The API is back. Sending again.", self.src)
+        self.assertIn("streamResume = Boolean(sendAgent)", self.src)
+        self.assertIn("Catching up if that reply is still running.", self.src)
         self.assertIn("if (data && data.down)", self.src)
         self.assertNotIn("Restarting. Chat is paused until the API is ready.", self.src)
 

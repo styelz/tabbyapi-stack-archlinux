@@ -522,9 +522,13 @@ def _requeue_unfinished_items(job: McpImageJob) -> None:
 
 
 def _maybe_revive_restarted_job(job: McpImageJob) -> McpImageJob:
-    """Keep unfinished Comfy work after an API bounce; honor explicit cancels."""
+    """Keep unfinished Comfy work after an API bounce; honor explicit cancels.
+
+    A coding job cannot resume the LLM write after this process died. Leave
+    it abandoned so the next Code message is a new turn, not a ghost generate.
+    """
     if job.status == "coding":
-        job.phase = "writing_code"
+        _mark_job_abandoned(job, RESTART_ABANDON_REASON)
         return job
     if job.status == "done":
         return job

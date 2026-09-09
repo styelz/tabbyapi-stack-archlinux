@@ -109,6 +109,9 @@ async def entrypoint_async():
     # If an initial model name is specified, create a container
     # and load the model. Skip when Flux owns the GPU so a Tabby
     # restart does not OOM-loop against ComfyUI.
+    from common.live_decode import clear as clear_live_decode
+
+    clear_live_decode()
     model_name = config.model.model_name
     from common.gpu_mode import should_skip_startup_load
 
