@@ -83,6 +83,13 @@ def _persist_locked(*, force: bool = False) -> None:
     _last_write = now
     payload = _snapshot_locked()
     path = LIVE_PATH
+    if not payload.get("busy") and str(payload.get("stage") or "idle") == "idle":
+        for victim in (path, path.with_name(path.name + ".tmp")):
+            try:
+                victim.unlink()
+            except OSError:
+                pass
+        return
     try:
         tmp = path.with_name(path.name + ".tmp")
         tmp.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
@@ -193,9 +200,20 @@ def read_live_file(path: Path | None = None) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
-def overlay_live_file(payload: dict[str, Any] | None, live: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Prefer the sidecar when a prompt is in flight and HTTP is stale or hung."""
+def overlay_live_file(
+    payload: dict[str, Any] | None,
+    live: dict[str, Any] | None,
+    *,
+    trust_idle_http: bool = False,
+) -> dict[str, Any] | None:
+    """Prefer the sidecar when a prompt is in flight and HTTP is stale or hung.
+
+    A leftover saver-live.json from a killed generate must not override a
+    fresh idle /saver/state poll.
+    """
     if not live or not live.get("busy"):
+        return payload
+    if trust_idle_http and _http_status_idle(payload):
         return payload
     out = dict(payload or {})
     out["busy"] = True
@@ -217,6 +235,17 @@ def overlay_live_file(payload: dict[str, Any] | None, live: dict[str, Any] | Non
     if run_tokens > 0:
         out["run_tokens"] = run_tokens
     return out
+
+
+def _http_status_idle(payload: dict[str, Any] | None) -> bool:
+    if not isinstance(payload, dict) or not payload:
+        return False
+    if payload.get("busy") or payload.get("switching") or payload.get("restarting"):
+        return False
+    if payload.get("recovering"):
+        return False
+    stage = str(payload.get("stage") or "idle").strip().lower()
+    return stage in ("", "idle")
 
 
 def reset_for_tests() -> None:

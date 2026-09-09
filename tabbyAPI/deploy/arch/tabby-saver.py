@@ -606,10 +606,15 @@ def read_saver_live() -> dict[str, Any] | None:
 
 
 def overlay_saver_live(
-    payload: dict[str, Any] | None, live: dict[str, Any] | None
+    payload: dict[str, Any] | None,
+    live: dict[str, Any] | None,
+    *,
+    trust_idle_http: bool = False,
 ) -> dict[str, Any] | None:
     """Apply the API sidecar when HTTP is idle or hung mid-prompt."""
     if not live or not live.get("busy"):
+        return payload
+    if trust_idle_http and _http_status_idle(payload):
         return payload
     out = dict(payload or {})
     out["busy"] = True
@@ -631,6 +636,17 @@ def overlay_saver_live(
     if run_tokens > 0:
         out["run_tokens"] = run_tokens
     return out
+
+
+def _http_status_idle(payload: dict[str, Any] | None) -> bool:
+    if not isinstance(payload, dict) or not payload:
+        return False
+    if payload.get("busy") or payload.get("switching") or payload.get("restarting"):
+        return False
+    if payload.get("recovering"):
+        return False
+    stage = str(payload.get("stage") or "idle").strip().lower()
+    return stage in ("", "idle")
 
 
 def _exp_approach(current: float, target: float, dt: float, tau: float) -> float:
@@ -1148,13 +1164,16 @@ class StateBus:
                 self.ingest(overlay_saver_live(cached, live), True)
             reachable = tcp_up(host, port)
             payload = fetch_state(url, timeout=0.15) if reachable else None
+            http_fresh = payload is not None
             if payload is None:
                 reachable = tcp_up(host, port)
             live = read_saver_live()
             if payload is None and live and live.get("busy"):
                 with self.lock:
                     payload = dict(self.data) if self.data else {}
-            payload = overlay_saver_live(payload, live)
+            payload = overlay_saver_live(
+                payload, live, trust_idle_http=http_fresh
+            )
             self.ingest(payload, reachable or bool(payload and payload.get("busy")))
             self.stop.wait(interval)
 
@@ -2791,7 +2810,9 @@ def run_visible_field(args: argparse.Namespace, bus: StateBus, follow: SceneFoll
             dt = now - prev
             prev = now
             data, ok = bus.snapshot()
-            data = overlay_saver_live(data, read_saver_live())
+            data = overlay_saver_live(
+                data, read_saver_live(), trust_idle_http=True
+            )
             ok = bool(ok or (data and data.get("busy")))
             scene = follow.tick(scene_from_state(data, ok), dt, now)
             field = draw_field(max(64, args.width), max(36, args.height), scene)

@@ -368,6 +368,14 @@ class SaverKioskSceneTests(unittest.TestCase):
         self.assertEqual(scene["phase"], "thinking")
         self.assertEqual(scene["palette"], "chat")
 
+    def test_fresh_idle_http_ignores_stale_sidecar(self):
+        idle = {"gpu_mode": "llm", "profile": "qwen", "busy": False, "stage": "idle"}
+        live = {"busy": True, "stage": "prefill", "tokens": 0}
+        merged = self.kiosk.overlay_saver_live(idle, live, trust_idle_http=True)
+        scene = self.kiosk.scene_from_state(merged, True)
+        self.assertFalse(scene["live"])
+        self.assertEqual(scene["phase"], "idle")
+
     def test_overlay_live_file_without_http_payload(self):
         merged = self.kiosk.overlay_saver_live(None, {"busy": True, "stage": "prefill"})
         scene = self.kiosk.scene_from_state(merged, True)
@@ -1867,6 +1875,16 @@ class LiveDecodeTests(unittest.TestCase):
         self.assertEqual(out["stage"], "prefill")
         self.assertEqual(out["kind"], "chat")
         self.assertEqual(out["profile"], "qwen")
+        trusted = live_decode.overlay_live_file(idle, live, trust_idle_http=True)
+        self.assertFalse(trusted["busy"])
+        self.assertEqual(trusted["stage"], "idle")
+
+    def test_idle_persist_removes_sidecar(self):
+        live_decode.hold("http:1")
+        self.assertTrue(live_decode.LIVE_PATH.is_file())
+        live_decode.release("http:1")
+        self.assertFalse(live_decode.LIVE_PATH.is_file())
+        self.assertIsNone(live_decode.read_live_file())
 
     def test_hold_writes_live_sidecar(self):
         live_decode.hold("http:1")
