@@ -83,12 +83,12 @@ def _llm_jobs_active() -> bool:
         return False
 
 
+def _gpu_held() -> bool:
+    return _image_job() is not None or _switch_busy() or _llm_jobs_active()
+
+
 def _lease_work_live() -> bool:
-    if _image_job() is not None:
-        return True
-    if _switch_busy():
-        return True
-    if _llm_jobs_active():
+    if _gpu_held():
         return True
     try:
         from ui.flight import iter_live_flights
@@ -101,7 +101,13 @@ def _lease_work_live() -> bool:
 
 
 def _externally_busy() -> bool:
-    return _lease_work_live()
+    """True when another GPU job still owns the card.
+
+    Console Chat registers a flight before it takes the lease so SSE and the
+    kiosk can show the wait. That flight is this request, not a second job, so
+    it must not block try_acquire / promote.
+    """
+    return _gpu_held()
 
 
 def _reclaim_stale() -> bool:

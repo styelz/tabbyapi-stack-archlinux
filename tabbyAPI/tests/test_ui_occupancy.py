@@ -102,6 +102,37 @@ class OccupancySnapshotTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(snap["kind"], "chat")
         self.assertIsNone(snap["occupant"])
 
+    async def test_live_flight_does_not_block_acquire_or_promote(self):
+        """Streaming UI chat registers its flight, then takes the gate."""
+        with (
+            mock.patch("ui.occupancy._image_job", return_value=None),
+            mock.patch("ui.occupancy._switch_busy", return_value=False),
+            mock.patch("ui.occupancy._llm_jobs_active", return_value=False),
+            mock.patch("ui.flight.iter_live_flights", return_value=[object()]),
+        ):
+            self.assertTrue(occupancy._lease_work_live())
+            self.assertFalse(occupancy._externally_busy())
+            oid = await occupancy.try_acquire("alice", kind="chat")
+            self.assertIsNotNone(oid)
+            await occupancy.release(oid)
+            waiter = await occupancy.enqueue("alice", kind="chat")
+            promoted = await occupancy.promote(waiter)
+            self.assertIsNotNone(promoted)
+            await occupancy.release(promoted)
+
+    async def test_reclaim_skips_done_task_while_flight_live(self):
+        with (
+            mock.patch("ui.occupancy._image_job", return_value=None),
+            mock.patch("ui.occupancy._switch_busy", return_value=False),
+            mock.patch("ui.occupancy._llm_jobs_active", return_value=False),
+        ):
+            oid = await occupancy.try_acquire("alice", kind="chat")
+        occupancy._occupant.task = mock.Mock(done=lambda: True)
+        with mock.patch("ui.flight.iter_live_flights", return_value=[object()]):
+            self.assertFalse(occupancy._reclaim_stale())
+        self.assertEqual(occupancy._occupant.id, oid)
+        occupancy._occupant = None
+
     async def test_reclaim_skips_done_task_while_llm_job_runs(self):
         with (
             mock.patch("ui.occupancy._image_job", return_value=None),
