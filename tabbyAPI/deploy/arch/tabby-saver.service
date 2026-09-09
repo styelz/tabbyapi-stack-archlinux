@@ -27,7 +27,7 @@ AmbientCapabilities=CAP_SYS_TTY_CONFIG
 CapabilityBoundingSet=CAP_SYS_TTY_CONFIG
 EnvironmentFile=-__TABBY_DIR__/deploy/arch/tabby.env
 Environment=HOME=__SAVER_HOME__
-Environment=SDL_VIDEODRIVER=kmsdrm
+Environment=SDL_VIDEODRIVER=dummy
 Environment=SDL_RENDER_DRIVER=software
 Environment=LIBGL_ALWAYS_SOFTWARE=1
 Environment=SDL_AUDIODRIVER=dummy

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
@@ -93,15 +95,40 @@ def _job(**kwargs):
         restore=True,
         items=items,
         urls=[],
+        progress_seq=0,
+        progress=asyncio.Event(),
+        code_turns=0,
     )
     defaults.update(kwargs)
     return SimpleNamespace(**defaults)
+
+
+def _progress_finish(finish):
+    async def _wait(job, *_args, **_kwargs):
+        await finish(job)
+
+    return _wait
 
 
 class DestExistsTests(unittest.TestCase):
     def test_png_dest_matches_webp_on_disk(self):
         self.assertTrue(_dest_exists("images/logo.png", ["images/logo.webp"]))
         self.assertFalse(_dest_exists("images/logo.png", ["images/hero.webp"]))
+
+
+class ClassifySkipTests(unittest.TestCase):
+    def test_plain_chat_skips_classify(self):
+        from common.phrase_switch import turn_needs_image_classify
+
+        self.assertFalse(turn_needs_image_classify("Reply with the single word ping."))
+        self.assertFalse(turn_needs_image_classify("hello"))
+
+    def test_image_and_code_need_classify(self):
+        from common.phrase_switch import turn_needs_image_classify
+
+        self.assertTrue(turn_needs_image_classify("generate an image of a cat"))
+        self.assertTrue(turn_needs_image_classify("Create a website with a logo"))
+        self.assertTrue(turn_needs_image_classify("qwen-image: a cafe logo"))
 
 
 class CodeReplyHintTests(unittest.TestCase):
@@ -444,6 +471,55 @@ class CurlFromLivingFilesTests(unittest.TestCase):
 
 
 class ChatHoldTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        from images.jobs import reset_mcp_image_jobs_for_tests
+        from ui.occupancy import reset_for_tests as reset_occupancy
+
+        reset_occupancy()
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self._gallery_patch = mock.patch(
+            "common.gpu_mode.GENERATED_DIR", Path(self._tmpdir.name)
+        )
+        self._gallery_patch.start()
+        await reset_mcp_image_jobs_for_tests()
+
+    async def asyncTearDown(self):
+        from images.jobs import reset_mcp_image_jobs_for_tests
+
+        await reset_mcp_image_jobs_for_tests()
+        self._gallery_patch.stop()
+        self._tmpdir.cleanup()
+
+    async def test_plain_chat_skips_image_classify(self):
+        data = _user("Reply with the single word ping.")
+        classify = mock.AsyncMock()
+        with (
+            mock.patch("images.chat.get_mcp_image_job", return_value=None),
+            mock.patch("images.chat.active_mcp_image_job", return_value=None),
+            mock.patch("images.chat.classify_image_turn", new=classify),
+        ):
+            response = await handle(data, "https://gpu.example/v1")
+        self.assertIsNone(response)
+        classify.assert_not_awaited()
+
+    async def test_website_with_logo_still_classifies(self):
+        data = _user("Create a website with a logo")
+        job = _job(status="coding")
+        classify = mock.AsyncMock(
+            return_value=ImageTurnPlan(action="none", items=[])
+        )
+        with (
+            mock.patch("images.chat.get_mcp_image_job", return_value=None),
+            mock.patch("images.chat.active_mcp_image_job", return_value=None),
+            mock.patch("images.chat.classify_image_turn", new=classify),
+            mock.patch(
+                "images.chat.start_mcp_image_job",
+                new=mock.AsyncMock(return_value=(job, "started")),
+            ),
+        ):
+            await handle(data, "https://gpu.example/v1")
+        classify.assert_awaited()
+
     async def test_mixed_ask_plans_dests_via_mocked_json_not_regex(self):
         planned = [
             {"prompt": "qwen-image: logo that says Cosmos", "output_path": "images/logo.png"},
@@ -492,7 +568,7 @@ class ChatHoldTests(unittest.IsolatedAsyncioTestCase):
                 "images.chat.start_mcp_image_job",
                 new=mock.AsyncMock(return_value=(job, "started")),
             ) as start,
-            mock.patch("images.chat.wait_until_done", side_effect=finish),
+            mock.patch("images.chat.wait_mcp_job_progress", side_effect=_progress_finish(finish)),
             mock.patch("images.paths.gpu_generated_file_missing", return_value=False),
         ):
             response = await handle(data, "https://gpu.example/v1")
@@ -500,11 +576,9 @@ class ChatHoldTests(unittest.IsolatedAsyncioTestCase):
         dests = [row["output_path"] for row in kwargs["items"]]
         self.assertEqual(dests, ["images/logo.png", "images/mars.png"])
         self.assertTrue(kwargs["restore"])
-        args = response.choices[0].message.tool_calls[0].function.arguments
-        self.assertIn("generated-logo.png", args)
-        self.assertIn("generated-mars.png", args)
-        self.assertIn("tabby-image-job:", response.choices[0].message.content)
-        self.assertNotIn("sleep ", args)
+        content = response.choices[0].message.content
+        self.assertIn("tabby-image-job:", content)
+        self.assertIsNone(response.choices[0].message.tool_calls)
 
     async def test_fresh_chat_does_not_curl_a_leftover_job(self):
         leftover = _job(
@@ -550,14 +624,15 @@ class ChatHoldTests(unittest.IsolatedAsyncioTestCase):
                 "images.chat.start_mcp_image_job",
                 new=mock.AsyncMock(return_value=(new_job, "started")),
             ) as start,
-            mock.patch("images.chat.wait_until_done", side_effect=finish),
+            mock.patch("images.chat.wait_mcp_job_progress", side_effect=_progress_finish(finish)),
             mock.patch("images.paths.gpu_generated_file_missing", return_value=False),
         ):
             response = await handle(data, "https://gpu.example/v1")
         start.assert_awaited()
-        args = response.choices[0].message.tool_calls[0].function.arguments
-        self.assertIn("generated-new.png", args)
-        self.assertNotIn("generated-old.png", args)
+        content = response.choices[0].message.content
+        self.assertIn("tabby-image-job:", content)
+        self.assertNotIn("generated-old.png", content)
+        self.assertIsNone(response.choices[0].message.tool_calls)
 
     async def test_resume_hold_when_history_has_job_id(self):
         job = _job(id="abc-123", status="running", items=[
@@ -591,7 +666,7 @@ class ChatHoldTests(unittest.IsolatedAsyncioTestCase):
         with (
             mock.patch("images.chat.get_mcp_image_job", return_value=job),
             mock.patch("images.chat.start_mcp_image_job", new=mock.AsyncMock()) as start,
-            mock.patch("images.chat.wait_until_done", side_effect=finish),
+            mock.patch("images.chat.wait_mcp_job_progress", side_effect=_progress_finish(finish)),
             mock.patch("images.paths.gpu_generated_file_missing", return_value=False),
         ):
             response = await handle(data, "https://gpu.example/v1")
@@ -636,7 +711,7 @@ class ChatHoldTests(unittest.IsolatedAsyncioTestCase):
                 "images.chat.start_mcp_image_job",
                 new=mock.AsyncMock(return_value=(job, "started")),
             ) as start,
-            mock.patch("images.chat.wait_until_done", side_effect=finish),
+            mock.patch("images.chat.wait_mcp_job_progress", side_effect=_progress_finish(finish)),
             mock.patch("images.paths.gpu_generated_file_missing", return_value=False),
         ):
             response = await handle(data, "https://gpu.example/v1")
@@ -650,8 +725,11 @@ class ChatHoldTests(unittest.IsolatedAsyncioTestCase):
                 "images/desserts.png",
             ],
         )
-        args = response.choices[0].message.tool_calls[0].function.arguments
-        self.assertIn("generated-0.png", args)
+        content = response.choices[0].message.content or ""
+        args = ""
+        if response.choices[0].message.tool_calls:
+            args = response.choices[0].message.tool_calls[0].function.arguments
+        self.assertNotIn("Pillow", content)
         self.assertNotIn("Pillow", args)
 
     async def test_layout_followup_after_curl_does_not_start_a_job(self):
@@ -769,7 +847,7 @@ class ChatHoldTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(response)
 
     async def test_empty_generate_plan_does_not_start_a_job(self):
-        data = _user("Create a website with a logo")
+        data = _user("Create a website")
         with (
             mock.patch(
                 "images.chat.classify_image_turn",
@@ -777,6 +855,7 @@ class ChatHoldTests(unittest.IsolatedAsyncioTestCase):
                     return_value=ImageTurnPlan(action="generate", items=[])
                 ),
             ),
+            mock.patch("images.chat.active_mcp_image_job", return_value=None),
             mock.patch("images.chat.start_mcp_image_job", new=mock.AsyncMock()) as start,
         ):
             response = await handle(data, "https://gpu.example/v1")
@@ -815,7 +894,7 @@ class ChatHoldTests(unittest.IsolatedAsyncioTestCase):
                 new=mock.AsyncMock(side_effect=fake_start),
             ) as start,
             mock.patch("images.chat.launch_mcp_image_job", new=mock.AsyncMock()) as launch,
-            mock.patch("images.chat.wait_until_done", new=mock.AsyncMock()) as wait,
+            mock.patch("images.chat.wait_mcp_job_progress", new=mock.AsyncMock()) as wait,
         ):
             response = await handle(data, "https://gpu.example/v1")
         self.assertEqual(order, ["code", "remember"])
@@ -867,7 +946,7 @@ class ChatHoldTests(unittest.IsolatedAsyncioTestCase):
             mock.patch("images.chat._write_site_code", side_effect=fake_write),
             mock.patch("images.chat.launch_mcp_image_job", new=mock.AsyncMock()) as launch,
             mock.patch("images.chat.start_mcp_image_job", new=mock.AsyncMock()) as start,
-            mock.patch("images.chat.wait_until_done", new=mock.AsyncMock()) as wait,
+            mock.patch("images.chat.wait_mcp_job_progress", new=mock.AsyncMock()) as wait,
         ):
             job.code_turns = 2
             response = await handle(data, "https://gpu.example/v1")
@@ -943,7 +1022,7 @@ class ChatHoldTests(unittest.IsolatedAsyncioTestCase):
                 "images.chat.launch_mcp_image_job",
                 new=mock.AsyncMock(side_effect=fake_launch),
             ) as launch,
-            mock.patch("images.chat.wait_until_done", side_effect=finish),
+            mock.patch("images.chat.wait_mcp_job_progress", side_effect=_progress_finish(finish)),
             mock.patch("images.paths.gpu_generated_file_missing", return_value=False),
         ):
             job.code_turns = 3
@@ -999,7 +1078,7 @@ class ChatHoldTests(unittest.IsolatedAsyncioTestCase):
             mock.patch("images.chat._write_site_code", side_effect=fake_write),
             mock.patch("images.chat.launch_mcp_image_job", new=mock.AsyncMock()) as launch,
             mock.patch("images.chat.start_mcp_image_job", new=mock.AsyncMock()) as start,
-            mock.patch("images.chat.wait_until_done", new=mock.AsyncMock()) as wait,
+            mock.patch("images.chat.wait_mcp_job_progress", new=mock.AsyncMock()) as wait,
         ):
             job.code_turns = 3
             response = await handle(data, "https://gpu.example/v1")
@@ -1074,7 +1153,7 @@ class ChatHoldTests(unittest.IsolatedAsyncioTestCase):
         with (
             mock.patch("images.chat.get_mcp_image_job", return_value=job),
             mock.patch("images.chat.start_mcp_image_job", new=mock.AsyncMock()) as start,
-            mock.patch("images.chat.wait_until_done", side_effect=finish),
+            mock.patch("images.chat.wait_mcp_job_progress", side_effect=_progress_finish(finish)),
             mock.patch("images.paths.gpu_generated_file_missing", return_value=False),
         ):
             response = await handle(data, "https://gpu.example/v1")
@@ -1085,6 +1164,25 @@ class ChatHoldTests(unittest.IsolatedAsyncioTestCase):
 
 
 class McpWaitTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        from images.jobs import reset_mcp_image_jobs_for_tests
+        from ui.occupancy import reset_for_tests as reset_occupancy
+
+        reset_occupancy()
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self._gallery_patch = mock.patch(
+            "common.gpu_mode.GENERATED_DIR", Path(self._tmpdir.name)
+        )
+        self._gallery_patch.start()
+        await reset_mcp_image_jobs_for_tests()
+
+    async def asyncTearDown(self):
+        from images.jobs import reset_mcp_image_jobs_for_tests
+
+        await reset_mcp_image_jobs_for_tests()
+        self._gallery_patch.stop()
+        self._tmpdir.cleanup()
+
     async def test_generate_tool_waits_until_job_is_done(self):
         from common.mcp_images import run_generate_tool
 

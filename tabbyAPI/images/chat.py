@@ -1547,6 +1547,7 @@ async def handle(
         refuses_new_images,
         requested_image_prompt,
         text_response,
+        turn_needs_image_classify,
         wants_border_trim,
     )
 
@@ -1665,6 +1666,9 @@ async def handle(
             )
 
     if refuses_new_images(ask) and not IMAGE_GEN_RE.match(ask):
+        return None
+
+    if llm_ready and not turn_needs_image_classify(ask):
         return None
 
     if llm_ready:

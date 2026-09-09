@@ -1168,8 +1168,8 @@ def is_coding_task(text: str) -> bool:
 def is_page_layout_ask(text: str) -> bool:
     """True when this line is page/HTML work, not a standalone image prompt.
 
-    Used only when the coding model is not loaded (Comfy owns the GPU). The
-    mixed-chat gate is LLM classify, not this helper.
+    Used only when the coding model is not loaded (Comfy owns the GPU). Plain
+    chat skips classify; coding and image-noun turns still go through the LLM.
     """
     raw = text or ""
     return bool(CODING_TASK_RE.search(raw) or USE_IN_UI_RE.search(raw))
@@ -1384,6 +1384,24 @@ def looks_like_chat_not_image(text: str) -> bool:
     if IMAGE_NOUN_RE.search(raw) and not CHAT_QUESTION_RE.match(raw):
         return False
     return bool(CHAT_OPENER_RE.match(raw))
+
+
+def turn_needs_image_classify(text: str) -> bool:
+    """True when mixed-plan classify should run. Plain chat skips that extra generate."""
+    raw = (text or "").strip()
+    if not raw:
+        return False
+    if IMAGE_GEN_RE.match(raw) or IMAGE_COUNT_RE.match(raw):
+        return True
+    if raw.lower().startswith("qwen-image:"):
+        return True
+    if is_coding_task(raw):
+        return True
+    if IMAGE_NOUN_RE.search(raw):
+        return True
+    if wants_border_trim(raw):
+        return True
+    return False
 
 
 def comfy_chat_suggest_text() -> str:

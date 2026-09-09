@@ -1,8 +1,10 @@
 #!/usr/bin/python
-"""CPU-rendered KMSDRM kiosk: stack activity as a thermal field.
+"""CPU-rendered TTY kiosk: stack activity as a thermal field.
 
 Does not import TabbyAPI or CUDA. Polls GET /v1/ui/saver/state on localhost.
-Software SDL only — do not point this at a GL renderer on the LLM GPU.
+Pygame draws into RAM (SDL dummy). Pixels go to /dev/fb0 with the CPU.
+Never open kmsdrm/EGL/GL — NVIDIA's kmsdrm driver ignores LIBGL_ALWAYS_SOFTWARE
+and steals SM time from the LLM.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ import fcntl
 import glob
 import json
 import math
+import mmap
 import os
 import select
 import socket
@@ -39,6 +42,9 @@ DOWN_TEXT = (232, 96, 90)
 
 VT_ACTIVATE = 0x5606
 VT_WAITACTIVE = 0x5607
+KDSETMODE = 0x4B3A
+KD_TEXT = 0
+KD_GRAPHICS = 1
 EV_KEY = 0x01
 EV_REL = 0x02
 EV_ABS = 0x03
@@ -69,6 +75,131 @@ TWO_PI = 2.0 * math.pi
 
 def lsin(x: float) -> float:
     return SIN_LUT[int(x * (SIN_SIZE / TWO_PI)) & SIN_MASK]
+
+
+def prepare_kiosk_sdl_env() -> None:
+    """Force CPU pygame. NVIDIA kmsdrm/EGL ignores LIBGL_ALWAYS_SOFTWARE."""
+    os.environ["SDL_VIDEODRIVER"] = "dummy"
+    os.environ["SDL_RENDER_DRIVER"] = "software"
+    os.environ["LIBGL_ALWAYS_SOFTWARE"] = "1"
+    os.environ["SDL_AUDIODRIVER"] = "dummy"
+    os.environ.pop("DISPLAY", None)
+    os.environ.pop("WAYLAND_DISPLAY", None)
+
+
+def read_fb0_geometry(
+    sys_dir: str = "/sys/class/graphics/fb0",
+) -> tuple[int, int, int, int]:
+    """width, height, stride bytes, bits per pixel."""
+    base = Path(sys_dir)
+    width_s, height_s = base.joinpath("virtual_size").read_text(encoding="ascii").strip().split(",", 1)
+    width, height = int(width_s), int(height_s)
+    stride = int(base.joinpath("stride").read_text(encoding="ascii").strip())
+    bpp_path = base / "bits_per_pixel"
+    bpp = int(bpp_path.read_text(encoding="ascii").strip()) if bpp_path.exists() else 32
+    if width < 64 or height < 36:
+        raise ValueError(f"fb0 too small: {width}x{height}")
+    if bpp != 32:
+        raise ValueError(f"fb0 bits_per_pixel {bpp} is not 32")
+    if stride < width * 4:
+        raise ValueError(f"fb0 stride {stride} too small for width {width}")
+    return width, height, stride, bpp
+
+
+def compose_size(fb_w: int, fb_h: int, max_edge: int = 1280) -> tuple[int, int]:
+    """Pygame draw size. Keep 4K fb presents as a cheap nearest upsample."""
+    width = max(64, int(fb_w))
+    height = max(36, int(fb_h))
+    long = max(width, height)
+    cap = max(64, int(max_edge))
+    if long <= cap:
+        return width, height
+    scale = cap / long
+    return max(64, int(round(width * scale))), max(36, int(round(height * scale)))
+
+
+def nearest_rgb(rgb: Any, width: int, height: int) -> Any:
+    import numpy as np
+
+    src_h, src_w = int(rgb.shape[0]), int(rgb.shape[1])
+    if src_h == height and src_w == width:
+        return rgb
+    y = (np.arange(height) * src_h) // height
+    x = (np.arange(width) * src_w) // width
+    return rgb[y[:, None], x]
+
+
+def pack_rgb_into_fb(rgb: Any, fb: Any, width: int, stride: int) -> None:
+    """Copy HxWx3 RGB into a BGRA mmap view shaped (height, stride/4, 4)."""
+    h = int(rgb.shape[0])
+    w = min(int(rgb.shape[1]), int(width))
+    cols = stride // 4
+    fb[:h, :w, 0] = rgb[:, :w, 2]
+    fb[:h, :w, 1] = rgb[:, :w, 1]
+    fb[:h, :w, 2] = rgb[:, :w, 0]
+    fb[:h, :w, 3] = 255
+    if cols > w:
+        fb[:h, w:cols, :] = 0
+
+
+class CpuFramebuffer:
+    """CPU present path: mmap /dev/fb0. Does not open DRM, EGL, GL, or NVIDIA."""
+
+    def __init__(
+        self,
+        dev: str = "/dev/fb0",
+        sys_dir: str = "/sys/class/graphics/fb0",
+    ) -> None:
+        self.width, self.height, self.stride, self.bpp = read_fb0_geometry(sys_dir)
+        self.fd = os.open(dev, os.O_RDWR)
+        self.mem = mmap.mmap(self.fd, self.stride * self.height)
+        self._view: Any = None
+
+    def size(self) -> tuple[int, int]:
+        return self.width, self.height
+
+    def present_rgb(self, rgb: Any) -> None:
+        import numpy as np
+
+        if self._view is None:
+            self._view = np.ndarray(
+                (self.height, self.stride // 4, 4),
+                dtype=np.uint8,
+                buffer=self.mem,
+            )
+        pack_rgb_into_fb(rgb, self._view, self.width, self.stride)
+
+    def present_surface(self, pygame_mod: Any, surface: Any) -> None:
+        import numpy as np
+
+        arr = pygame_mod.surfarray.array3d(surface)
+        rgb = nearest_rgb(np.transpose(arr, (1, 0, 2)), self.width, self.height)
+        self.present_rgb(rgb)
+
+    def close(self) -> None:
+        self._view = None
+        try:
+            self.mem.close()
+        except Exception:
+            pass
+        try:
+            os.close(self.fd)
+        except OSError:
+            pass
+
+
+def set_tty_graphics(enabled: bool) -> None:
+    mode = KD_GRAPHICS if enabled else KD_TEXT
+    for stream in (sys.stdin, sys.stdout):
+        try:
+            fd = stream.fileno()
+        except Exception:
+            continue
+        try:
+            fcntl.ioctl(fd, KDSETMODE, mode)
+            return
+        except OSError:
+            continue
 
 
 def _mix(c0: tuple[int, int, int], c1: tuple[int, int, int], t: float) -> tuple[int, int, int]:
@@ -592,6 +723,26 @@ def fetch_state(url: str, timeout: float = 0.8) -> dict[str, Any] | None:
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError, ValueError):
         return None
     return payload if isinstance(payload, dict) else None
+
+
+def state_is_busy(payload: dict[str, Any] | None, live: dict[str, Any] | None = None) -> bool:
+    """True when the kiosk must follow a live job, not the idle wash."""
+    for src in (live, payload):
+        if not isinstance(src, dict):
+            continue
+        if src.get("busy") or src.get("live") or src.get("switching") or src.get("restarting"):
+            return True
+        stage = str(src.get("stage") or "").strip().lower()
+        if stage in {"prefill", "decode", "tool", "image", "switch", "recover"}:
+            return True
+    return False
+
+
+def http_poll_gap(*, busy: bool, idle_s: float = 1.0, busy_s: float = 0.1) -> float:
+    """Idle HTTP stays slow so the API can start a generate. Busy stays snappy."""
+    idle_s = max(0.2, float(idle_s))
+    busy_s = max(0.08, min(float(busy_s), idle_s))
+    return busy_s if busy else idle_s
 
 
 _LIVE_PATH = Path(__file__).resolve().parents[2] / "saver-live.json"
@@ -1192,6 +1343,8 @@ class StateBus:
 
     def run(self, url: str, interval: float) -> None:
         host, port = origin_peer(url)
+        last_http = 0.0
+        tick = 0.1
         while not self.stop.is_set():
             live = read_saver_live()
             with self.lock:
@@ -1202,19 +1355,33 @@ class StateBus:
             # treat a leftover file as a live prompt.
             if live and live.get("busy") and had_http:
                 self.ingest(overlay_saver_live(cached, live), True)
-            reachable = tcp_up(host, port)
-            payload = fetch_state(url, timeout=0.8) if reachable else None
-            http_fresh = payload is not None
-            if payload is None:
+            now = time.monotonic()
+            due = (now - last_http) >= http_poll_gap(
+                busy=state_is_busy(cached, live), idle_s=interval
+            )
+            payload = None
+            http_fresh = False
+            reachable = True
+            if due:
                 reachable = tcp_up(host, port)
+                payload = fetch_state(url, timeout=0.8) if reachable else None
+                last_http = now
+                http_fresh = payload is not None
+                if payload is None:
+                    reachable = tcp_up(host, port)
             live = read_saver_live()
             if payload is None and live and live.get("busy") and had_http:
                 payload = dict(cached) if cached else None
+            elif payload is None and cached is not None:
+                payload = dict(cached)
             payload = overlay_saver_live(
                 payload, live, trust_idle_http=http_fresh
             )
-            self.ingest(payload, reachable or bool(payload and payload.get("busy")))
-            self.stop.wait(interval)
+            self.ingest(
+                payload,
+                (reachable if due else True) or bool(payload and payload.get("busy")),
+            )
+            self.stop.wait(tick)
 
 
 def _warm_palette(
@@ -2619,6 +2786,26 @@ def field_input_action(
     return is_dismiss_event(event, pygame_mod, windowed)
 
 
+def watch_field_action(
+    kind: str,
+    *,
+    idle_quiet: bool = False,
+    hud_alpha: float = 1.0,
+    hud_hold_s: float = HUD_IDLE_HOLD_S,
+) -> str | None:
+    """Same peek/dismiss rules as pygame events, for evdev while SDL is dummy."""
+    if kind not in {"key", "motion"}:
+        return None
+    if (
+        idle_quiet
+        and float(hud_hold_s) > 0.0
+        and hud_alpha <= HUD_IDLE_HIDE_ALPHA
+        and kind == "motion"
+    ):
+        return "peek"
+    return "dismiss"
+
+
 def apply_peek_grace(grace_until: float, now: float) -> float:
     """Ignore dismiss for 1s after a peek so leftover mouse motion does not drop the field."""
     return max(float(grace_until), now + HUD_IDLE_PEEK_GRACE_S)
@@ -2630,6 +2817,7 @@ class InputWatch:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._last = time.monotonic()
+        self._kind = "key"
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -2637,9 +2825,15 @@ class InputWatch:
         with self._lock:
             return self._last
 
-    def bump(self) -> None:
+    def last_kind(self) -> str:
+        with self._lock:
+            return self._kind
+
+    def bump(self, kind: str = "key") -> None:
         with self._lock:
             self._last = time.monotonic()
+            if kind in {"key", "motion"}:
+                self._kind = kind
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._run, name="saver-input", daemon=True)
@@ -2681,6 +2875,7 @@ class InputWatch:
                 refresh = 0.0
                 continue
             activity = False
+            kind = "key"
             for fd in ready:
                 try:
                     data = os.read(fd, size * 32)
@@ -2694,11 +2889,12 @@ class InputWatch:
                     _sec, _usec, ev_type, _code, _value = struct.unpack_from(fmt, data, off)
                     if evdev_is_activity(ev_type):
                         activity = True
+                        kind = "key" if ev_type == EV_KEY else "motion"
                         break
                 if activity:
                     break
             if activity:
-                self.bump()
+                self.bump(kind)
         for fd in fds:
             try:
                 os.close(fd)
@@ -2707,7 +2903,7 @@ class InputWatch:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Tabby-stack activity screensaver (KMSDRM)")
+    parser = argparse.ArgumentParser(description="Tabby-stack activity screensaver (CPU framebuffer)")
     parser.add_argument(
         "--window",
         action="store_true",
@@ -2721,7 +2917,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--fps", type=int, default=int(os.environ.get("TABBY_SAVER_FPS", "24")))
     parser.add_argument("--width", type=int, default=480, help="Internal field width")
     parser.add_argument("--height", type=int, default=270, help="Internal field height")
-    parser.add_argument("--poll", type=float, default=0.1, help="Seconds between API polls")
+    parser.add_argument("--poll", type=float, default=float(os.environ.get("TABBY_SAVER_POLL_S", "1.0")), help="Seconds between idle API polls (busy stays 0.1)")
     parser.add_argument(
         "--idle",
         type=float,
@@ -2756,12 +2952,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def _init_display(windowed: bool):
     os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
     os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+    fb: CpuFramebuffer | None = None
     if not windowed:
-        os.environ.setdefault("SDL_VIDEODRIVER", "kmsdrm")
-        os.environ.setdefault("SDL_RENDER_DRIVER", "software")
-        os.environ.setdefault("LIBGL_ALWAYS_SOFTWARE", "1")
-        os.environ.pop("DISPLAY", None)
-        os.environ.pop("WAYLAND_DISPLAY", None)
+        prepare_kiosk_sdl_env()
     try:
         import pygame
     except ImportError as exc:
@@ -2776,19 +2969,24 @@ def _init_display(windowed: bool):
         if val is not None and val not in allowed:
             allowed.append(val)
     pygame.event.set_allowed(allowed)
-    flags = pygame.RESIZABLE if windowed else pygame.FULLSCREEN | pygame.NOFRAME
-    size = (1280, 720) if windowed else (0, 0)
-    try:
-        screen = pygame.display.set_mode(size, flags)
-    except pygame.error:
-        if windowed:
-            raise
-        screen = pygame.display.set_mode((1920, 1080), flags)
-    pygame.display.set_caption("tabbyapi-stack")
-    return pygame, screen
+    if windowed:
+        screen = pygame.display.set_mode((1280, 720), pygame.RESIZABLE)
+        pygame.display.set_caption("tabbyapi-stack")
+        return pygame, screen, None
+    fb = CpuFramebuffer()
+    pygame.display.set_mode((1, 1))
+    screen = pygame.Surface(compose_size(*fb.size()))
+    set_tty_graphics(True)
+    return pygame, screen, fb
 
 
-def _close_display(pygame_mod: Any) -> None:
+def _close_display(pygame_mod: Any, fb: CpuFramebuffer | None = None) -> None:
+    if fb is not None:
+        try:
+            fb.close()
+        except Exception:
+            pass
+    set_tty_graphics(False)
     if pygame_mod is None:
         return
     try:
@@ -2805,11 +3003,16 @@ def _close_display(pygame_mod: Any) -> None:
         pass
 
 
-def run_visible_field(args: argparse.Namespace, bus: StateBus, follow: SceneFollow) -> str:
+def run_visible_field(
+    args: argparse.Namespace,
+    bus: StateBus,
+    follow: SceneFollow,
+    watch: InputWatch | None = None,
+) -> str:
     """Paint until input (kiosk) or ESC/Q (window). Returns dismiss or quit."""
-    pygame, screen = _init_display(args.window)
+    pygame, screen, fb = _init_display(args.window)
     try:
-        if not args.window:
+        if args.window:
             pygame.event.set_grab(True)
     except Exception:
         pass
@@ -2846,6 +3049,24 @@ def run_visible_field(args: argparse.Namespace, bus: StateBus, follow: SceneFoll
                     continue
                 if action == "dismiss" and now >= grace_until:
                     return "dismiss"
+            if watch is not None and now >= grace_until and watch.last() >= grace_until:
+                quiet = idle_hud_quiet(scene) if scene else False
+                raw_alpha = None if scene is None else scene.get("hud_alpha")
+                try:
+                    hud_alpha = 1.0 if raw_alpha is None else float(raw_alpha)
+                except (TypeError, ValueError):
+                    hud_alpha = 1.0
+                action = watch_field_action(
+                    watch.last_kind(),
+                    idle_quiet=quiet,
+                    hud_alpha=hud_alpha,
+                    hud_hold_s=follow.hud_hold_s,
+                )
+                if action == "peek":
+                    follow.wake_idle_hud(now)
+                    grace_until = apply_peek_grace(grace_until, now)
+                elif action == "dismiss":
+                    return "dismiss"
             dt = now - prev
             prev = now
             data, ok = bus.snapshot()
@@ -2856,7 +3077,7 @@ def run_visible_field(args: argparse.Namespace, bus: StateBus, follow: SceneFoll
             ok = bool(ok or (data and data.get("busy")))
             scene = follow.tick(scene_from_state(data, ok), dt, now)
             field = draw_field(max(64, args.width), max(36, args.height), scene)
-            screen.blit(pygame.transform.smoothscale(field, screen.get_size()), (0, 0))
+            screen.blit(pygame.transform.scale(field, screen.get_size()), (0, 0))
             draw_sleepers(pygame, screen, scene)
             draw_neurons(pygame, screen, scene)
             draw_cycle_fx(pygame, screen, scene)
@@ -2868,17 +3089,24 @@ def run_visible_field(args: argparse.Namespace, bus: StateBus, follow: SceneFoll
                 info = pygame.font.Font(None, info_n)
                 font_h = height
             draw_hud(screen, font, small, scene, info)
-            pygame.display.flip()
-            clock.tick(max(8, min(30, args.fps)))
+            if fb is not None:
+                fb.present_surface(pygame, screen)
+            else:
+                pygame.display.flip()
+            live = bool(scene and (scene.get("live") or overlay_amount(scene) > 0.04))
+            fps = max(8, min(30, args.fps))
+            if not live:
+                fps = min(fps, 12)
+            clock.tick(fps)
     finally:
-        _close_display(pygame)
+        _close_display(pygame, fb)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     url = saver_url(args.url)
     bus = StateBus()
-    thread = threading.Thread(target=bus.run, args=(url, max(0.08, args.poll)), daemon=True)
+    thread = threading.Thread(target=bus.run, args=(url, max(0.2, args.poll)), daemon=True)
     thread.start()
     follow = SceneFollow(hud_hold_s=args.hud_idle)
     watch: InputWatch | None = None
@@ -2908,7 +3136,7 @@ def main(argv: list[str] | None = None) -> int:
             if show:
                 activate_vt(saver_nr)
                 try:
-                    action = run_visible_field(args, bus, follow)
+                    action = run_visible_field(args, bus, follow, watch=watch)
                 except Exception as exc:
                     print(f"tabby-saver: display failed: {exc}", file=sys.stderr)
                     time.sleep(2.0)
@@ -2946,8 +3174,8 @@ def main(argv: list[str] | None = None) -> int:
 
 def _drm_fail(exc: BaseException) -> int:
     print(
-        "tabby-saver: could not open a KMSDRM display.\n"
-        "  Need a free TTY, nvidia-drm.modeset=1, and the video group.\n"
+        "tabby-saver: could not open /dev/fb0 for a CPU framebuffer.\n"
+        "  Need the video group, a free TTY, and nvidia-drm.modeset=1 (fbdev).\n"
         "  Do not enable this unit if Omarchy or a desktop already owns the GPU.\n"
         f"  {exc}",
         file=sys.stderr,

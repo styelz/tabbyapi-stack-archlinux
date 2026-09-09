@@ -49,4 +49,27 @@ async def get_image(url: str) -> Image:
 
                     raise HTTPException(400, error_message)
 
-    return Image.open(io.BytesIO(bytes_image))
+    image = Image.open(io.BytesIO(bytes_image))
+    return _ensure_vision_size(image)
+
+
+# Qwen2/3-VL smart_resize rejects edges <= 32. Nearest-neighbor keeps a 1x1
+# pixel's color instead of 500-ing the chat.
+_VISION_MIN_EDGE = 64
+
+
+def _ensure_vision_size(image: Image.Image) -> Image.Image:
+    width, height = image.size
+    if width >= _VISION_MIN_EDGE and height >= _VISION_MIN_EDGE:
+        return image
+    scale = max(
+        _VISION_MIN_EDGE / max(width, 1),
+        _VISION_MIN_EDGE / max(height, 1),
+    )
+    return image.resize(
+        (
+            max(_VISION_MIN_EDGE, int(round(width * scale))),
+            max(_VISION_MIN_EDGE, int(round(height * scale))),
+        ),
+        Image.NEAREST,
+    )

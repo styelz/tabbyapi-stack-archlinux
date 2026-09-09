@@ -1084,19 +1084,29 @@ def copy_job_to_workspace(job: McpImageJob) -> list[str]:
 async def wait_mcp_job_progress(job: McpImageJob, wait_s: float) -> None:
     """Block until the job reports progress, finishes, or wait_s elapses."""
     timeout = max(0.0, min(float(wait_s), MCP_POLL_WAIT_MAX_S))
-    if timeout <= 0 or job.status in ("done", "error"):
+    if timeout <= 0 or str(getattr(job, "status", "") or "") in ("done", "error"):
         return
-    seen = job.progress_seq
+    seen = int(getattr(job, "progress_seq", 0) or 0)
+    progress = getattr(job, "progress", None)
+    waiter = getattr(progress, "wait", None)
+    clearer = getattr(progress, "clear", None)
+    if not callable(waiter):
+        return
     deadline = time.monotonic() + timeout
-    while job.progress_seq <= seen and job.status not in ("done", "error"):
+    while int(getattr(job, "progress_seq", 0) or 0) <= seen and str(
+        getattr(job, "status", "") or ""
+    ) not in ("done", "error"):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
-        job.progress.clear()
-        if job.progress_seq > seen or job.status in ("done", "error"):
+        if callable(clearer):
+            clearer()
+        if int(getattr(job, "progress_seq", 0) or 0) > seen or str(
+            getattr(job, "status", "") or ""
+        ) in ("done", "error"):
             break
         try:
-            await asyncio.wait_for(job.progress.wait(), remaining)
+            await asyncio.wait_for(waiter(), remaining)
         except asyncio.TimeoutError:
             break
 

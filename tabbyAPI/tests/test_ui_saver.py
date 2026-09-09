@@ -1104,6 +1104,15 @@ class SaverKioskSceneTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertEqual(data["stage"], "decode")
 
+    def test_idle_http_poll_is_slow_busy_is_fast(self):
+        busy = self.kiosk.http_poll_gap(busy=True, idle_s=1.0)
+        idle = self.kiosk.http_poll_gap(busy=False, idle_s=1.0)
+        self.assertAlmostEqual(busy, 0.1)
+        self.assertAlmostEqual(idle, 1.0)
+        self.assertTrue(self.kiosk.state_is_busy({"busy": True}))
+        self.assertTrue(self.kiosk.state_is_busy(None, {"stage": "decode"}))
+        self.assertFalse(self.kiosk.state_is_busy({"busy": False, "stage": "idle"}))
+
     def test_follow_keeps_plasma_phase_when_speed_jumps(self):
         follow = self.kiosk.SceneFollow()
         idle = self.kiosk.scene_from_state(
@@ -1367,12 +1376,62 @@ class SaverKioskSceneTests(unittest.TestCase):
         self.assertEqual(self.kiosk.apply_peek_grace(0.0, 10.0), 11.0)
         self.assertEqual(self.kiosk.apply_peek_grace(20.0, 10.0), 20.0)
 
+    def test_kiosk_sdl_env_overrides_kmsdrm(self):
+        with mock.patch.dict(
+            os.environ,
+            {"SDL_VIDEODRIVER": "kmsdrm", "DISPLAY": ":0", "WAYLAND_DISPLAY": "wayland-0"},
+            clear=False,
+        ):
+            self.kiosk.prepare_kiosk_sdl_env()
+            self.assertEqual(os.environ["SDL_VIDEODRIVER"], "dummy")
+            self.assertEqual(os.environ["SDL_RENDER_DRIVER"], "software")
+            self.assertNotIn("DISPLAY", os.environ)
+            self.assertNotIn("WAYLAND_DISPLAY", os.environ)
+
+    def test_compose_size_caps_4k(self):
+        self.assertEqual(self.kiosk.compose_size(3840, 2160), (1280, 720))
+        self.assertEqual(self.kiosk.compose_size(1920, 1080), (1280, 720))
+        self.assertEqual(self.kiosk.compose_size(1280, 720), (1280, 720))
+        self.assertEqual(self.kiosk.compose_size(800, 480), (800, 480))
+
+    def test_fb0_geometry_from_sysfs(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            (base / "virtual_size").write_text("3840,2160\n")
+            (base / "stride").write_text("15360\n")
+            (base / "bits_per_pixel").write_text("32\n")
+            self.assertEqual(
+                self.kiosk.read_fb0_geometry(str(base)),
+                (3840, 2160, 15360, 32),
+            )
+
+    def test_pack_rgb_into_fb_is_bgra(self):
+        try:
+            import numpy as np
+        except ImportError:
+            self.skipTest("numpy")
+        rgb = np.zeros((2, 2, 3), dtype=np.uint8)
+        rgb[0, 0] = (255, 0, 0)
+        fb = np.zeros((2, 4, 4), dtype=np.uint8)
+        self.kiosk.pack_rgb_into_fb(rgb, fb, 2, 16)
+        self.assertEqual(list(fb[0, 0]), [0, 0, 255, 255])
+        self.assertEqual(list(fb[0, 2]), [0, 0, 0, 0])
+
+    def test_watch_field_action_peeks_motion_when_hud_hidden(self):
+        action = self.kiosk.watch_field_action
+        self.assertEqual(action("motion", idle_quiet=True, hud_alpha=1.0), "dismiss")
+        self.assertEqual(action("motion", idle_quiet=True, hud_alpha=0.0), "peek")
+        self.assertEqual(action("key", idle_quiet=True, hud_alpha=0.0), "dismiss")
+        self.assertIsNone(action("other"))
+
     def test_parse_args_idle_default_is_two_minutes(self):
         args = self.kiosk.parse_args([])
         self.assertEqual(args.idle, 120.0)
         self.assertEqual(args.logout_idle, 5.0)
         self.assertEqual(args.hud_idle, 300.0)
-        self.assertEqual(args.poll, 0.1)
+        self.assertEqual(args.poll, 1.0)
         self.assertEqual(args.width, 480)
         self.assertEqual(args.height, 270)
         args = self.kiosk.parse_args(
@@ -1480,7 +1539,8 @@ class SaverKioskSceneTests(unittest.TestCase):
         self.assertIn("Restarting API", text)
         self.assertIn("0:08", text)
         self.assertIn("API Down", text)
-        self.assertIn("/health", text)
+        self.assertIn("Stopped", text)
+        self.assertIn("Status", text)
         self.assertIn("qwen", text)
 
     def test_hud_shows_waiters_and_toks(self):
@@ -1635,7 +1695,12 @@ class SaverKioskSceneTests(unittest.TestCase):
         )
         now = 10.0
         scene = follow.tick(think, 0.04, now)
-        for _step in range(50):
+        while scene["phase"] != "thinking":
+            now += 0.04
+            scene = follow.tick(think, 0.04, now)
+            self.assertLess(now, 20.0)
+        think_t0 = now
+        while now - think_t0 < 1.6:
             now += 0.04
             scene = follow.tick(think, 0.04, now)
         tools = self.kiosk.scene_from_state(
