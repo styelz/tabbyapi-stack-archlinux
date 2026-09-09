@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -82,6 +83,7 @@ def _persist_locked(*, force: bool = False) -> None:
         return
     _last_write = now
     payload = _snapshot_locked()
+    payload["pid"] = os.getpid()
     path = LIVE_PATH
     if not payload.get("busy") and str(payload.get("stage") or "idle") == "idle":
         for victim in (path, path.with_name(path.name + ".tmp")):
@@ -192,12 +194,46 @@ def snapshot() -> dict[str, Any]:
 
 def read_live_file(path: Path | None = None) -> dict[str, Any] | None:
     """Kiosk-side read. None when the API has not written a file."""
+    target = path or LIVE_PATH
     try:
-        raw = (path or LIVE_PATH).read_text(encoding="utf-8")
+        raw = target.read_text(encoding="utf-8")
         data = json.loads(raw)
     except (OSError, json.JSONDecodeError, UnicodeError, TypeError, ValueError):
         return None
-    return data if isinstance(data, dict) else None
+    if not isinstance(data, dict):
+        return None
+    if not live_file_is_current(data):
+        try:
+            target.unlink()
+        except OSError:
+            pass
+        return None
+    return data
+
+
+def _pid_alive(pid: Any) -> bool:
+    try:
+        number = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if number <= 0:
+        return False
+    try:
+        os.kill(number, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def live_file_is_current(live: dict[str, Any] | None) -> bool:
+    """False for a leftover sidecar whose API process is gone or unknown."""
+    if not live or not live.get("busy"):
+        return False
+    return _pid_alive(live.get("pid"))
 
 
 def overlay_live_file(
@@ -209,11 +245,22 @@ def overlay_live_file(
     """Prefer the sidecar when a prompt is in flight and HTTP is stale or hung.
 
     A leftover saver-live.json from a killed generate must not override a
-    fresh idle /saver/state poll.
+    fresh idle /saver/state poll, and must not look like a prompt while the
+    API is only restarting or loading a model.
     """
     if not live or not live.get("busy"):
         return payload
+    # In-memory test dicts omit pid. A file from a dead API must not win.
+    if live.get("pid") is not None and not _pid_alive(live.get("pid")):
+        return payload
     if trust_idle_http and _http_status_idle(payload):
+        return payload
+    if payload and (
+        payload.get("switching")
+        or payload.get("restarting")
+        or payload.get("recovering")
+        or str(payload.get("stage") or "").strip().lower() == "switch"
+    ):
         return payload
     out = dict(payload or {})
     out["busy"] = True

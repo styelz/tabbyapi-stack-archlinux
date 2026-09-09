@@ -597,12 +597,39 @@ def fetch_state(url: str, timeout: float = 0.8) -> dict[str, Any] | None:
 _LIVE_PATH = Path(__file__).resolve().parents[2] / "saver-live.json"
 
 
+def _pid_alive(pid: Any) -> bool:
+    try:
+        number = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if number <= 0:
+        return False
+    try:
+        os.kill(number, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
 def read_saver_live() -> dict[str, Any] | None:
     try:
         data = json.loads(_LIVE_PATH.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, UnicodeError, TypeError, ValueError):
         return None
-    return data if isinstance(data, dict) else None
+    if not isinstance(data, dict):
+        return None
+    # Leftover from a killed API: no live pid (or an old file with none).
+    if not _pid_alive(data.get("pid")):
+        try:
+            _LIVE_PATH.unlink()
+        except OSError:
+            pass
+        return None
+    return data
 
 
 def overlay_saver_live(
@@ -614,7 +641,16 @@ def overlay_saver_live(
     """Apply the API sidecar when HTTP is idle or hung mid-prompt."""
     if not live or not live.get("busy"):
         return payload
+    if live.get("pid") is not None and not _pid_alive(live.get("pid")):
+        return payload
     if trust_idle_http and _http_status_idle(payload):
+        return payload
+    if payload and (
+        payload.get("switching")
+        or payload.get("restarting")
+        or payload.get("recovering")
+        or str(payload.get("stage") or "").strip().lower() == "switch"
+    ):
         return payload
     out = dict(payload or {})
     out["busy"] = True
@@ -1158,19 +1194,22 @@ class StateBus:
         host, port = origin_peer(url)
         while not self.stop.is_set():
             live = read_saver_live()
-            if live and live.get("busy"):
-                with self.lock:
-                    cached = dict(self.data) if self.data else {}
+            with self.lock:
+                had_http = self.data is not None
+                cached = dict(self.data) if self.data else None
+            # Sidecar can mark thinking the instant a generate POST lands, but
+            # only after this process has seen the API once. A restart must not
+            # treat a leftover file as a live prompt.
+            if live and live.get("busy") and had_http:
                 self.ingest(overlay_saver_live(cached, live), True)
             reachable = tcp_up(host, port)
-            payload = fetch_state(url, timeout=0.15) if reachable else None
+            payload = fetch_state(url, timeout=0.8) if reachable else None
             http_fresh = payload is not None
             if payload is None:
                 reachable = tcp_up(host, port)
             live = read_saver_live()
-            if payload is None and live and live.get("busy"):
-                with self.lock:
-                    payload = dict(self.data) if self.data else {}
+            if payload is None and live and live.get("busy") and had_http:
+                payload = dict(cached) if cached else None
             payload = overlay_saver_live(
                 payload, live, trust_idle_http=http_fresh
             )
@@ -2810,9 +2849,10 @@ def run_visible_field(args: argparse.Namespace, bus: StateBus, follow: SceneFoll
             dt = now - prev
             prev = now
             data, ok = bus.snapshot()
-            data = overlay_saver_live(
-                data, read_saver_live(), trust_idle_http=True
-            )
+            if data is not None:
+                data = overlay_saver_live(
+                    data, read_saver_live(), trust_idle_http=True
+                )
             ok = bool(ok or (data and data.get("busy")))
             scene = follow.tick(scene_from_state(data, ok), dt, now)
             field = draw_field(max(64, args.width), max(36, args.height), scene)

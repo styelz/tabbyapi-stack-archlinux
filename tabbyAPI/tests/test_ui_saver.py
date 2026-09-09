@@ -1,4 +1,5 @@
 import importlib.util
+import os
 import time
 import unittest
 from pathlib import Path
@@ -381,6 +382,51 @@ class SaverKioskSceneTests(unittest.TestCase):
         scene = self.kiosk.scene_from_state(merged, True)
         self.assertTrue(scene["live"])
         self.assertEqual(scene["phase"], "thinking")
+
+    def test_overlay_ignores_sidecar_during_restart(self):
+        restarting = {
+            "gpu_mode": "llm",
+            "busy": True,
+            "restarting": True,
+            "stage": "switch",
+            "profile": "qwen",
+        }
+        live = {"busy": True, "stage": "prefill", "tokens": 0}
+        merged = self.kiosk.overlay_saver_live(restarting, live)
+        scene = self.kiosk.scene_from_state(merged, True)
+        self.assertEqual(scene["phase"], "restarting api")
+        self.assertEqual(merged["stage"], "switch")
+
+    def test_dead_sidecar_file_is_ignored(self):
+        import json
+        import os
+        import tempfile
+
+        kiosk = self.kiosk
+        previous = kiosk._LIVE_PATH
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "saver-live.json"
+            path.write_text('{"busy":true,"stage":"prefill"}', encoding="utf-8")
+            kiosk._LIVE_PATH = path
+            try:
+                self.assertIsNone(kiosk.read_saver_live())
+                self.assertFalse(path.is_file())
+                path.write_text(
+                    json.dumps({"busy": True, "stage": "prefill", "pid": 999999999}),
+                    encoding="utf-8",
+                )
+                self.assertIsNone(kiosk.read_saver_live())
+                path.write_text(
+                    json.dumps(
+                        {"busy": True, "stage": "prefill", "pid": os.getpid()}
+                    ),
+                    encoding="utf-8",
+                )
+                live = kiosk.read_saver_live()
+                self.assertIsNotNone(live)
+                self.assertTrue(live["busy"])
+            finally:
+                kiosk._LIVE_PATH = previous
 
     def test_kind_without_a_job_is_idle(self):
         scene = self.kiosk.scene_from_state(
@@ -1892,3 +1938,28 @@ class LiveDecodeTests(unittest.TestCase):
         self.assertIsNotNone(data)
         self.assertTrue(data["busy"])
         self.assertEqual(data["stage"], "prefill")
+        self.assertEqual(data["pid"], os.getpid())
+
+    def test_stale_sidecar_without_live_pid_is_dropped(self):
+        import json
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "saver-live.json"
+            path.write_text(
+                json.dumps({"busy": True, "stage": "prefill"}),
+                encoding="utf-8",
+            )
+            self.assertIsNone(live_decode.read_live_file(path))
+            self.assertFalse(path.is_file())
+            switching = {
+                "busy": True,
+                "switching": True,
+                "stage": "switch",
+                "profile": "qwen",
+            }
+            out = live_decode.overlay_live_file(
+                switching, {"busy": True, "stage": "prefill"}
+            )
+            self.assertEqual(out["stage"], "switch")
+            self.assertTrue(out["switching"])
