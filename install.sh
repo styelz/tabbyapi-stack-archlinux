@@ -2919,6 +2919,7 @@ inst_edit_public() {
 Examples
   https://api.example.com/v1
   https://chat.example.com/api/v1
+  https://git.example.com/openai/v1
 
 Blank = local only (http://${TABBY_NETWORK_HOST}:${TABBY_NETWORK_PORT}/v1).
 Leave blank if you do not have a reverse proxy or tunnel." \

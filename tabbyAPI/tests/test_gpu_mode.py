@@ -197,8 +197,54 @@ class GpuModeTests(unittest.TestCase):
         class _Req:
             headers = {"host": "192.168.1.20:5000", "x-forwarded-proto": "http"}
             url = None
+            scope = {}
 
         self.assertEqual(public_api_base(_Req()), "http://192.168.1.20:5000/v1")
+
+    def test_public_api_base_keeps_proxy_prefix(self):
+        from common.gpu_mode import public_api_base
+
+        class _Prefixed:
+            headers = {
+                "host": "git.example.com",
+                "x-forwarded-proto": "https",
+                "x-forwarded-prefix": "/openai",
+            }
+            url = None
+            scope = {}
+
+        self.assertEqual(
+            public_api_base(_Prefixed()), "https://git.example.com/openai/v1"
+        )
+
+        class _Original:
+            headers = {
+                "host": "git.example.com",
+                "x-forwarded-proto": "https",
+                "x-original-uri": "/openai/v1/images/generations",
+            }
+            url = None
+            scope = {}
+
+        self.assertEqual(
+            public_api_base(_Original()), "https://git.example.com/openai/v1"
+        )
+
+        class _EnvWrong:
+            headers = {
+                "host": "git.example.com",
+                "x-forwarded-proto": "https",
+                "x-forwarded-prefix": "/openai/v1",
+            }
+            url = None
+            scope = {}
+
+        with mock.patch.dict(
+            os.environ, {"TABBY_PUBLIC_BASE": "https://git.example.com/v1"}
+        ):
+            self.assertEqual(
+                public_api_base(_EnvWrong()), "https://git.example.com/openai/v1"
+            )
 
     def test_recent_generated_files_skips_latest_alias(self):
         with temp_generated_dir(["generated-20260101-000001.png", "generated-latest.png"]):

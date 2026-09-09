@@ -95,29 +95,111 @@ QWEN_IMAGE_HINTS = re.compile(
 DEFAULT_PUBLIC_BASE = "http://127.0.0.1:5000/v1"
 
 
+def _header(headers, *names: str) -> str:
+    if headers is None:
+        return ""
+    getter = getattr(headers, "get", None)
+    if getter is None:
+        return ""
+    for name in names:
+        value = getter(name)
+        if value is None and hasattr(headers, "get"):
+            # Starlette headers are case-insensitive; dict mocks may not be.
+            value = getter(name.lower()) or getter(name.title())
+        text = str(value or "").strip()
+        if text:
+            return text.split(",")[0].strip()
+    return ""
+
+
+def _v1_base(proto: str, host: str, path: str) -> str:
+    """Build a /v1 prefix from a public path that contains /v1."""
+    proto = str(proto or "").strip().rstrip(":/")
+    host = str(host or "").strip()
+    path = str(path or "").strip()
+    if not proto or not host:
+        return ""
+    if path and "://" in path:
+        parsed = urlparse(path)
+        path = parsed.path or ""
+        if parsed.netloc:
+            host = parsed.netloc
+        if parsed.scheme:
+            proto = parsed.scheme
+    if not path.startswith("/"):
+        path = f"/{path}" if path else ""
+    marker = path.find("/v1/")
+    if marker < 0:
+        marker = path.find("/v1")
+        if marker < 0 or (marker + 3 < len(path) and path[marker + 3] not in ("", "/")):
+            marker = -1
+    if marker >= 0:
+        path = path[: marker + 3]
+    elif path.rstrip("/"):
+        path = f"{path.rstrip('/')}/v1"
+    else:
+        path = "/v1"
+    return f"{proto}://{host}{path}".rstrip("/")
+
+
+def _public_base_from_request(request) -> str:
+    """Reconstruct the public /v1 URL the client actually called.
+
+    Reverse proxies that strip a prefix such as /openai still leave
+    X-Forwarded-Prefix or the original URI. Host + '/v1' would drop that
+    prefix and return 404 image links (git.example/v1/images vs
+    git.example/openai/v1/images).
+    """
+    if request is None:
+        return ""
+    headers = getattr(request, "headers", None)
+    url = getattr(request, "url", None)
+    proto = _header(headers, "x-forwarded-proto")
+    host = _header(headers, "x-forwarded-host", "host")
+    if not proto and url is not None:
+        proto = str(getattr(url, "scheme", None) or "").strip()
+    if not host and url is not None:
+        host = str(getattr(url, "netloc", None) or "").strip()
+    prefix = _header(
+        headers,
+        "x-forwarded-prefix",
+        "x-forwarded-path",
+        "x-script-name",
+    )
+    original = _header(
+        headers,
+        "x-original-url",
+        "x-original-uri",
+        "x-forwarded-uri",
+        "x-rewrite-url",
+    )
+    scope = getattr(request, "scope", None)
+    root_path = ""
+    if isinstance(scope, dict):
+        root_path = str(scope.get("root_path") or "").strip()
+    if original:
+        return _v1_base(proto, host, original)
+    if prefix:
+        return _v1_base(proto, host, prefix)
+    if root_path:
+        return _v1_base(proto, host, root_path)
+    if proto and host:
+        return f"{proto}://{host}/v1"
+    return ""
+
+
 def public_api_base(request=None) -> str:
     """URL prefix remote clients can fetch images from.
 
-    Prefer TABBY_PUBLIC_BASE (tunnel / reverse proxy). Otherwise use the
-    Host the client already called. Localhost is only the last resort —
-    coding machines are not the GPU server.
+    Prefer the URL this request arrived on (including a reverse-proxy path
+    prefix). Fall back to TABBY_PUBLIC_BASE, then Host + /v1, then localhost.
     """
+    derived = _public_base_from_request(request)
+    if derived:
+        return derived
     env = (os.environ.get("TABBY_PUBLIC_BASE") or "").strip().rstrip("/")
     if env:
         return env
-    headers = getattr(request, "headers", None)
-    url = getattr(request, "url", None)
-    proto = None
-    host = None
-    if headers is not None:
-        proto = headers.get("x-forwarded-proto")
-        host = headers.get("x-forwarded-host") or headers.get("host")
-    if not proto and url is not None:
-        proto = getattr(url, "scheme", None)
-    if not host and url is not None:
-        host = getattr(url, "netloc", None)
-    if proto and host:
-        return f"{proto}://{host}/v1"
     return DEFAULT_PUBLIC_BASE
 
 

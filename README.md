@@ -79,6 +79,17 @@ Leave the model name as **`gpt-4o`**. It is only a label so editors keep tool su
 
 Some clients require HTTPS. Advanced install can set a reverse SSH tunnel to a host that already has a certificate. Details: [Arch install guide](tabbyAPI/deploy/arch/README.md).
 
+## Live client smoke
+
+From a machine that can reach the GPU API (LAN and/or the HTTPS `/v1` URL), with the UI password in the environment — not in git:
+
+```bash
+TABBY_API_KEY='your-ui-password' TABBY_UI_USER=pbp \
+  python3 scripts/live_client_smoke.py
+```
+
+Defaults: `http://192.168.1.14:5000/v1` and `https://git.pbptech.com/openai/v1`. Override with `TABBY_BASES`. One Comfy `POST /images/generations` runs on the HTTPS base unless you pass `--skip-images`. The script does not write Settings, Users, or stack backups.
+
 ![Using help, switching models, generating an image, and building a page](docs/ide-chat.gif)
 
 ## Commands

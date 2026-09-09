@@ -2776,6 +2776,7 @@ Change this only if ComfyUI will listen somewhere else." \
 Examples
   https://api.example.com/v1
   https://chat.example.com/api/v1
+  https://git.example.com/openai/v1
 
 Blank = local only (http://${host}:${port}/v1).
 Leave blank if you do not have a reverse proxy or tunnel." \
