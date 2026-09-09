@@ -140,5 +140,24 @@ class FlightRegisterTests(unittest.TestCase):
         self.assertEqual([flight.chat_id for flight in iter_live_flights()], ["chat-b"])
 
 
+class ConsoleStatusPublishTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        reset_for_tests()
+
+    def tearDown(self):
+        reset_for_tests()
+
+    async def test_publish_console_status_updates_flight(self):
+        from ui.flight import bind_console_flight, publish_console_status, unbind_console_flight
+
+        flight = ConsoleFlight("u", "c", "code", "landing page")
+        token = bind_console_flight(flight)
+        try:
+            await publish_console_status("Writing the page")
+        finally:
+            unbind_console_flight(token)
+        self.assertEqual(flight.status_label, "Writing the page")
+
+
 if __name__ == "__main__":
     unittest.main()

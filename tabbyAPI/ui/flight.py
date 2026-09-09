@@ -7,6 +7,7 @@ only unsubscribes. Stop still sets abort_event.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import time
 from datetime import datetime, timezone
@@ -19,11 +20,37 @@ from sse_starlette import ServerSentEvent
 _FLIGHTS: dict[str, "ConsoleFlight"] = {}
 _FLIGHTS_BY_CHAT: dict[tuple[str, str], "ConsoleFlight"] = {}
 _DROP_AFTER_S = 30
+_CURRENT_FLIGHT: contextvars.ContextVar[Optional["ConsoleFlight"]] = contextvars.ContextVar(
+    "tabby_console_flight", default=None
+)
 
 
 def reset_for_tests() -> None:
     _FLIGHTS.clear()
     _FLIGHTS_BY_CHAT.clear()
+    _CURRENT_FLIGHT.set(None)
+
+
+def bind_console_flight(flight: Optional["ConsoleFlight"]):
+    """Publish mixed-code status and tokens onto this UI job."""
+    return _CURRENT_FLIGHT.set(flight)
+
+
+def unbind_console_flight(token) -> None:
+    _CURRENT_FLIGHT.reset(token)
+
+
+def current_console_flight() -> Optional["ConsoleFlight"]:
+    return _CURRENT_FLIGHT.get()
+
+
+async def publish_console_status(line: str) -> None:
+    """Show a live activity label during silent classify / code writes."""
+    flight = current_console_flight()
+    text = str(line or "").strip()
+    if flight is None or not text:
+        return
+    await flight.publish(ServerSentEvent(comment=f"tabby-image-status: {text}"))
 
 
 def get_flight(username: str, chat_id: str = "") -> Optional["ConsoleFlight"]:
@@ -114,6 +141,7 @@ class ConsoleFlight:
         self.steps: list[dict[str, Any]] = []
         self._parse_buf = ""
         self.task: Optional[asyncio.Task] = None
+        self.streamed_live = False
 
     def ingest(self, raw: bytes) -> None:
         self._parse_buf += raw.decode("utf-8", errors="replace")

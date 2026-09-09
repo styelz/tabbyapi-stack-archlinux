@@ -35,10 +35,12 @@ from common.pasted_images import latest_turn_image, materialize_pasted_images
 from ui.flight import (
     ConsoleFlight,
     abort_flight,
+    bind_console_flight,
     close_flight,
     get_flight,
     register_flight,
     stream_response,
+    unbind_console_flight,
 )
 from ui.manager import sanitize_chat_payload, sanitize_code_payload
 from ui.occupancy import (
@@ -141,6 +143,36 @@ def _completion_text(result: Any) -> str:
     return str(getattr(message, "content", None) or "")
 
 
+def _completion_message(result: Any):
+    choices = getattr(result, "choices", None) or []
+    if not choices:
+        return None
+    return getattr(choices[0], "message", None)
+
+
+def _unpumped_assistant_text(assembled: str, content: str) -> str:
+    """Job-mark / dest hints added after a live stream, without repeating it."""
+    body = str(content or "")
+    seen = str(assembled or "")
+    if not body:
+        return ""
+    prefix = ""
+    if body.startswith("tabby-image-job:"):
+        mark_line, sep, rest = body.partition("\n")
+        if sep:
+            prefix = mark_line + "\n"
+            body = rest
+        elif not seen:
+            return body
+    if seen and body.startswith(seen):
+        return prefix + body[len(seen) :]
+    if seen and seen.startswith(body):
+        return prefix
+    if not seen:
+        return prefix + body
+    return prefix
+
+
 def _iter_sse(response) -> Any:
     """Drain a streaming response without touching any gate lease.
 
@@ -221,6 +253,18 @@ async def _pump_console_result(
         async for item in _iter_sse(result):
             await flight.publish(item)
         return
+    if getattr(flight, "streamed_live", False):
+        message = _completion_message(result)
+        extra = _unpumped_assistant_text(
+            flight.assembled, str(getattr(message, "content", None) or "")
+        )
+        if extra.strip():
+            async for chunk in stream_text(data, extra):
+                await flight.publish(chunk)
+        payload = usage_sse_data(getattr(result, "usage", None))
+        if payload:
+            await flight.publish(payload)
+        return
     text = _completion_text(result)
     if text:
         async for chunk in stream_text(data, text):
@@ -244,6 +288,7 @@ async def _run_console_job(
 ) -> None:
     proxy = _proxy_request(request)
     handler = DisconnectHandler(proxy, "/v1/ui/chat", abort_event=flight.abort_event)
+    bound = bind_console_flight(flight)
     try:
         info = await gate.step(handler)
         while info is not None:
@@ -276,6 +321,7 @@ async def _run_console_job(
         xlogger.error("Console chat job failed", str(exc))
         await flight.publish(json.dumps({"error": {"message": str(exc)}}))
     finally:
+        unbind_console_flight(bound)
         await gate.release()
         await close_flight(flight)
 

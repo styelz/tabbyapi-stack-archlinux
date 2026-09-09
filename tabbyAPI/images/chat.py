@@ -1025,6 +1025,54 @@ def _curl_tool_followup(data: ChatCompletionRequest, job, *, console: bool):
     return _curl_response(data, job)
 
 
+def _response_from_stream_payloads(payloads: list[dict], model_name: str):
+    from endpoints.OAI.types.chat_completion import (
+        ChatCompletionMessage,
+        ChatCompletionRespChoice,
+        ChatCompletionResponse,
+    )
+
+    content = ""
+    reasoning = ""
+    tool_calls = None
+    finish = "stop"
+    name = model_name
+    for payload in payloads:
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("model"):
+            name = str(payload.get("model") or name)
+        choice = (payload.get("choices") or [{}])[0] or {}
+        delta = choice.get("delta") or {}
+        message = choice.get("message") or {}
+        piece = delta.get("content") or message.get("content") or ""
+        think = delta.get("reasoning_content") or message.get("reasoning_content") or ""
+        tools = delta.get("tool_calls") or message.get("tool_calls")
+        if piece:
+            content += str(piece)
+        if think:
+            reasoning += str(think)
+        if tools:
+            tool_calls = tools
+        reason = choice.get("finish_reason")
+        if reason:
+            finish = str(reason)
+    return ChatCompletionResponse(
+        model=name or "gpt-4o",
+        choices=[
+            ChatCompletionRespChoice(
+                finish_reason=finish,
+                message=ChatCompletionMessage(
+                    role="assistant",
+                    content=content or None,
+                    reasoning_content=reasoning or None,
+                    tool_calls=tool_calls,
+                ),
+            )
+        ],
+    )
+
+
 async def _write_site_code(data: ChatCompletionRequest, disconnect_handler):
     """One coding completion while the LLM is still loaded. None if it cannot run."""
     from common import model
@@ -1033,7 +1081,9 @@ async def _write_site_code(data: ChatCompletionRequest, disconnect_handler):
     from endpoints.OAI.utils.chat_completion import (
         apply_chat_template,
         generate_chat_completion,
+        stream_generate_chat_completion,
     )
+    from ui.flight import current_console_flight, publish_console_status
 
     container = getattr(model, "container", None)
     if not container or not getattr(container, "loaded", False):
@@ -1052,12 +1102,37 @@ async def _write_site_code(data: ChatCompletionRequest, disconnect_handler):
         description="mixed site code",
         abort_event=getattr(disconnect_handler, "abort_event", None),
     )
+    await publish_console_status("Writing the page")
+    flight = current_console_flight()
     try:
-        sync = data.model_copy(update={"stream": False, "n": 1})
-        prompt, embeddings = await apply_chat_template(sync)
-        response = await generate_chat_completion(
-            prompt, embeddings, sync, request, model_path, nested
-        )
+        if flight is None:
+            sync = data.model_copy(update={"stream": False, "n": 1})
+            prompt, embeddings = await apply_chat_template(sync)
+            response = await generate_chat_completion(
+                prompt, embeddings, sync, request, model_path, nested
+            )
+            return strip_response_apologies(response)
+        streamed = data.model_copy(update={"stream": True, "n": 1})
+        prompt, embeddings = await apply_chat_template(streamed)
+        payloads: list[dict] = []
+        async for chunk in stream_generate_chat_completion(
+            prompt, embeddings, streamed, request, model_path, nested
+        ):
+            if chunk == "[DONE]" or not isinstance(chunk, str):
+                continue
+            text = chunk.strip()
+            if not text.startswith("{"):
+                continue
+            try:
+                payload = json.loads(text)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            await flight.publish(text)
+            flight.streamed_live = True
+            payloads.append(payload)
+        response = _response_from_stream_payloads(payloads, getattr(model_path, "name", "") or "")
         return strip_response_apologies(response)
     except Exception as exc:
         xlogger.warning(f"Mixed chat code pass failed: {exc}")
@@ -1595,6 +1670,9 @@ async def handle(
     if llm_ready:
         rasters = workspace_raster_paths(owner, chat_id) if workspace else []
         prior = _classify_prior_facts(job, rasters)
+        from ui.flight import publish_console_status
+
+        await publish_console_status("Planning the picture")
         plan = await classify_image_turn(
             data, disconnect_handler=disconnect_handler, prior_facts=prior
         )

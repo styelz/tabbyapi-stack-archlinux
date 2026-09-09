@@ -315,6 +315,25 @@ class SlashCommandTests(unittest.TestCase):
         self.assertEqual(requested_profile(self._req("/switch to comfy")), "comfy")
 
 
+class UnpumpedAssistantTextTests(unittest.TestCase):
+    def test_job_mark_and_hint_after_live_stream(self):
+        from ui.chat import _unpumped_assistant_text
+
+        extra = _unpumped_assistant_text(
+            "writing the page",
+            "tabby-image-job: abc-123\nwriting the page\nPoint img src at images/logo.png.",
+        )
+        self.assertIn("tabby-image-job: abc-123", extra)
+        self.assertIn("Point img src at images/logo.png.", extra)
+        self.assertNotIn("writing the page\nwriting the page", extra)
+
+    def test_no_repeat_when_content_already_streamed(self):
+        from ui.chat import _unpumped_assistant_text
+
+        extra = _unpumped_assistant_text("hello", "hello")
+        self.assertEqual(extra.strip(), "")
+
+
 class ConsoleChatNotReadyTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         from ui.occupancy import reset_for_tests

@@ -1118,5 +1118,77 @@ class McpWaitTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result["isError"])
 
 
+class LiveCodeStreamTests(unittest.IsolatedAsyncioTestCase):
+    def test_response_from_stream_payloads(self):
+        from images.chat import _response_from_stream_payloads
+
+        response = _response_from_stream_payloads(
+            [
+                {"choices": [{"delta": {"content": "hi "}}]},
+                {
+                    "model": "qwen",
+                    "choices": [
+                        {"delta": {"content": "there"}, "finish_reason": "stop"}
+                    ],
+                },
+            ],
+            "base",
+        )
+        self.assertEqual(response.choices[0].message.content, "hi there")
+        self.assertEqual(response.model, "qwen")
+
+    async def test_write_site_code_streams_to_bound_flight(self):
+        from images.chat import _write_site_code
+        from ui.flight import (
+            ConsoleFlight,
+            bind_console_flight,
+            reset_for_tests,
+            unbind_console_flight,
+        )
+
+        reset_for_tests()
+        flight = ConsoleFlight("u", "c", "code", "landing")
+        token = bind_console_flight(flight)
+        chunks = [
+            '{"choices":[{"delta":{"content":"writing "}}],"model":"qwen"}',
+            '{"choices":[{"delta":{"content":"the page"},"finish_reason":"stop"}]}',
+            "[DONE]",
+        ]
+
+        async def fake_stream(*args, **kwargs):
+            for chunk in chunks:
+                yield chunk
+
+        container = SimpleNamespace(
+            loaded=True,
+            prompt_template="tpl",
+            model_dir=SimpleNamespace(name="qwen"),
+        )
+        try:
+            with (
+                mock.patch("common.model.container", container),
+                mock.patch(
+                    "endpoints.OAI.utils.chat_completion.apply_chat_template",
+                    new=mock.AsyncMock(return_value=("prompt", None)),
+                ),
+                mock.patch(
+                    "endpoints.OAI.utils.chat_completion.stream_generate_chat_completion",
+                    new=fake_stream,
+                ),
+                mock.patch(
+                    "endpoints.OAI.utils.chat_completion.generate_chat_completion",
+                    new=mock.AsyncMock(),
+                ) as blocked,
+            ):
+                response = await _write_site_code(_user("Create a landing page"), None)
+        finally:
+            unbind_console_flight(token)
+            reset_for_tests()
+        blocked.assert_not_awaited()
+        self.assertTrue(flight.streamed_live)
+        self.assertEqual(response.choices[0].message.content, "writing the page")
+        self.assertIn("writing ", flight.assembled)
+
+
 if __name__ == "__main__":
     unittest.main()
