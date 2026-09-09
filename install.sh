@@ -4110,6 +4110,8 @@ Auto-update (user timer, default every 7 days)
   Skips while a chat or image job is running.
 
   tsctl                         interactive settings (dialog)
+  tsctl start|stop|restart      TabbyAPI user unit
+  tsctl status                  unit active / enabled
   tsctl list                    every Settings section
   tsctl network host=0.0.0.0
   tsctl gpu status              NVIDIA temp / fan / power

@@ -44,7 +44,10 @@ tsctl — tabbyapi-stack settings
   tsctl gpu fan_speed=40        custom percent (driver min is often 30)
   tsctl gpu power_limit=220     watts; 0 = profile default
   tsctl gpu persistence=on
+  tsctl start                   start TabbyAPI (user systemd)
+  tsctl stop                    stop TabbyAPI
   tsctl restart                 restart TabbyAPI
+  tsctl status                  unit active / enabled
   tsctl backup DEST [--config] [--users] [--chats] [--dry-run]
   tsctl restore SOURCE [--models] [--config] [--users] [--chats] [--dry-run]
 
@@ -216,19 +219,50 @@ def gpu_status() -> int:
     return 0
 
 
-def restart_api() -> int:
-    result = subprocess.run(
-        ["systemctl", "--user", "restart", "tabbyapi"],
+def api_unit(action: str) -> int:
+    from common.gpu_mode import systemctl_user
+
+    if action not in ("start", "stop", "restart", "status"):
+        raise SettingsError(f"Unknown API action {action}")
+    if action == "status":
+        active = systemctl_user(
+            "is-active",
+            "tabbyapi",
+            capture_output=True,
+            text=True,
+            timeout=8,
+        )
+        enabled = systemctl_user(
+            "is-enabled",
+            "tabbyapi",
+            capture_output=True,
+            text=True,
+            timeout=8,
+        )
+        print(
+            "tabbyapi  "
+            f"{(active.stdout or '').strip() or 'unknown'} / "
+            f"{(enabled.stdout or '').strip() or 'unknown'}"
+        )
+        return 0
+    result = systemctl_user(
+        action,
+        "tabbyapi",
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=120,
     )
     if result.returncode != 0:
         err = (result.stderr or result.stdout or "").strip() or f"exit {result.returncode}"
-        print(f"tsctl: restart failed: {err}", file=sys.stderr)
+        print(f"tsctl: {action} failed: {err}", file=sys.stderr)
         return 1
-    print("Restarted tabbyapi.")
+    done = {"start": "Started", "stop": "Stopped", "restart": "Restarted"}[action]
+    print(f"{done} tabbyapi.")
     return 0
+
+
+def restart_api() -> int:
+    return api_unit("restart")
 
 
 def report_save(data: dict[str, Any]) -> int:
@@ -243,7 +277,19 @@ def report_save(data: dict[str, Any]) -> int:
 def complete_words(cword: int, words: list[str]) -> list[str]:
     data = load_settings()
     sections = [str(section["name"]) for section in _sections(data)]
-    extra = ["list", "help", "restart", "backup", "restore", "screensaver", "updates", "gpu"]
+    extra = [
+        "list",
+        "help",
+        "start",
+        "stop",
+        "restart",
+        "status",
+        "backup",
+        "restore",
+        "screensaver",
+        "updates",
+        "gpu",
+    ]
     if cword <= 1:
         return sorted(set(sections + extra))
     if len(words) > 1 and words[1] in ("backup", "restore"):
@@ -316,6 +362,14 @@ def tui_dialog() -> int:
         data = load_settings()
         sections = _sections(data)
         items: list[str] = [
+            "__start__",
+            "Start TabbyAPI",
+            "__stop__",
+            "Stop TabbyAPI",
+            "__restart__",
+            "Restart TabbyAPI",
+            "__status__",
+            "TabbyAPI unit status",
             "__backup__",
             "Backup models and stack data",
             "__restore__",
@@ -330,6 +384,17 @@ def tui_dialog() -> int:
             return 0
         if choice in ("__backup__", "__restore__"):
             dialog_stack_backup("backup" if choice == "__backup__" else "restore")
+            continue
+        if choice in ("__start__", "__stop__", "__restart__", "__status__"):
+            import io
+            from contextlib import redirect_stderr, redirect_stdout
+
+            buf = io.StringIO()
+            err = io.StringIO()
+            with redirect_stdout(buf), redirect_stderr(err):
+                api_unit(choice.strip("_"))
+            note = (buf.getvalue() + err.getvalue()).strip() or "ok"
+            run_dialog(["--msgbox", note, "10", "70"])
             continue
         section = find_section(choice, data)
         while True:
@@ -467,7 +532,8 @@ def repl() -> int:
         if len(parts) <= 1:
             options = [
                 name
-                for name in names + ["list", "help", "backup", "restore", "quit"]
+                for name in names
+                + ["list", "help", "start", "stop", "restart", "status", "backup", "restore", "quit"]
                 if name.startswith(text)
             ]
         else:
@@ -712,8 +778,8 @@ def dispatch(argv: list[str]) -> int:
         for section in _sections():
             print(f"{section['name']}\t{section.get('label') or ''}")
         return 0
-    if argv[0] == "restart":
-        return restart_api()
+    if argv[0] in ("start", "stop", "restart", "status"):
+        return api_unit(argv[0])
     if argv[0] in ("backup", "restore"):
         return stack_backup_command(argv[0], argv[1:])
 

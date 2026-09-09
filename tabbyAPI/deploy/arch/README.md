@@ -83,6 +83,8 @@ Do not run `start.bat`. Use the unit or `$HOME/tabbyapi-stack/start.sh`.
 
 ```bash
 tsctl                         # Settings menu
+tsctl start|stop|restart      # TabbyAPI user unit
+tsctl status
 tsctl list
 tsctl network host=0.0.0.0
 tsctl screensaver enable      # spare TTY; leave off if a desktop owns the GPU

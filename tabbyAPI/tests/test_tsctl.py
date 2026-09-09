@@ -139,3 +139,23 @@ class TsctlTests(unittest.TestCase):
             flags = self.tsctl.complete_words(3, ["tsctl", "backup", "/mnt/backup"])
         self.assertIn("--config", flags)
         self.assertIn("--dry-run", flags)
+
+    def test_complete_lists_api_unit_commands(self):
+        payload = {"tabby": [], "screensaver": {}, "gpu": {}, "system": {}}
+        with mock.patch.object(self.tsctl, "load_settings", return_value=payload):
+            words = self.tsctl.complete_words(1, ["tsctl"])
+        self.assertIn("start", words)
+        self.assertIn("stop", words)
+        self.assertIn("restart", words)
+        self.assertIn("status", words)
+
+    def test_dispatch_api_unit(self):
+        with mock.patch.object(self.tsctl, "api_unit", return_value=0) as run:
+            self.assertEqual(self.tsctl.dispatch(["start"]), 0)
+            self.assertEqual(self.tsctl.dispatch(["stop"]), 0)
+            self.assertEqual(self.tsctl.dispatch(["restart"]), 0)
+            self.assertEqual(self.tsctl.dispatch(["status"]), 0)
+        self.assertEqual(
+            [call.args[0] for call in run.call_args_list],
+            ["start", "stop", "restart", "status"],
+        )
