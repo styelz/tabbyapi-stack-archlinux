@@ -20,12 +20,14 @@ from ui.models import (
     library_state,
     matches_format,
     maybe_write_hf_profile,
+    normalize_alias,
     parse_repo_id,
     profile_slug,
     public_job,
     recover_stale_job,
     sanitize_folder_name,
     search_models,
+    set_profile_alias,
     start_download,
     write_job,
 )
@@ -287,6 +289,80 @@ class LibraryAndDeleteTests(unittest.TestCase):
             )
             alias = maybe_write_hf_profile("Foo-exl3", paths=paths)
             self.assertEqual(alias, "hf-foo-exl3-2")
+            saved = (paths.profiles_dir / "hf-foo-exl3-2.yml").read_text(encoding="utf-8")
+            self.assertIn("local: true", saved)
+
+    def test_normalize_alias_accepts_qwen38(self):
+        self.assertEqual(normalize_alias("Qwen38"), "qwen38")
+        self.assertEqual(normalize_alias("qwen-38.yml"), "qwen-38")
+        for bad in ("q", "1qwen", "qwen 38", "qwen_38", "comfy", "qwen", "help"):
+            with self.subTest(bad=bad):
+                with self.assertRaises(ModelsError):
+                    normalize_alias(bad)
+
+    def test_custom_alias_profile_and_rename(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            paths = _paths(root)
+            _llm_folder(paths.models_dir, "Qwen3.8-27B-exl3-4.00bpw")
+            alias = maybe_write_hf_profile(
+                "Qwen3.8-27B-exl3-4.00bpw",
+                repo_id="org/Qwen3.8-27B-exl3",
+                revision="4.00bpw",
+                alias="qwen38",
+                paths=paths,
+            )
+            self.assertEqual(alias, "qwen38")
+            self.assertTrue((paths.profiles_dir / "qwen38.yml").is_file())
+            data = library_state(paths, loaded="")
+            self.assertEqual(data["llms"][0]["profile"], "qwen38")
+            self.assertTrue(data["llms"][0]["local_profile"])
+            (paths.profiles_dir / "last.json").write_text(
+                json.dumps({"profile": "qwen38"}), encoding="utf-8"
+            )
+            (paths.profiles_dir / "gpu_mode.json").write_text(
+                json.dumps({"mode": "llm", "profile": "qwen38"}), encoding="utf-8"
+            )
+            (paths.profiles_dir / "switch_times.local.json").write_text(
+                json.dumps({"qwen38": {"ready_s": 90}}), encoding="utf-8"
+            )
+            renamed = set_profile_alias(
+                {"folder": "Qwen3.8-27B-exl3-4.00bpw", "alias": "qwen-big"},
+                paths=paths,
+            )
+            self.assertEqual(renamed["alias"], "qwen-big")
+            self.assertFalse((paths.profiles_dir / "qwen38.yml").exists())
+            self.assertTrue((paths.profiles_dir / "qwen-big.yml").is_file())
+            last = json.loads((paths.profiles_dir / "last.json").read_text(encoding="utf-8"))
+            gpu = json.loads((paths.profiles_dir / "gpu_mode.json").read_text(encoding="utf-8"))
+            times = json.loads(
+                (paths.profiles_dir / "switch_times.local.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(last["profile"], "qwen-big")
+            self.assertEqual(gpu["profile"], "qwen-big")
+            self.assertIn("qwen-big", times)
+            self.assertNotIn("qwen38", times)
+            delete_model(
+                {"kind": "llm", "id": "Qwen3.8-27B-exl3-4.00bpw"},
+                paths=paths,
+                loaded="",
+            )
+            self.assertFalse((paths.profiles_dir / "qwen-big.yml").exists())
+
+    def test_rename_rejects_shipped_profile(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            paths = _paths(root)
+            _llm_folder(paths.models_dir, "Qwen3.5-9B-exl3-4.00bpw")
+            (paths.profiles_dir / "qwen.yml").write_text(
+                "pretty: Qwen\nmodel:\n  model_name: Qwen3.5-9B-exl3-4.00bpw\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(ModelsError):
+                set_profile_alias(
+                    {"folder": "Qwen3.5-9B-exl3-4.00bpw", "alias": "daily"},
+                    paths=paths,
+                )
 
 
 class JobStateTests(unittest.TestCase):
@@ -338,7 +414,26 @@ class JobStateTests(unittest.TestCase):
             job = payload["job"]
             self.assertEqual(job["status"], "queued")
             self.assertEqual(job["folder"], "My-exl3-4.00bpw")
+            self.assertIsNone(job["alias"])
             self.assertTrue(job["dests"][0].endswith("My-exl3-4.00bpw"))
+
+    def test_start_hf_job_stores_alias(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            paths = _paths(root)
+            with mock.patch.object(ui_models, "disk_usage_for", return_value=DISK_OK):
+                payload = start_download(
+                    {
+                        "kind": "hf",
+                        "repo_id": "org/My-exl3",
+                        "revision": "4.00bpw",
+                        "size_bytes": 50,
+                        "alias": "qwen38",
+                    },
+                    paths=paths,
+                    spawn=False,
+                )
+            self.assertEqual(payload["job"]["alias"], "qwen38")
 
     def test_run_hf_job_writes_profile(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -370,6 +465,43 @@ class JobStateTests(unittest.TestCase):
             self.assertEqual(finished["status"], "done")
             self.assertTrue((paths.models_dir / "My-exl3" / "config.json").is_file())
             self.assertTrue((paths.profiles_dir / "hf-my-exl3.yml").is_file())
+            self.assertIn(
+                "local: true",
+                (paths.profiles_dir / "hf-my-exl3.yml").read_text(encoding="utf-8"),
+            )
+
+    def test_run_hf_job_uses_custom_alias(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            paths = _paths(root)
+            with mock.patch.object(ui_models, "disk_usage_for", return_value=DISK_OK):
+                payload = start_download(
+                    {
+                        "kind": "hf",
+                        "repo_id": "org/My-exl3",
+                        "revision": "main",
+                        "size_bytes": 10,
+                        "alias": "qwen38",
+                    },
+                    paths=paths,
+                    spawn=False,
+                )
+            job = payload["job"]
+
+            def fake_download(item, dest, tqdm_class=None):
+                dest.mkdir(parents=True, exist_ok=True)
+                (dest / "config.json").write_text("{}", encoding="utf-8")
+                (dest / "model.safetensors").write_bytes(b"w")
+
+            fm = ui_models.fetch_models_mod()
+            ui_models._ACTIVE_PATHS = paths
+            with mock.patch.object(fm, "download_item", side_effect=fake_download):
+                ui_models._run_job(job["id"])
+            finished = ui_models.read_job(paths)
+            self.assertEqual(finished["status"], "done")
+            self.assertEqual(finished["profile"], "qwen38")
+            self.assertTrue((paths.profiles_dir / "qwen38.yml").is_file())
+            self.assertFalse((paths.profiles_dir / "hf-my-exl3.yml").exists())
 
     def test_cancel_sets_event(self):
         with tempfile.TemporaryDirectory() as raw:

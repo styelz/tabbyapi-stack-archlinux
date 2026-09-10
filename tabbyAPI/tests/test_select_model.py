@@ -125,6 +125,37 @@ class ReadyFolderTests(unittest.TestCase):
             gpu = json.loads((profiles / "gpu_mode.json").read_text(encoding="utf-8"))
             self.assertEqual(gpu["profile"], "qwen35")
 
+    def test_apply_profile_ignores_local_metadata(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            profiles = root / "model_profiles"
+            models = root / "models" / "Custom-exl3"
+            profiles.mkdir()
+            models.mkdir(parents=True)
+            (models / "config.json").write_text("{}", encoding="utf-8")
+            (profiles / "qwen38.yml").write_text(
+                "pretty: Custom\nlocal: true\nmodel:\n  model_name: Custom-exl3\n",
+                encoding="utf-8",
+            )
+            config = root / "config.yml"
+            config.write_text("model:\n  model_name: other\n", encoding="utf-8")
+            with (
+                mock.patch.object(select_model, "ROOT", root),
+                mock.patch.object(select_model, "PROFILES_DIR", profiles),
+                mock.patch.object(select_model, "CONFIG_PATH", config),
+                mock.patch.object(select_model, "LAST_PATH", profiles / "last.json"),
+            ):
+                profile = select_model.apply_profile("qwen38")
+                aliases = select_model.profile_aliases()
+            self.assertNotIn("local", profile)
+            saved = config.read_text(encoding="utf-8")
+            self.assertIn("Custom-exl3", saved)
+            self.assertNotIn("local:", saved)
+            last = json.loads((profiles / "last.json").read_text(encoding="utf-8"))
+            self.assertEqual(last["profile"], "qwen38")
+            self.assertEqual(aliases["qwen38"], "qwen38")
+            self.assertEqual(aliases["custom-exl3"], "qwen38")
+
 
 class InstallShSeedTests(unittest.TestCase):
     def test_install_seeds_from_model_set_not_qwen(self):

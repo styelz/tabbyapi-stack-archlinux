@@ -23,6 +23,14 @@ class ModelsJobBannerTests(unittest.TestCase):
         self.assertNotIn('showOk(data.job.message || "Download finished")', self.src)
         self.assertNotIn('showOk(job.message || "Download finished")', self.src)
 
+    def test_download_and_library_expose_short_names(self):
+        self.assertIn('id="models-hf-alias"', self.src)
+        self.assertIn("Short name", self.src)
+        self.assertIn("models/alias", self.src)
+        self.assertIn("data-alias", self.src)
+        self.assertIn("promptModal", self.src)
+        self.assertIn("alias: hfAlias || null", self.src)
+
     def test_busy_jobs_still_show_byte_progress(self):
         paint = self.src.split("function paintJob(job)")[1].split("function libraryRows")[0]
         self.assertIn("if (jobBusy(job))", paint)

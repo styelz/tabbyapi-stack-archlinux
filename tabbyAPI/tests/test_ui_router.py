@@ -28,6 +28,7 @@ class UiRoutePrefixTests(unittest.TestCase):
         self.assertIn("/v1/ui/models/job", paths)
         self.assertIn("/v1/ui/models/job/cancel", paths)
         self.assertIn("/v1/ui/models/delete", paths)
+        self.assertIn("/v1/ui/models/alias", paths)
         self.assertIn("/v1/ui/chats", paths)
         self.assertIn("/v1/ui/prefs", paths)
         self.assertIn("/v1/ui/backup", paths)

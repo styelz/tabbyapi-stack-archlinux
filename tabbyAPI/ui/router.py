@@ -473,6 +473,20 @@ async def ui_models_delete(request: Request, _admin: str = Depends(require_ui_ad
         _models_http(exc)
 
 
+@router.post("/models/alias", include_in_schema=False)
+async def ui_models_alias(request: Request, _admin: str = Depends(require_ui_admin)):
+    from ui.models import ModelsError, set_profile_alias
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    try:
+        return await asyncio.to_thread(set_profile_alias, body)
+    except ModelsError as exc:
+        _models_http(exc)
+
+
 @router.post("/chat", include_in_schema=False)
 async def ui_chat(request: Request, _user: str = Depends(require_ui_user)):
     from ui.chat import run_console_chat

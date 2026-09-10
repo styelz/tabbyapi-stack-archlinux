@@ -36,6 +36,26 @@ HF_URL_RE = re.compile(
 )
 REPO_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 QUANT_REV_RE = re.compile(r"(bpw|exl\d|exllama)", re.IGNORECASE)
+ALIAS_RE = re.compile(r"^[a-z][a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$")
+SHIPPED_PROFILE_ALIASES = frozenset(
+    {"qwen", "qwen35", "qwen36", "gemma", "gemma26", "glm"}
+)
+RESERVED_ALIASES = frozenset(
+    {
+        "comfy",
+        "flux",
+        "image",
+        "comfyui",
+        "llm",
+        "help",
+        "restart",
+        "list",
+        "models",
+        "generate",
+        "embed",
+        "qwen-image",
+    }
+) | SHIPPED_PROFILE_ALIASES
 FORMAT_NEEDLES = {
     "exl3": ("exl3", "exllamav3"),
     "exl2": ("exl2", "exllamav2"),
@@ -153,6 +173,33 @@ def sanitize_folder_name(raw: str) -> str:
     if not out or out in (".", ".."):
         raise ModelsError(f"Invalid folder name: {raw!r}")
     return out[:180]
+
+
+def normalize_alias(raw: str) -> str:
+    alias = str(raw or "").strip().lower()
+    if alias.endswith(".yml"):
+        alias = alias[:-4]
+    if not ALIAS_RE.fullmatch(alias) or "--" in alias:
+        raise ModelsError(
+            "Short name must be 2–32 characters: start with a letter, then letters, "
+            "digits, or hyphens (like qwen38)."
+        )
+    if alias in RESERVED_ALIASES:
+        raise ModelsError(f"{alias} is reserved. Pick another short name.")
+    return alias
+
+
+def optional_alias(raw: Any) -> str | None:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    return normalize_alias(text)
+
+
+def is_local_profile(alias: str, data: dict | None = None) -> bool:
+    if isinstance(data, dict) and data.get("local"):
+        return True
+    return str(alias or "").strip().lower().startswith("hf-")
 
 
 def hf_folder_name(repo_id: str, revision: str | None) -> str:
@@ -587,7 +634,7 @@ def _profile_map(profiles_dir: Path) -> dict[str, dict]:
             "alias": alias,
             "folder": folder,
             "pretty": pretty,
-            "local": alias.startswith("hf-"),
+            "local": is_local_profile(alias, data),
             "path": str(path),
         }
         mapping[alias.lower()] = entry
@@ -813,6 +860,7 @@ def _prepare_hf_job(body: dict, paths: ModelPaths, hf_api=None) -> dict:
         "repo_id": repo_id,
         "revision": revision,
         "folder": folder,
+        "alias": optional_alias(body.get("alias") or body.get("name") or ""),
         "dests": [str(dest)],
         "percent": 0,
         "bytes_done": 0,
@@ -891,6 +939,7 @@ def _run_job(job_id: str) -> None:
                 job["folder"],
                 repo_id=job.get("repo_id") or "",
                 revision=job.get("revision") or "",
+                alias=job.get("alias") or None,
                 paths=paths,
             )
             final["profile"] = profile_alias_for_folder(job["folder"], paths)
@@ -1068,49 +1117,184 @@ def profile_defaults_from_config(
     }
 
 
-def maybe_write_hf_profile(
-    folder: str,
-    repo_id: str = "",
-    revision: str = "",
-    paths: ModelPaths | None = None,
-) -> str | None:
-    p = paths or default_paths()
-    existing = profile_alias_for_folder(folder, p)
-    if existing:
-        return existing
-    slug = profile_slug(folder)
-    stem = f"hf-{slug}"
-    dest = p.profiles_dir / f"{stem}.yml"
-    n = 2
-    while dest.exists():
-        stem = f"hf-{slug}-{n}"
-        dest = p.profiles_dir / f"{stem}.yml"
-        n += 1
-        if n > 50:
-            raise ModelsError("Could not allocate a profile name")
-    pretty = " ".join(part for part in (repo_id, revision) if part).strip() or folder
-    data = profile_defaults_from_config(p.models_dir / folder, pretty=pretty)
-    p.profiles_dir.mkdir(parents=True, exist_ok=True)
+def _write_profile_yaml(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     from ruamel.yaml import YAML
 
     yaml = YAML()
     yaml.preserve_quotes = True
     yaml.width = 4096
-    with dest.open("w", encoding="utf-8") as handle:
+    with path.open("w", encoding="utf-8") as handle:
         yaml.dump(data, handle)
+
+
+def _load_profile_yaml(path: Path) -> dict:
+    from ruamel.yaml import YAML
+
+    yaml = YAML(typ="safe")
+    try:
+        data = yaml.load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, Exception):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _alias_taken_by_other(alias: str, folder: str, paths: ModelPaths) -> str | None:
+    dest = paths.profiles_dir / f"{alias}.yml"
+    if not dest.is_file():
+        return None
+    data = _load_profile_yaml(dest)
+    other = str(((data.get("model") or {}) or {}).get("model_name") or "")
+    if other and other.lower() != str(folder).lower():
+        return other
+    return None
+
+
+def maybe_write_hf_profile(
+    folder: str,
+    repo_id: str = "",
+    revision: str = "",
+    alias: str | None = None,
+    paths: ModelPaths | None = None,
+) -> str | None:
+    p = paths or default_paths()
+    wanted = optional_alias(alias) if alias else None
+    existing = profile_alias_for_folder(folder, p)
+    if wanted:
+        taken = _alias_taken_by_other(wanted, folder, p)
+        if taken:
+            raise ModelsError(f"{wanted} is already used by {taken}")
+        if existing == wanted:
+            return wanted
+    elif existing:
+        return existing
+    if wanted:
+        stem = wanted
+        dest = p.profiles_dir / f"{stem}.yml"
+    else:
+        slug = profile_slug(folder)
+        stem = f"hf-{slug}"
+        dest = p.profiles_dir / f"{stem}.yml"
+        n = 2
+        while dest.exists():
+            stem = f"hf-{slug}-{n}"
+            dest = p.profiles_dir / f"{stem}.yml"
+            n += 1
+            if n > 50:
+                raise ModelsError("Could not allocate a profile name")
+    pretty = " ".join(part for part in (repo_id, revision) if part).strip() or folder
+    data = profile_defaults_from_config(p.models_dir / folder, pretty=pretty)
+    data["local"] = True
+    _write_profile_yaml(dest, data)
     return stem
 
 
-def _hf_profiles_for_folder(folder: str, paths: ModelPaths) -> list[Path]:
+def _local_profiles_for_folder(folder: str, paths: ModelPaths) -> list[Path]:
     found = []
     mapping = _profile_map(paths.profiles_dir)
     entry = mapping.get(str(folder).lower()) or {}
     alias = str(entry.get("alias") or "")
-    if alias.startswith("hf-"):
+    if alias and is_local_profile(alias, _load_profile_yaml(paths.profiles_dir / f"{alias}.yml")):
         path = paths.profiles_dir / f"{alias}.yml"
         if path.is_file():
             found.append(path)
     return found
+
+
+def _patch_json_profile(path: Path, old: str, new: str, key: str = "profile") -> None:
+    if not path.is_file() or not old or old == new:
+        return
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(data, dict):
+        return
+    if str(data.get(key) or "") != old:
+        return
+    data[key] = new
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def retarget_profile_refs(old: str, new: str, paths: ModelPaths | None = None) -> None:
+    p = paths or default_paths()
+    if not old or old == new:
+        return
+    _patch_json_profile(p.profiles_dir / "last.json", old, new)
+    _patch_json_profile(p.profiles_dir / "gpu_mode.json", old, new)
+    times_path = p.profiles_dir / "switch_times.local.json"
+    if not times_path.is_file():
+        return
+    try:
+        data = json.loads(times_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(data, dict) or old not in data:
+        return
+    if new not in data:
+        data[new] = data[old]
+    del data[old]
+    tmp = times_path.with_name(times_path.name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(times_path)
+
+
+def set_profile_alias(body: dict, paths: ModelPaths | None = None) -> dict:
+    p = paths or default_paths()
+    wanted = normalize_alias((body or {}).get("alias") or (body or {}).get("name") or "")
+    folder = str((body or {}).get("folder") or (body or {}).get("id") or "").strip()
+    current = str((body or {}).get("profile") or "").strip()
+    if folder:
+        folder = sanitize_folder_name(folder)
+    elif current:
+        entry = _profile_map(p.profiles_dir).get(current.lower()) or {}
+        folder = str(entry.get("folder") or "")
+        if not folder:
+            raise ModelsError(f"Unknown profile {current!r}", 404)
+    else:
+        raise ModelsError("folder or profile is required")
+
+    dest_folder = (p.models_dir / folder).resolve()
+    models_root = p.models_dir.resolve()
+    if dest_folder != models_root and models_root not in dest_folder.parents:
+        raise ModelsError("Path is outside the models directory")
+    if not dest_folder.is_dir():
+        raise ModelsError(f"{folder} is not installed", 404)
+
+    existing = profile_alias_for_folder(folder, p)
+    if existing == wanted:
+        return {"ok": True, "alias": wanted, "folder": folder, "unchanged": True}
+    if existing:
+        existing_data = _load_profile_yaml(p.profiles_dir / f"{existing}.yml")
+        if not is_local_profile(existing, existing_data):
+            raise ModelsError(
+                "Catalog models keep their built-in names (qwen, qwen35, qwen36, …)."
+            )
+    taken = _alias_taken_by_other(wanted, folder, p)
+    if taken:
+        raise ModelsError(f"{wanted} is already used by {taken}")
+
+    dest = p.profiles_dir / f"{wanted}.yml"
+    if existing:
+        src = p.profiles_dir / f"{existing}.yml"
+        data = _load_profile_yaml(src) if src.is_file() else {}
+        if not data:
+            data = profile_defaults_from_config(dest_folder, pretty=folder)
+        data["local"] = True
+        model_cfg = data.get("model")
+        if not isinstance(model_cfg, dict):
+            model_cfg = {}
+            data["model"] = model_cfg
+        model_cfg["model_name"] = folder
+        _write_profile_yaml(dest, data)
+        if src.is_file() and src.resolve() != dest.resolve():
+            src.unlink(missing_ok=True)
+        retarget_profile_refs(existing, wanted, p)
+    else:
+        maybe_write_hf_profile(folder, alias=wanted, paths=p)
+    return {"ok": True, "alias": wanted, "folder": folder}
 
 
 def delete_model(
@@ -1157,7 +1341,7 @@ def delete_model(
         else:
             dest.unlink()
         removed = []
-        for profile in _hf_profiles_for_folder(folder, p):
+        for profile in _local_profiles_for_folder(folder, p):
             profile.unlink(missing_ok=True)
             removed.append(profile.stem)
         return {"ok": True, "deleted": folder, "profiles": removed}

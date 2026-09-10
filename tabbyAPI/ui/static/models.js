@@ -78,6 +78,7 @@ function mountModels(root) {
   let lastJobId = "";
   let paintedJobId = "";
   let loading = false;
+  let hfAlias = "";
   const JOB_DONE_TTL_MS = 90 * 1000;
   const JOB_DONE_HIDE_MS = 8 * 1000;
   const JOB_DISMISS_KEY = "tabby-models-dismissed-job";
@@ -220,6 +221,8 @@ function mountModels(root) {
         kind,
         pretty: pick.label || (llm && llm.pretty) || pick.id,
         profile: llm && llm.profile,
+        folder: llm && (llm.folder || llm.id),
+        local_profile: Boolean(llm && llm.local_profile),
         loaded: Boolean(llm && llm.loaded),
         size_bytes: Number((llm && llm.size_bytes) || pick.size_bytes || 0),
         disk_gib: pick.disk_gib,
@@ -273,7 +276,14 @@ function mountModels(root) {
         if (row.loaded) badges.push('<span class="models-badge is-on">Loaded</span>');
         else if (row.installed) badges.push('<span class="models-badge is-on">Installed</span>');
         if (row.partial) badges.push('<span class="models-badge">Incomplete</span>');
-        if (row.profile) badges.push(`<span class="muted">${TabbyUI.escapeHtml(row.profile)}</span>`);
+        if (row.profile && !row.local_profile) {
+          badges.push(`<span class="muted">switch to ${TabbyUI.escapeHtml(row.profile)}</span>`);
+        }
+        if (row.profile && row.local_profile) {
+          badges.push(
+            `<button type="button" class="models-alias-btn" data-alias="${TabbyUI.escapeHtml(row.profile)}" data-folder="${TabbyUI.escapeHtml(row.folder || row.id)}">switch to ${TabbyUI.escapeHtml(row.profile)}</button>`
+          );
+        }
         if (!row.installed && row.min_vram_mib) {
           badges.push(`${Math.round(row.min_vram_mib / 1024)} GB VRAM`);
         }
@@ -347,6 +357,8 @@ function mountModels(root) {
   }
 
   function paintRepo(data) {
+    const prevAlias = repoEl.querySelector("#models-hf-alias");
+    if (prevAlias) hfAlias = String(prevAlias.value || "").trim();
     if (!data) {
       repoEl.hidden = true;
       repoEl.innerHTML = "";
@@ -386,6 +398,11 @@ function mountModels(root) {
         <button type="button" class="btn" id="models-repo-close">Close</button>
       </div>
       ${note}
+      <label class="models-alias-field">
+        <span>Short name</span>
+        <input id="models-hf-alias" type="text" maxlength="32" placeholder="qwen38" autocomplete="off" spellcheck="false" value="${TabbyUI.escapeHtml(hfAlias)}" />
+      </label>
+      <p class="muted models-alias-hint">Used for <code>switch to qwen38</code> and the model dropdown. Letters, digits, and hyphens.</p>
       <table class="models-table models-repo-table">
         <thead><tr><th>Revision</th><th class="num">Size</th><th></th></tr></thead>
         <tbody>${revs || '<tr><td colspan="3" class="muted">No branches listed.</td></tr>'}</tbody>
@@ -401,7 +418,17 @@ function mountModels(root) {
       showError(data.job.error || data.job.message);
     }
     lastJobId = (data.job && data.job.id) || lastJobId;
+    refreshStatus();
     return data;
+  }
+
+  async function refreshStatus() {
+    try {
+      const data = await TabbyUI.api("status");
+      if (typeof TabbyUI.paintGpuChip === "function") TabbyUI.paintGpuChip(data);
+    } catch (_exc) {
+      /* header poll will catch up */
+    }
   }
 
   async function pollJob() {
@@ -449,7 +476,30 @@ function mountModels(root) {
     const del = event.target.closest("[data-del]");
     const load = event.target.closest("[data-load]");
     const catalog = event.target.closest("button[data-catalog]");
+    const aliasBtn = event.target.closest("[data-alias]");
     try {
+      if (aliasBtn) {
+        const current = aliasBtn.getAttribute("data-alias") || "";
+        const folder = aliasBtn.getAttribute("data-folder") || "";
+        const next = await TabbyUI.promptModal({
+          title: "Short name",
+          text: "Used for switch to …, the model dropdown, and list models.",
+          label: "Short name",
+          value: current,
+          placeholder: "qwen38",
+          yes: "Save",
+        });
+        if (next == null) return;
+        const alias = String(next || "").trim();
+        if (!alias || alias === current) return;
+        await TabbyUI.api("models/alias", {
+          method: "POST",
+          body: { folder, profile: current, alias },
+        });
+        await loadLibrary();
+        showOk(`Named ${alias}. Send switch to ${alias} to load it.`);
+        return;
+      }
       if (load) {
         load.disabled = true;
         showOk("Loading…");
@@ -500,12 +550,15 @@ function mountModels(root) {
     const btn = event.target.closest("[data-hf]");
     if (!btn) return;
     const size = btn.getAttribute("data-size");
+    const aliasInput = repoEl.querySelector("#models-hf-alias");
+    if (aliasInput) hfAlias = String(aliasInput.value || "").trim();
     try {
       await beginDownload({
         kind: "hf",
         repo_id: btn.getAttribute("data-hf"),
         revision: btn.getAttribute("data-rev"),
         size_bytes: size ? Number(size) : null,
+        alias: hfAlias || null,
       });
     } catch (exc) {
       showError(exc.message || String(exc));

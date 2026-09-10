@@ -192,7 +192,13 @@ model_profiles/gpu_mode.json
 model_profiles/vram_recover.json
 model_profiles/switch_times.local.json
 model_profiles/download_job.json
-model_profiles/hf-*.yml
+model_profiles/*.yml
+!model_profiles/qwen.yml
+!model_profiles/qwen35.yml
+!model_profiles/qwen36.yml
+!model_profiles/gemma.yml
+!model_profiles/gemma26.yml
+!model_profiles/glm.yml
 deploy/arch/tabby.env
 HOW-TO-ARCH.txt
 

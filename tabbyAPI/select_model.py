@@ -21,6 +21,9 @@ def available_profiles() -> list[str]:
     return sorted(path.stem for path in PROFILES_DIR.glob("*.yml"))
 
 
+PROFILE_META_KEYS = frozenset({"pretty", "local"})
+
+
 def profile_aliases() -> dict[str, str]:
     aliases = {}
     names = available_profiles()
@@ -28,6 +31,10 @@ def profile_aliases() -> dict[str, str]:
         aliases[str(index)] = name
         aliases[name.upper()] = name
         aliases[name] = name
+        aliases[name.lower()] = name
+        folder = profile_model_name(name)
+        if folder:
+            aliases[str(folder).lower()] = name
     return aliases
 
 
@@ -327,6 +334,9 @@ def apply_profile(name: str):
     yaml, config = load_yaml(CONFIG_PATH)
 
     pretty = profile.pop("pretty", name)
+    for key in list(profile):
+        if key in PROFILE_META_KEYS or not isinstance(profile.get(key), dict):
+            profile.pop(key, None)
     write_tabby_overlay(profile)
     for section, values in profile.items():
         if not isinstance(values, dict):
