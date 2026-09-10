@@ -7,11 +7,13 @@ from images import chat as images_chat
 from ui.chat import completion_request_from_payload
 from ui.manager import sanitize_chat_payload
 from common.phrase_switch import (
+    handle_if_requested,
     image_job_done_text,
     image_ready_response,
     is_help_request,
     is_list_request,
     is_restart_request,
+    missing_profile_reply,
     requested_profile,
 )
 from endpoints.OAI.types.chat_completion import ChatCompletionMessage, ChatCompletionRequest
@@ -315,6 +317,20 @@ class SlashCommandTests(unittest.TestCase):
         self.assertEqual(requested_profile(self._req("/comfy")), "comfy")
         self.assertEqual(requested_profile(self._req("/llm")), "llm")
         self.assertEqual(requested_profile(self._req("/switch to comfy")), "comfy")
+
+    def test_missing_profile_reply_skips_comfy(self):
+        self.assertIsNone(missing_profile_reply("comfy"))
+        self.assertIsNone(missing_profile_reply("llm"))
+
+    def test_switch_to_missing_profile_does_not_start_load(self):
+        with mock.patch("select_model.folder_for_choice", return_value=None):
+            self.assertIn("not installed", missing_profile_reply("qwen36") or "")
+            with mock.patch("common.phrase_switch.start_switch") as start:
+                result = handle_if_requested(self._req("switch to qwen36"))
+        start.assert_not_called()
+        text = result.choices[0].message.content
+        self.assertIn("not installed", text)
+        self.assertIn("Models page", text)
 
 
 class UnpumpedAssistantTextTests(unittest.TestCase):

@@ -891,6 +891,10 @@ input:focus, textarea:focus { outline: 0.125rem solid var(--focus-ring); border-
   font-weight: 500;
   color: var(--muted);
 }
+.user-menu-item kbd.is-download {
+  color: var(--accent);
+  font-weight: 600;
+}
 .user-menu-item:hover,
 .user-menu-item:focus-visible,
 .user-menu-item[aria-expanded="true"] {

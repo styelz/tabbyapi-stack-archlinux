@@ -1634,6 +1634,178 @@
     else if (schemeQuery.addListener) schemeQuery.addListener(onScheme);
   }
 
+  function jobBusyStatus(status) {
+    return status === "queued" || status === "running" || status === "cancelling";
+  }
+
+  function downloadJobLine(job) {
+    if (!job) return "";
+    const bits = [];
+    if (job.message) bits.push(job.message);
+    if (job.file && job.file !== job.message) bits.push(job.file);
+    if (job.bytes_total) {
+      bits.push(`${formatBytes(job.bytes_done || 0)} / ${formatBytes(job.bytes_total)}`);
+    }
+    return bits.join(" · ");
+  }
+
+  function paintDownloadJob(modal, job) {
+    if (!modal || !job) return;
+    const line = downloadJobLine(job);
+    if (job.percent != null) modal.setProgress(job.percent, line || job.status || "Downloading");
+    else if (line) modal.setNote(line);
+    if (line && line !== modal._lastDownloadLine) {
+      modal._lastDownloadLine = line;
+      modal.appendLine(line);
+    }
+  }
+
+  function missingProfileToken(text, data) {
+    const raw = String(text || "").trim();
+    const lower = raw.toLowerCase();
+    let token = "";
+    const sw = lower.match(/^\/?(?:please\s+)?(?:switch(?:\s+to)?|use)\s+(\S+)/);
+    const slash = lower.match(/^\/([a-z][\w.-]*)\s*$/);
+    if (sw) token = sw[1].replace(/[!.]+$/, "");
+    else if (slash) token = slash[1];
+    if (!token || token === "comfy" || token === "flux" || token === "llm") return "";
+    if (token === "help" || token === "restart" || token === "list" || token === "models") return "";
+    const readyMap = (data && data.profile_ready) || {};
+    if (readyMap[token] === false) return token;
+    return "";
+  }
+
+  function profilePrettyName(token, data) {
+    const labels = (data && data.profile_labels) || {};
+    return labels[token] || token;
+  }
+
+  async function confirmMissingModelDownload(token, data) {
+    const pretty = profilePrettyName(token, data);
+    if (!window.TabbyUI || !window.TabbyUI.isAdmin) {
+      await confirmModal({
+        title: "Model not installed",
+        text: `${pretty} is not on this machine. An administrator can download it on the Models page.`,
+        yes: "OK",
+        no: "Close",
+      });
+      return false;
+    }
+    return confirmModal({
+      title: "Download model?",
+      text: `${pretty} is not installed. Download it from Hugging Face now? This can take a while.`,
+      yes: "Download",
+      no: "Cancel",
+    });
+  }
+
+  async function followCatalogDownload(token, { pretty } = {}) {
+    const label = pretty || token;
+    const modal = progressModal({
+      title: `Downloading ${label}`,
+      note: "Starting download from Hugging Face…",
+    });
+    modal.setActions([{
+      label: "Cancel",
+      run: () => {
+        api("models/job/cancel", { method: "POST", body: {} }).catch(() => {});
+      },
+    }]);
+
+    let started;
+    try {
+      started = await api("models/download", { method: "POST", body: { kind: "catalog", pick_id: token } });
+    } catch (err) {
+      const msg = (err && err.message) || String(err);
+      if (/already running/i.test(msg)) {
+        started = await api("models/job");
+      } else {
+        modal.setBusy(false);
+        modal.setTitle("Download failed");
+        modal.setNote(msg);
+        modal.appendLine(msg);
+        modal.setActions([{ label: "Close", primary: true, run: () => modal.close() }]);
+        return { ok: false, reason: "error", error: msg, modal };
+      }
+    }
+    if (!(started && started.job)) {
+      modal.setBusy(false);
+      modal.setTitle("Download failed");
+      modal.setNote("The download did not start.");
+      modal.setActions([{ label: "Close", primary: true, run: () => modal.close() }]);
+      return { ok: false, reason: "error", modal };
+    }
+    paintDownloadJob(modal, started.job);
+
+    while (!modal.closed) {
+      await sleep(1000);
+      if (modal.closed) break;
+      let data;
+      try {
+        data = await api("models/job");
+      } catch (err) {
+        modal.appendLine((err && err.message) || String(err));
+        continue;
+      }
+      const job = data.job || {};
+      paintDownloadJob(modal, job);
+      if (jobBusyStatus(job.status)) continue;
+      modal.setBusy(false);
+      if (job.status === "done") {
+        modal.setTitle("Download finished");
+        modal.setNote(job.message || `${label} is installed.`);
+        modal.setProgress(100, job.message || "Download finished");
+        modal.setActions([{ label: "Close", primary: true, run: () => modal.close() }]);
+        return { ok: true, job, modal };
+      }
+      const failed = job.status === "cancelled" ? "Download cancelled" : "Download failed";
+      modal.setTitle(failed);
+      modal.setNote(job.error || job.message || failed);
+      modal.setActions([{ label: "Close", primary: true, run: () => modal.close() }]);
+      return { ok: false, reason: job.status || "error", job, modal };
+    }
+    return { ok: false, reason: "closed", modal };
+  }
+
+  async function refreshGpuAfterDownload() {
+    try {
+      const next = await api("status");
+      if (window.TabbyUI && typeof window.TabbyUI.paintGpuChip === "function") {
+        window.TabbyUI.paintGpuChip(next);
+      }
+      return next;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async function offerMissingModelDownload(token, data, opts) {
+    opts = opts || {};
+    if (!(await confirmMissingModelDownload(token, data))) {
+      return { ok: false, reason: "cancelled" };
+    }
+    const pretty = profilePrettyName(token, data);
+    const result = await followCatalogDownload(token, { pretty });
+    if (result.ok) {
+      await refreshGpuAfterDownload();
+      if (opts.loadAfter !== false && result.modal && !result.modal.closed) {
+        result.modal.setActions([
+          { label: "Close", run: () => result.modal.close() },
+          {
+            label: `Load ${token}`,
+            primary: true,
+            run: async () => {
+              result.modal.close();
+              await api("gpu", { method: "POST", body: { mode: token } });
+              await refreshGpuAfterDownload();
+            },
+          },
+        ]);
+      }
+    }
+    return result;
+  }
+
   window.TabbyUI = {
     base: uiBase,
     path: uiPath,
@@ -1654,6 +1826,11 @@
     promptModal,
     progressModal,
     followRestart,
+    isAdmin: false,
+    missingProfileToken,
+    confirmMissingModelDownload,
+    followCatalogDownload,
+    offerMissingModelDownload,
     showShortcuts,
     escapeHtml,
     looksLikeHtml,

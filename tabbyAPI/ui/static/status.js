@@ -80,6 +80,40 @@ function mountStatus(root) {
   let lastSeries = [];
   let lastPayload = null;
   let actionBusy = false;
+  let pickedProfile = "";
+
+  function syncLoadButton(data) {
+    const btn = root.querySelector("#switch-llm");
+    if (!btn) return;
+    const token = String(select.value || "").trim().toLowerCase();
+    const status = data || TabbyUI.lastGpuStatus || {};
+    const readyMap = status.profile_ready || {};
+    const missing = Boolean(token && readyMap[token] === false);
+    btn.textContent = missing ? "Download" : (status.profile === token ? "Reload LLM" : "Load LLM");
+    btn.classList.toggle("primary", missing);
+  }
+
+  function fillProfiles(data) {
+    const profiles = data.profiles || [];
+    const labels = data.profile_labels || {};
+    const readyMap = data.profile_ready || {};
+    const keep = pickedProfile && profiles.includes(pickedProfile) ? pickedProfile : "";
+    select.innerHTML = profiles
+      .map((name) => {
+        const pretty = labels[name];
+        const missing = readyMap[name] === false;
+        let text = pretty && pretty !== name ? `${name} — ${pretty}` : name;
+        if (missing) text += " (not installed)";
+        return `<option value="${TabbyUI.escapeHtml(name)}">${TabbyUI.escapeHtml(text)}</option>`;
+      })
+      .join("");
+    if (keep) select.value = keep;
+    else if (data.profile) {
+      select.value = data.profile;
+      pickedProfile = data.profile;
+    }
+    syncLoadButton(data);
+  }
 
   function stackPlanText(plan, action) {
     const lines = [];
@@ -505,16 +539,7 @@ function mountStatus(root) {
           : ""
       ),
     ].join("");
-    const profiles = data.profiles || [];
-    const labels = data.profile_labels || {};
-    select.innerHTML = profiles
-      .map((name) => {
-        const pretty = labels[name];
-        const text = pretty && pretty !== name ? `${name} — ${pretty}` : name;
-        return `<option value="${TabbyUI.escapeHtml(name)}">${TabbyUI.escapeHtml(text)}</option>`;
-      })
-      .join("");
-    if (data.profile) select.value = data.profile;
+    fillProfiles(data);
     root.querySelector("#status-stamp").textContent = data.now || "";
     TabbyUI.paintGpuChip(data);
     await refreshMetrics().catch((err) => {
@@ -645,25 +670,25 @@ function mountStatus(root) {
     msg.textContent = err.message;
     TabbyUI.paintApiDown(err);
   }));
+  select.addEventListener("change", () => {
+    pickedProfile = String(select.value || "").trim();
+    syncLoadButton();
+  });
   root.querySelector("#switch-llm").addEventListener("click", async () => {
     const token = String(select.value || "llm").trim().toLowerCase();
     const data = TabbyUI.lastGpuStatus || {};
     const readyMap = data.profile_ready || {};
     if (token && token !== "llm" && readyMap[token] === false) {
-      const labels = data.profile_labels || {};
-      const pretty = labels[token] || token;
-      const yes = await TabbyUI.confirmModal({
-        title: "Download model?",
-        text: `${pretty} is not installed. Download it from Hugging Face now? You can watch progress on the Models page.`,
-        yes: "Download",
-        no: "Cancel",
-      });
-      if (!yes) return;
       try {
-        await TabbyUI.api("models/download", { method: "POST", body: { kind: "catalog", pick_id: token } });
-        location.hash = "#models";
+        const result = await TabbyUI.offerMissingModelDownload(token, data);
+        if (result && result.ok) {
+          pickedProfile = token;
+          msg.textContent = `${token} is installed.`;
+          await refresh();
+        }
       } catch (err) {
         msg.textContent = err.message;
+        TabbyUI.paintApiDown(err);
       }
       return;
     }

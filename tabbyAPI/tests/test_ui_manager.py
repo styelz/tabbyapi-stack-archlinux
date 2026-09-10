@@ -397,3 +397,8 @@ class UiManagerTests(unittest.TestCase):
         self.assertEqual(state["prompt"]["title"], "Restart API?")
         self.assertEqual(state["prompt"]["yes_label"], "Restart")
         self.assertFalse(state["prompt"]["needs_restart"])
+
+    def test_gpu_status_reports_which_profiles_have_weights(self):
+        src = Path(manager.__file__).read_text(encoding="utf-8")
+        self.assertIn("profile_ready", src)
+        self.assertIn("folder_for_choice", src)

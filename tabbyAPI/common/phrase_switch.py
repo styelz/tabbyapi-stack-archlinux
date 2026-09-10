@@ -474,6 +474,23 @@ def current_folder() -> Optional[str]:
     return None
 
 
+def missing_profile_reply(name: str) -> Optional[str]:
+    """Plain reply when a switch target has no weights on disk."""
+    key = (name or "").strip().lower()
+    if not key or key in GPU_ALIASES or key in ("llm", "comfy"):
+        return None
+    from select_model import folder_for_choice
+
+    if folder_for_choice(key):
+        return None
+    pretty = profile_ui_labels([key]).get(key, key)
+    return (
+        f"{pretty} is not installed on this machine. "
+        "An administrator can download it from the Models page, "
+        "or choose it in the model dropdown and confirm the download."
+    )
+
+
 def resolve_switch_target(token: str) -> Optional[str]:
     """Return a switch_model.py profile alias, or None if unknown."""
     key = token.strip().lower()
@@ -1648,5 +1665,8 @@ def handle_if_requested(
         return None
     if defer_switch:
         return None
+    missing = missing_profile_reply(name)
+    if missing:
+        return text_response(data, missing)
     start_switch(name)
     return text_response(data, switch_reply_text(name))

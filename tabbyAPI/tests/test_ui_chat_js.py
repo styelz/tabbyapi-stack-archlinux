@@ -450,6 +450,28 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
         self.assertIn('cache: "reload"', load_store)
         self.assertIn("TabbyUI.flushPrefs", app_src)
 
+    def test_missing_model_switch_confirms_and_shows_progress(self):
+        utils = Path(__file__).resolve().parents[1] / "ui" / "static" / "utils.js"
+        app = Path(__file__).resolve().parents[1] / "ui" / "static" / "app.js"
+        status = Path(__file__).resolve().parents[1] / "ui" / "static" / "status.js"
+        utils_src = utils.read_text(encoding="utf-8")
+        app_src = app.read_text(encoding="utf-8")
+        status_src = status.read_text(encoding="utf-8")
+        self.assertIn("function offerMissingModelDownload(", utils_src)
+        self.assertIn("function followCatalogDownload(", utils_src)
+        self.assertIn("function missingProfileToken(", utils_src)
+        self.assertIn('kind: "catalog"', utils_src)
+        self.assertIn("progressModal", utils_src)
+        self.assertIn('hint === "Download"', app_src)
+        self.assertIn('? "Download"', app_src)
+        self.assertIn('textContent = missing ? "Download"', status_src)
+        self.assertIn("offerMissingModelDownload", status_src)
+        self.assertIn("maybeDownloadForSwitch", self.src)
+        self.assertIn("missingProfileToken", self.src)
+        self.assertIn("Not installed — download", self.src)
+        self.assertNotIn("You can watch progress on the Models page.", app_src)
+        self.assertNotIn("location.hash = \"#models\"", status_src)
+
 
 if __name__ == "__main__":
     unittest.main()

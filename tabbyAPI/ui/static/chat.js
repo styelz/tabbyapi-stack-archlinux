@@ -1421,20 +1421,28 @@ function mountChat(root) {
   let recallIndex = -1;
   let recallDraft = "";
 
+  function fillSlashCommands(data) {
+    if (!data) return;
+    rememberGpu(data);
+    const profiles = data.profiles || [];
+    const labels = data.profile_labels || {};
+    const readyMap = data.profile_ready || {};
+    const extra = profiles.map((name) => ({
+      slash: `/${name}`,
+      send: `switch to ${name}`,
+      hint: data.profile === name
+        ? "Loaded now"
+        : readyMap[name] === false
+          ? "Not installed — download"
+          : labels[name] || "Switch model",
+    }));
+    commands = [...STATIC_COMMANDS.slice(0, 3), ...extra, ...STATIC_COMMANDS.slice(3)];
+    if (input.value.startsWith("/")) renderMenu();
+    paintCompose();
+  }
+
   TabbyUI.api("status")
-    .then((data) => {
-      rememberGpu(data);
-      const profiles = data.profiles || [];
-      const labels = data.profile_labels || {};
-      const extra = profiles.map((name) => ({
-        slash: `/${name}`,
-        send: `switch to ${name}`,
-        hint: data.profile === name ? "Loaded now" : labels[name] || "Switch model",
-      }));
-      commands = [...STATIC_COMMANDS.slice(0, 3), ...extra, ...STATIC_COMMANDS.slice(3)];
-      if (input.value.startsWith("/")) renderMenu();
-      paintCompose();
-    })
+    .then((data) => fillSlashCommands(data))
     .catch(() => {});
 
   function activeChat() {
@@ -11988,6 +11996,7 @@ function mountChat(root) {
   function onGpuStatus(event) {
     const data = event && event.detail;
     rememberGpu(data);
+    fillSlashCommands(data);
     paintActiveContext();
     applyStackOccupancy(data);
     if (modelWait) return;
@@ -12984,6 +12993,16 @@ function mountChat(root) {
       }
       while (next) {
         stopKind = "";
+        const missing = TabbyUI.missingProfileToken(next, TabbyUI.lastGpuStatus);
+        if (missing) {
+          const result = await TabbyUI.offerMissingModelDownload(missing, TabbyUI.lastGpuStatus, {
+            loadAfter: false,
+          });
+          if (!result || !result.ok) {
+            if (store.activeId === flightChatId && !input.value.trim()) input.value = next;
+            break;
+          }
+        }
         await send(next, Object.assign({}, sendOpts || {}, { chatId: flightChatId }));
         sendOpts = undefined;
         if (stopKind === "steer") {
@@ -13057,6 +13076,20 @@ function mountChat(root) {
       buildApprovedPlan(lastUnbuiltPlanIndex());
     });
   }
+  async function maybeDownloadForSwitch(text) {
+    const token = TabbyUI.missingProfileToken(text, TabbyUI.lastGpuStatus);
+    if (!token) return true;
+    try {
+      const result = await TabbyUI.offerMissingModelDownload(token, TabbyUI.lastGpuStatus, {
+        loadAfter: false,
+      });
+      return Boolean(result && result.ok);
+    } catch (err) {
+      TabbyUI.paintApiDown(err);
+      return false;
+    }
+  }
+
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     stopMic();
@@ -13085,16 +13118,19 @@ function mountChat(root) {
       return;
     }
     if (!text && !pendingImage && !pendingFiles.length) return;
-    resetRecall();
-    input.value = "";
-    resizeInput();
-    hideMenu();
-    // The reply lands in the log, so bring it back into view.
-    activateTab("");
-    runLoop(text).catch((err) => {
-      addBubble("assistant", `Error: ${tabbyNetworkErrorMessage(err)}`);
-      persist();
-    });
+    void (async () => {
+      if (!(await maybeDownloadForSwitch(text))) return;
+      resetRecall();
+      input.value = "";
+      resizeInput();
+      hideMenu();
+      // The reply lands in the log, so bring it back into view.
+      activateTab("");
+      runLoop(text).catch((err) => {
+        addBubble("assistant", `Error: ${tabbyNetworkErrorMessage(err)}`);
+        persist();
+      });
+    })();
   });
   if (switchLlmBtn) {
     switchLlmBtn.addEventListener("click", () => {
