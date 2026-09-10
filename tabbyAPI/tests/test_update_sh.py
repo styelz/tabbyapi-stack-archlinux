@@ -19,6 +19,8 @@ class UpdateShRestartOptionTests(unittest.TestCase):
         self.assertIn("args+=(--no-restart)", src)
         self.assertIn('if [[ "$RESTART_API" == 1 ]]; then', src)
         self.assertIn("TABBY_UPDATE_RESTART", src)
+        self.assertIn("use_scrollbar = OFF", src)
+        self.assertIn("write_dialogrc", src)
 
     def test_git_update_always_offers_restart_button(self):
         src = UPDATE_SH.read_text()
@@ -241,6 +243,11 @@ class InstallShHeadlessUpdateTests(unittest.TestCase):
         self.assertIn("Restarting tabby-saver (screensaver files changed)", src)
         self.assertIn("systemctl restart tabby-saver", src)
         self.assertIn("systemctl start tabby-saver", src)
+
+    def test_dialogrc_hides_unused_percent_marker(self):
+        src = INSTALL_SH.read_text()
+        self.assertIn("use_scrollbar = OFF", src)
+        self.assertNotIn("use_scrollbar = ON", src)
 
     def test_text_gauge_requires_writable_tty(self):
         src = INSTALL_SH.read_text()

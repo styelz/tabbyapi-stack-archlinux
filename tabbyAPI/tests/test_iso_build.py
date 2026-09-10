@@ -161,6 +161,11 @@ class IsoBuildSmallTests(unittest.TestCase):
         self.assertIn('[[ "${UPDATE_MODE:-0}" -eq 0 ]] || return 0', src)
         self.assertIn("--exclude 'pasted-images/'", src)
 
+    def test_installer_hides_unused_dialog_percent_marker(self):
+        src = INSTALLER.read_text(encoding="utf-8")
+        self.assertIn("use_scrollbar = OFF", src)
+        self.assertNotIn("use_scrollbar = ON", src)
+
     def test_installer_uses_github_main_when_online(self):
         src = INSTALLER.read_text(encoding="utf-8")
         self.assertIn("pull_tabbyapi_stack_from_github()", src)

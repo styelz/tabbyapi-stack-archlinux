@@ -92,6 +92,16 @@ need_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
 
+# Same reason as install.sh: a leftover ~/.dialogrc or DIALOGRC with
+# use_scrollbar=ON puts a meaningless N% on the lower-right of menus.
+write_dialogrc() {
+  local f="${TMPDIR:-/tmp}/tabby-update-dialogrc"
+  cat >"$f" <<'EOF'
+use_scrollbar = OFF
+EOF
+  export DIALOGRC="$f"
+}
+
 BACKTITLE="tabbyapi-stack"
 UPDATE_LOG=""
 UI_STARTED=0
@@ -1079,6 +1089,7 @@ ff_pull() {
   fi
 }
 
+write_dialogrc
 ask_update_kind
 ui_start
 trap 'rc=$?; if [[ "$UI_STARTED" -eq 1 ]]; then progress_stop; fi; exit "$rc"' EXIT

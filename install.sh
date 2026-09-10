@@ -219,7 +219,9 @@ write_dialogrc() {
   cat >"$f" <<'EOF'
 use_shadow = ON
 use_colors = ON
-use_scrollbar = ON
+# OFF: dialog's lower-right N% is list-scroll position. ON paints it on
+# every menu, even when every item already fits.
+use_scrollbar = OFF
 visit_items = OFF
 aspect = 0
 # Tab in a form jumps to OK by default and skips later fields. form_NEXT

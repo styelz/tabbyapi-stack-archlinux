@@ -311,7 +311,9 @@ write_dialogrc() {
   cat >"$f" <<'EOF'
 use_shadow = ON
 use_colors = ON
-use_scrollbar = ON
+# OFF: dialog's lower-right N% is list-scroll position. ON paints it on
+# every menu, even when every item already fits.
+use_scrollbar = OFF
 visit_items = OFF
 aspect = 0
 # Tab in a form jumps to OK by default and skips later fields. form_NEXT
@@ -3980,6 +3982,13 @@ ENV
     *' Installing '*'/dev/sda as studio.'*"$P_KEY"'Ctrl+C'*'['"$P_SPIN_ALT"'|'"$P_DLG"'] Arch'*"$P_HEAD"'Installing Arch packages'*'│'*' hello '*'│'*' world '*"$P_BAR_ON"*' 22%'*'┘') printf 'ok   page frame content\n' ;;
     *) printf 'FAIL page frame content: %q\n' "$PAGE_BUF" >&2; failed=1 ;;
   esac
+  write_dialogrc
+  if [[ -n "${DIALOGRC:-}" ]] && grep -q '^use_scrollbar = OFF$' "$DIALOGRC"; then
+    printf 'ok   dialogrc hides unused percent marker\n'
+  else
+    printf 'FAIL dialogrc scrollbar: %s\n' "${DIALOGRC:-unset}" >&2
+    failed=1
+  fi
   PAGE_UTF8=0
   page_glyph tl
   check "$PAGE_G" $'\033(0l\033(B' "page glyph acs"
