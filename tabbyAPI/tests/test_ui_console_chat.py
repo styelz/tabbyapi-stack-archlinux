@@ -91,7 +91,7 @@ class ConsoleImageReplyTests(unittest.TestCase):
         job, url = self._job()
         with mock.patch.object(
             images_chat, "living_download_pairs", return_value=[(url, "images/generated.png")]
-        ):
+        ), mock.patch("common.gpu_mode.flux_checkpoint_ready", return_value=True):
             response = images_chat._url_response(
                 data, job, "https://gpu.example/v1", console=True
             )
@@ -131,9 +131,10 @@ class ConsoleImageReplyTests(unittest.TestCase):
         data = ChatCompletionRequest(
             messages=[ChatCompletionMessage(role="user", content="a red cube")]
         )
-        text = image_ready_response(
-            data, "generated-x.png", api_base="http://x"
-        ).choices[0].message.content
+        with mock.patch("common.gpu_mode.flux_checkpoint_ready", return_value=True):
+            text = image_ready_response(
+                data, "generated-x.png", api_base="http://x"
+            ).choices[0].message.content
         self.assertNotIn("Another picture:", text)
         self.assertNotIn("This picture:", text)
         self.assertNotIn("to render", text)
@@ -150,16 +151,27 @@ class ConsoleImageReplyTests(unittest.TestCase):
         self.assertIn("Rendered with Qwen-Image in 3m 58s", qwen)
         self.assertIn("The coding model is loaded again", qwen)
         self.assertNotIn("to render", qwen)
-        flux = image_job_done_text("a red cube", restore=False, elapsed_s=12)
+        with mock.patch("common.gpu_mode.flux_checkpoint_ready", return_value=True):
+            flux = image_job_done_text("a red cube", restore=False, elapsed_s=12)
+            mixed = image_job_done_text(
+                prompts=["a forest at dusk", "qwen-image: SALE poster"],
+                restore=True,
+            )
         self.assertIn("Rendered with Flux in 12s", flux)
         self.assertNotIn("coding model", flux)
-        mixed = image_job_done_text(
-            prompts=["a forest at dusk", "qwen-image: SALE poster"],
-            restore=True,
-        )
         self.assertIn("Rendered 2 pictures in one Comfy session", mixed)
         self.assertIn("Flux", mixed)
         self.assertIn("Qwen-Image", mixed)
+
+    def test_done_text_falls_back_to_qwen_when_flux_is_missing(self):
+        with mock.patch("common.gpu_mode.flux_checkpoint_ready", return_value=False):
+            text = image_job_done_text(
+                prompts=["a forest at dusk", "qwen-image: SALE poster"],
+                restore=True,
+            )
+        self.assertIn("Rendered 2 pictures in one Comfy session", text)
+        self.assertIn("Qwen-Image", text)
+        self.assertNotIn("Flux", text)
 
     def test_job_progress_line(self):
         job = SimpleNamespace(

@@ -1250,14 +1250,14 @@ def _compact_elapsed(seconds: float) -> str:
 
 
 def _image_backends(texts: list[str]) -> list[str]:
-    from common.gpu_mode import wants_qwen_image
+    from common.gpu_mode import uses_qwen_image
 
     names: list[str] = []
     for text in texts:
-        label = "Qwen-Image" if (text and wants_qwen_image(text)) else "Flux"
+        label = "Qwen-Image" if (text and uses_qwen_image(text)) else "Flux"
         if label not in names:
             names.append(label)
-    return names or ["Flux"]
+    return names or ["Qwen-Image" if uses_qwen_image("") else "Flux"]
 
 
 def image_job_done_text(
@@ -1302,12 +1302,12 @@ def image_job_wait_seconds(
     count: int = 1,
     prompts: Optional[list[str]] = None,
 ) -> int:
-    from common.gpu_mode import wants_qwen_image
+    from common.gpu_mode import uses_qwen_image
 
     texts = list(prompts) if prompts else [prompt or ""] * max(1, int(count))
     total = 0
     for text in texts:
-        qwen = wants_qwen_image(text) if text else False
+        qwen = uses_qwen_image(text) if text else False
         extra = extra_seconds("comfy", "qwen_image_s" if qwen else "flux_s")
         total += int(extra) if extra is not None else (240 if qwen else 180)
     if restore:

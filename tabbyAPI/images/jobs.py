@@ -1117,10 +1117,10 @@ def _record_first_render(item: McpImageItem, seconds: float) -> None:
     img2img batches are not that number, so callers only pass the first."""
     if item.source_image or max(1, int(item.count or 1)) != 1:
         return
-    from common.gpu_mode import wants_qwen_image
+    from common.gpu_mode import uses_qwen_image
     from common.switch_times import record_ready
 
-    field = "qwen_image_s" if wants_qwen_image(item.prompt or "") else "flux_s"
+    field = "qwen_image_s" if uses_qwen_image(item.prompt or "") else "flux_s"
     record_ready("comfy", seconds, field=field)
 
 

@@ -78,6 +78,7 @@ GALLERY_UPLOAD_MAX_BYTES = 8 * 1024 * 1024
 GALLERY_UPLOAD_MAX_PIXELS = 40_000_000
 GALLERY_UPLOAD_MAX_EDGE = 2048
 CHECKPOINT_NAME = "flux1-schnell-fp8.safetensors"
+FLUX_CHECKPOINT_MIN_BYTES = 1024 * 1024
 QWEN_IMAGE_UNET = "qwen-image-Q4_K_M.gguf"
 QWEN_IMAGE_CLIP = "qwen_2.5_vl_7b_fp8_scaled.safetensors"
 QWEN_IMAGE_VAE = "qwen_image_vae.safetensors"
@@ -693,6 +694,20 @@ def load_workflow(path: Optional[Path] = None) -> dict:
     return json.loads(target.read_text(encoding="utf-8"))
 
 
+def flux_checkpoint_path(comfy_dir: Optional[Path] = None) -> Path:
+    root, _python = comfy_paths(comfy_dir)
+    return root / "models" / "checkpoints" / CHECKPOINT_NAME
+
+
+def flux_checkpoint_ready(comfy_dir: Optional[Path] = None) -> bool:
+    """True when Flux Schnell weights are on disk and large enough to load."""
+    path = flux_checkpoint_path(comfy_dir)
+    try:
+        return path.is_file() and path.stat().st_size >= FLUX_CHECKPOINT_MIN_BYTES
+    except OSError:
+        return False
+
+
 def wants_qwen_image(prompt: str) -> bool:
     """True when the chat line needs readable words, not a Flux draft."""
     from common.image_prompts import (
@@ -710,6 +725,13 @@ def wants_qwen_image(prompt: str) -> bool:
     if QWEN_IMAGE_PREFIX.match(text):
         return True
     return bool(QWEN_IMAGE_HINTS.search(text))
+
+
+def uses_qwen_image(prompt: str) -> bool:
+    """True when this prompt should render with Qwen-Image, including Flux fallback."""
+    if wants_qwen_image(prompt):
+        return True
+    return not flux_checkpoint_ready()
 
 
 def qwen_image_prompt_text(prompt: str) -> str:
@@ -901,7 +923,9 @@ def generate_image(
             seed=seed,
             denoise=strength,
         )
-    elif wants_qwen_image(prompt):
+    elif uses_qwen_image(prompt):
+        if not wants_qwen_image(prompt):
+            print("  Flux Schnell is not installed; using Qwen-Image")
         timeout = max(timeout, QWEN_IMAGE_TIMEOUT)
         graph = build_qwen_image_prompt(prompt, width=width, height=height, seed=seed)
     else:

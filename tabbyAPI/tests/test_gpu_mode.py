@@ -11,6 +11,8 @@ from pathlib import Path
 from unittest import mock
 
 from common.gpu_mode import (
+    CHECKPOINT_NAME,
+    FLUX_CHECKPOINT_MIN_BYTES,
     GPU_ALIASES,
     begin_image_turn,
     build_img2img_prompt,
@@ -19,6 +21,8 @@ from common.gpu_mode import (
     comfy_paths,
     comfy_user_unit_path,
     delete_generated_images,
+    flux_checkpoint_path,
+    flux_checkpoint_ready,
     format_comfy_journal_line,
     gallery_page,
     list_generated_files,
@@ -30,6 +34,7 @@ from common.gpu_mode import (
     should_skip_startup_load,
     strip_png_text,
     turn_images_ready,
+    uses_qwen_image,
     wants_qwen_image,
 )
 from common.ssh_forwarder import ensure_ssh_forwarder, ssh_command, ssh_forward
@@ -305,6 +310,27 @@ class GpuModeTests(unittest.TestCase):
             "login form with Submit",
         )
 
+    def test_flux_checkpoint_ready_ignores_placeholder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dest = flux_checkpoint_path(root)
+            dest.parent.mkdir(parents=True)
+            dest.write_bytes(b"")
+            self.assertFalse(flux_checkpoint_ready(root))
+            dest.write_bytes(b"x" * FLUX_CHECKPOINT_MIN_BYTES)
+            self.assertTrue(flux_checkpoint_ready(root))
+            self.assertEqual(dest.name, CHECKPOINT_NAME)
+
+    def test_uses_qwen_image_when_flux_is_missing(self):
+        scene = "A stunning landscape photo of a futuristic cityscape at sunset"
+        self.assertFalse(wants_qwen_image(scene))
+        with mock.patch("common.gpu_mode.flux_checkpoint_ready", return_value=False):
+            self.assertTrue(uses_qwen_image(scene))
+            self.assertTrue(uses_qwen_image("a fox asleep under maple trees"))
+        with mock.patch("common.gpu_mode.flux_checkpoint_ready", return_value=True):
+            self.assertFalse(uses_qwen_image(scene))
+            self.assertTrue(uses_qwen_image("qwen-image: a logo that says Cafe"))
+
     def test_qwen_image_graph_uses_gguf_not_flux(self):
         graph = build_qwen_image_prompt("qwen-image: a logo that says Tabby")
         self.assertEqual(graph["1"]["class_type"], "UnetLoaderGGUF")
@@ -314,6 +340,31 @@ class GpuModeTests(unittest.TestCase):
         graph = build_prompt("a fox asleep under maple trees")
         self.assertEqual(graph["5"]["class_type"], "EmptySD3LatentImage")
         self.assertEqual(graph["6"]["inputs"]["denoise"], 1.0)
+
+    def test_generate_image_falls_back_to_qwen_when_flux_is_missing(self):
+        from common.gpu_mode import generate_image
+
+        posted = {}
+
+        def fake_request(method, url, payload=None, timeout=30):
+            if method == "POST":
+                posted["graph"] = (payload or {}).get("prompt") or {}
+                return {"prompt_id": "job-1"}
+            return {
+                "job-1": {
+                    "status": {"status_str": "success", "completed": True},
+                    "outputs": {"8": {"images": [{"filename": "out.png"}]}},
+                }
+            }
+
+        with mock.patch("common.gpu_mode.comfy_up", return_value=True), mock.patch(
+            "common.gpu_mode.flux_checkpoint_ready", return_value=False
+        ), mock.patch("common.gpu_mode.request_json", side_effect=fake_request), mock.patch(
+            "common.gpu_mode.fetch_comfy_image", return_value=b"\x89PNG"
+        ), mock.patch("common.gpu_mode.strip_png_text", side_effect=lambda raw: raw):
+            raw = generate_image("a stunning landscape photo of a futuristic cityscape")
+        self.assertEqual(raw, b"\x89PNG")
+        self.assertEqual(posted["graph"]["1"]["class_type"], "UnetLoaderGGUF")
 
     def test_new_prompt_starts_a_new_turn(self):
         from common.gpu_mode import _read_turn

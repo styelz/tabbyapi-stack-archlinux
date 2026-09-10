@@ -402,7 +402,9 @@ class ImageJobRecordsTests(unittest.IsolatedAsyncioTestCase):
         qwen = jobs.McpImageItem(prompt="qwen-image: SALE poster", output_path="b.png")
         batch = jobs.McpImageItem(prompt="a red cube", output_path="c.png", count=3)
         img2img = jobs.McpImageItem(prompt="a red cube", output_path="d.png", source_image="/tmp/x.png")
-        with mock.patch("common.switch_times.record_ready") as rec:
+        with mock.patch("common.switch_times.record_ready") as rec, mock.patch(
+            "common.gpu_mode.flux_checkpoint_ready", return_value=True
+        ):
             jobs._record_first_render(flux, 190.0)
             jobs._record_first_render(qwen, 240.0)
             jobs._record_first_render(batch, 400.0)
