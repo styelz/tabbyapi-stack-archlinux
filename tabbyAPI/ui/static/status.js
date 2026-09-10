@@ -645,9 +645,30 @@ function mountStatus(root) {
     msg.textContent = err.message;
     TabbyUI.paintApiDown(err);
   }));
-  root.querySelector("#switch-llm").addEventListener("click", () =>
-    act(() => TabbyUI.api("gpu", { method: "POST", body: { mode: select.value || "llm" } }))
-  );
+  root.querySelector("#switch-llm").addEventListener("click", async () => {
+    const token = String(select.value || "llm").trim().toLowerCase();
+    const data = TabbyUI.lastGpuStatus || {};
+    const readyMap = data.profile_ready || {};
+    if (token && token !== "llm" && readyMap[token] === false) {
+      const labels = data.profile_labels || {};
+      const pretty = labels[token] || token;
+      const yes = await TabbyUI.confirmModal({
+        title: "Download model?",
+        text: `${pretty} is not installed. Download it from Hugging Face now? You can watch progress on the Models page.`,
+        yes: "Download",
+        no: "Cancel",
+      });
+      if (!yes) return;
+      try {
+        await TabbyUI.api("models/download", { method: "POST", body: { kind: "catalog", pick_id: token } });
+        location.hash = "#models";
+      } catch (err) {
+        msg.textContent = err.message;
+      }
+      return;
+    }
+    act(() => TabbyUI.api("gpu", { method: "POST", body: { mode: select.value || "llm" } }));
+  });
   root.querySelector("#switch-comfy").addEventListener("click", () =>
     act(() => TabbyUI.api("gpu", { method: "POST", body: { mode: "comfy" } }))
   );

@@ -1816,20 +1816,70 @@ list_stack_backups() {
 }
 
 backup_model_ids_from_cache() {
-  local cache=$1 rows id
+  local cache=$1 found
   ensure_fetch_tools || return 1
   command -v python3 >/dev/null 2>&1 || return 1
   [[ -n "${TSOS_FETCH:-}" && -f "$TSOS_FETCH" && -d "$cache" ]] || return 1
-  rows=$(python3 -u "$TSOS_FETCH" --catalog "$TSOS_CATALOG" --list-picks \
-    --source cache --cache "$cache" --vram-mib 99999 2>/dev/null || true)
-  [[ -n "$rows" ]] || return 1
-  local ids=()
-  while IFS=$'\t' read -r id _rest; do
-    [[ -n "${id:-}" ]] && ids+=("$id")
-  done <<< "$rows"
-  ((${#ids[@]})) || return 1
-  local IFS=,
-  printf '%s' "${ids[*]}"
+  found=$(python3 -u "$TSOS_FETCH" --catalog "$TSOS_CATALOG" --found-ids \
+    --cache "$cache" 2>/dev/null || true)
+  [[ -n "$found" ]] || return 1
+  printf '%s' "$found"
+}
+
+# Choosing a weights folder must also select the catalog models found there.
+# Leaving TABBY_MODELS=core after picking a USB/tabby-stack tree only copies
+# the 9B + embed + Qwen-Image baseline.
+select_models_from_cache() {
+  local found
+  [[ -z "${MODELS_FROM_CLI:-}" ]] || return 0
+  [[ -n "${TABBY_CACHE:-}" && -d "$TABBY_CACHE" ]] || return 1
+  found=$(backup_model_ids_from_cache "$TABBY_CACHE" || true)
+  [[ -n "$found" ]] || return 1
+  TABBY_MODELS=$found
+  return 0
+}
+
+# Selected models that are not on TABBY_CACHE need an HF download. Ask first.
+confirm_missing_hf_downloads() {
+  local missing size rc found
+  [[ -n "${TABBY_CACHE:-}" && -d "$TABBY_CACHE" ]] || return 0
+  ensure_fetch_tools || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+  [[ -n "${TSOS_FETCH:-}" && -f "$TSOS_FETCH" && -n "${TSOS_CATALOG:-}" && -f "$TSOS_CATALOG" ]] || return 0
+  missing=$(python3 -u "$TSOS_FETCH" --catalog "$TSOS_CATALOG" --missing-ids \
+    --ids "${TABBY_MODELS:-core}" --cache "$TABBY_CACHE" 2>/dev/null || true)
+  [[ -n "$missing" ]] || return 0
+  size=$(python3 -u "$TSOS_FETCH" --catalog "$TSOS_CATALOG" --ids "$missing" --disk-gib 2>/dev/null || true)
+  [[ "$size" =~ ^[0-9]+$ ]] || size="unknown"
+  if ((USE_TUI)); then
+    rc=0
+    ui_yesno "Download missing models?" \
+"These are selected, but not on the weights disk:
+
+  ${missing}
+
+Hugging Face will download about ${size} GiB during install.
+
+Yes = download them.
+No = skip them and only copy what is already on the disk." 1 || rc=$?
+    case "$rc" in
+      0) return 0 ;;
+      2) return 1 ;;
+      *)
+        found=$(backup_model_ids_from_cache "$TABBY_CACHE" || true)
+        [[ -n "$found" ]] && TABBY_MODELS=$found
+        return 0
+        ;;
+    esac
+  fi
+  printf '%s\n' "Missing from the weights disk: ${missing} (~${size} GiB from Hugging Face)" >/dev/tty
+  local ans
+  ans=$(ask_until "Download missing models from Hugging Face? (yes / no)" yes valid_yes_no) || return 1
+  if [[ "$ans" != yes ]]; then
+    found=$(backup_model_ids_from_cache "$TABBY_CACHE" || true)
+    [[ -n "$found" ]] && TABBY_MODELS=$found
+  fi
+  return 0
 }
 
 load_backup_tabby_env() {
@@ -2226,6 +2276,7 @@ Choose the weights row again to refresh mounted storage." || true
 "Folder to search for existing weights. Any of these work:
 
   /run/media/usb/tabbyapi-stack
+  /run/media/usb/tabby-stack
   /run/media/usb/tabbyapi-stack/tabbyAPI/models
   /run/media/tsos/my-drive/models
 
@@ -2265,6 +2316,11 @@ No = leave the path (install will download anything missing)." 1; then
       printf 'warning: %s is not a directory; Hugging Face will fill gaps.\n' \
         "$TABBY_CACHE" >/dev/tty
     fi
+  fi
+  if [[ -n "$TABBY_CACHE" && -d "$TABBY_CACHE" ]]; then
+    select_models_from_cache || true
+  elif [[ -z "$TABBY_CACHE" && -z "${MODELS_FROM_CLI:-}" ]]; then
+    TABBY_MODELS="$(simple_model_baseline "$(gpu_vram_mib)")"
   fi
 }
 
@@ -2308,6 +2364,8 @@ list_weight_sources() {
     for candidate in \
       "$mount/tabbyapi-stack" \
       "$mount/tabbyapi-stack/tabbyAPI/models" \
+      "$mount/tabby-stack" \
+      "$mount/tabby-stack/tabbyAPI/models" \
       "$mount/tabbyAPI/models" \
       "$mount/models" \
       "$mount/tabby-backup"
@@ -2699,17 +2757,25 @@ GPU: ${gpu_label}" \
         TABBY_MODELS=$picked
         ;;
       *)
+        if select_models_from_cache; then
+          ui_msg "Using models found on disk" \
+"Could not open the checklist. Copying catalog models found under:
+  ${TABBY_CACHE}
+
+  ${TABBY_MODELS}" || true
+          return 0
+        fi
         rc=0
         ui_yesno "No catalog models in that folder" \
 "Nothing matching the installer catalog was found in:
   ${TABBY_CACHE}
 
 Yes = show Hugging Face models that fit this GPU instead.
-No = keep the path and use the core preset." 1 || rc=$?
+No = keep the path (Hugging Face fills gaps)." 1 || rc=$?
         case "$rc" in
           2) return 0 ;;
           0) TABBY_CACHE="" ;;
-          *) TABBY_MODELS=core; return 0 ;;
+          *) return 0 ;;
         esac
         ;;
     esac
@@ -2949,6 +3015,7 @@ bar, and the live log." \
           ui_msg "Pick a disk" "Choose the disk to wipe before starting." || true
           continue
         fi
+        confirm_missing_hf_downloads || continue
         UI_ALLOW_BACK=0
         break
         ;;
@@ -3238,7 +3305,7 @@ cache_has_any_weights() {
   local root="${1:-}"
   local hit=""
   [[ -n "$root" && -d "$root" ]] || return 1
-  [[ -d "$root/tabbyAPI" || -d "$root/ComfyUI" || -d "$root/models" || -d "$root/hub" ]] && return 0
+  [[ -d "$root/tabbyAPI" || -d "$root/ComfyUI" || -d "$root/models" || -d "$root/hub" || -d "$root/tabby-stack" || -d "$root/tabbyapi-stack" ]] && return 0
   hit="$(find -P "$root" -maxdepth 4 \( \
       -name 'model.safetensors' -o \
       -name 'quantization_config.json' -o \
@@ -3658,6 +3725,36 @@ self_test() {
   )
   check "$got" "$weights_test" "mounted weights selection survives nounset"
   rm -rf "$weights_test"
+  got=$(
+    MODELS_FROM_CLI=""
+    TABBY_CACHE=$(mktemp -d)
+    backup_model_ids_from_cache() { printf '%s' 'qwen,qwen36,glm'; }
+    select_models_from_cache
+    printf '%s' "$TABBY_MODELS"
+    rm -rf "$TABBY_CACHE"
+  )
+  check "$got" "qwen,qwen36,glm" "cache path selects found models not core"
+  got=$(
+    USE_TUI=1
+    TABBY_CACHE=$(mktemp -d)
+    TABBY_MODELS=qwen,glm
+    TSOS_FETCH=$(mktemp)
+    TSOS_CATALOG=$(mktemp)
+    : >"$TSOS_FETCH"
+    printf '{}\n' >"$TSOS_CATALOG"
+    ensure_fetch_tools() { return 0; }
+    python3() {
+      if [[ "$*" == *--missing-ids* ]]; then printf '%s' glm; return 0; fi
+      if [[ "$*" == *--disk-gib* ]]; then printf '%s' 7; return 0; fi
+      return 0
+    }
+    ui_yesno() { return 1; }
+    backup_model_ids_from_cache() { printf '%s' qwen; }
+    confirm_missing_hf_downloads
+    printf '%s' "$TABBY_MODELS"
+    rm -rf "$TABBY_CACHE" "$TSOS_FETCH" "$TSOS_CATALOG"
+  )
+  check "$got" qwen "skipping missing HF downloads keeps cache copies"
   check "$(linux_user_from_install_root /home/studio/tabbyapi-stack)" studio \
     "user from TABBY_INSTALL_ROOT"
   on=0
@@ -5868,7 +5965,10 @@ preserve_tabby_cache() {
 
 bind_tabby_cache_into_target() {
   TABBY_CACHE_CHROOT=""
-  [[ -n "$TABBY_CACHE" && -d "$TABBY_CACHE" ]] || return 0
+  [[ -n "$TABBY_CACHE" ]] || return 0
+  if [[ ! -d "$TABBY_CACHE" ]]; then
+    die "Weights cache is not a directory: $TABBY_CACHE"
+  fi
   local cache_abs
   cache_abs=$(cd "$TABBY_CACHE" && pwd)
   if [[ "$cache_abs" == "$TARGET" || "$cache_abs" == "$TARGET"/* ]]; then
@@ -5882,7 +5982,8 @@ bind_tabby_cache_into_target() {
   fi
   log "Binding weights cache into the new system at $CACHE_CHROOT_PATH"
   mkdir -p "$TARGET$CACHE_CHROOT_PATH"
-  mount --bind "$cache_abs" "$TARGET$CACHE_CHROOT_PATH"
+  mount --bind "$cache_abs" "$TARGET$CACHE_CHROOT_PATH" || \
+    die "Could not bind $cache_abs to $TARGET$CACHE_CHROOT_PATH"
   TABBY_CACHE_CHROOT="$CACHE_CHROOT_PATH"
 }
 
@@ -5893,6 +5994,9 @@ run_tabby_install_chroot() {
   bind_offline_payload_into_target
   enable_target_offline_repo
   bind_tabby_cache_into_target
+  if [[ -n "$TABBY_CACHE" && ( -z "$TABBY_CACHE_CHROOT" || ! -d "$TARGET$TABBY_CACHE_CHROOT" ) ]]; then
+    die "Weights cache $TABBY_CACHE could not be made available in the new system (expected $CACHE_CHROOT_PATH)"
+  fi
   write_nopasswd_sudoers "$TARGET"
 
   log "Installing tabbyapi-stack in the new system (Python, venvs, model files)"
@@ -5910,8 +6014,6 @@ run_tabby_install_chroot() {
     TERM="${TERM:-linux}"
     TABBY_SKIP_NVIDIA_REBOOT=1
     TABBY_INSTALL_ROOT="$stack_home"
-    TABBY_CACHE="${TABBY_CACHE_CHROOT:-}"
-    TABBY_BACKUP="${TABBY_CACHE_CHROOT:-${TABBY_BACKUP:-}}"
     TABBY_NONINTERACTIVE=1
     TABBY_NESTED_UI=1
     TABBY_INSTALL_VERBOSE=1
@@ -5934,6 +6036,10 @@ run_tabby_install_chroot() {
     WAYLAND_DISPLAY=
   )
   log "install.sh will use the settings from this UI (no second dialog)"
+  if [[ -n "$TABBY_CACHE_CHROOT" ]]; then
+    run_env+=(TABBY_CACHE="$TABBY_CACHE_CHROOT")
+    run_env+=(TABBY_BACKUP="${TABBY_CACHE_CHROOT:-${TABBY_BACKUP:-}}")
+  fi
   if [[ -n "${HF_TOKEN:-}" ]]; then
     run_env+=(HF_TOKEN="$HF_TOKEN" HUGGING_FACE_HUB_TOKEN="$HF_TOKEN")
   fi
@@ -6324,6 +6430,9 @@ main() {
   if ((DRY_RUN)); then
     log "dry-run: no changes made"
     exit 0
+  fi
+  if ((USE_TUI == 0)); then
+    confirm_missing_hf_downloads || ui_cancel
   fi
   confirm_wipe
   collect_passwords

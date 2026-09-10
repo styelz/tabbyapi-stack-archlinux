@@ -129,13 +129,16 @@
     const labels = (data && data.profile_labels) || {};
     if (profiles.length) {
       profiles.forEach((name) => {
+        const ready = data && data.profile_ready && Object.prototype.hasOwnProperty.call(data.profile_ready, name)
+          ? data.profile_ready[name]
+          : true;
         gpuPanel.appendChild(
           makeGpuItem(
             name,
             name,
             current === name,
             switchLocked,
-            occupied && !switchLocked && current !== name ? "Wait" : "",
+            occupied && !switchLocked && current !== name ? "Wait" : (!ready && current !== name ? "Get" : ""),
             labels[name] || ""
           )
         );
@@ -210,6 +213,30 @@
     }
   }
 
+  async function offerMissingModelDownload(token, data) {
+    const labels = (data && data.profile_labels) || {};
+    const pretty = labels[token] || token;
+    if (!isAdmin) {
+      await TabbyUI.confirmModal({
+        title: "Model not installed",
+        text: `${pretty} is not on this machine. An administrator can download it on the Models page.`,
+        yes: "OK",
+        no: "Close",
+      });
+      return false;
+    }
+    const yes = await TabbyUI.confirmModal({
+      title: "Download model?",
+      text: `${pretty} is not installed. Download it from Hugging Face now? You can watch progress on the Models page.`,
+      yes: "Download",
+      no: "Cancel",
+    });
+    if (!yes) return false;
+    await TabbyUI.api("models/download", { method: "POST", body: { kind: "catalog", pick_id: token } });
+    location.hash = "#models";
+    return true;
+  }
+
   async function switchGpu(mode) {
     const token = String(mode || "").trim().toLowerCase();
     if (!token || gpuSwitchBusy) return;
@@ -220,6 +247,16 @@
     }
     if (gpuMenuBusy(data) && !gpuSwitchBusy) {
       closeGpuMenu();
+      return;
+    }
+    const readyMap = data.profile_ready || {};
+    if (token !== "comfy" && token !== "llm" && readyMap[token] === false) {
+      closeGpuMenu();
+      try {
+        await offerMissingModelDownload(token, data);
+      } catch (err) {
+        TabbyUI.paintApiDown(err);
+      }
       return;
     }
     closeGpuMenu();

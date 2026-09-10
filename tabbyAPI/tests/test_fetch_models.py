@@ -23,6 +23,7 @@ from fetch_models import (  # noqa: E402
     is_ready,
     list_pick_rows,
     load_catalog,
+    main,
     select_ids,
     shards_complete,
     verify_tree,
@@ -314,6 +315,65 @@ class FetchModelsTests(unittest.TestCase):
             self.assertIn("qwen", ids)
             self.assertNotIn("flux", ids)
             self.assertIn(extra_item_id("MyLocal-7B"), ids)
+
+    def test_found_ids_tabby_stack_layout(self):
+        catalog = load_catalog(CATALOG)
+        with tempfile.TemporaryDirectory() as raw:
+            cache = Path(raw) / "tabby-stack"
+            qwen = cache / "tabbyAPI" / "models" / "Qwen3.5-9B-exl3-4.00bpw"
+            qwen.mkdir(parents=True)
+            (qwen / "model.safetensors").write_bytes(b"weights")
+            glm = cache / "tabbyAPI" / "models" / "GLM-4.1V-9B-Thinking-exl3-4.00bpw"
+            glm.mkdir()
+            (glm / "model.safetensors").write_bytes(b"weights")
+            from io import StringIO
+            from contextlib import redirect_stdout
+
+            buf = StringIO()
+            with redirect_stdout(buf):
+                self.assertEqual(
+                    main(
+                        [
+                            "--catalog",
+                            str(CATALOG),
+                            "--cache",
+                            str(cache),
+                            "--found-ids",
+                        ]
+                    ),
+                    0,
+                )
+            ids = {part for part in buf.getvalue().strip().split(",") if part}
+            self.assertIn("qwen", ids)
+            self.assertIn("glm", ids)
+
+    def test_missing_ids_skips_models_on_disk(self):
+        catalog = load_catalog(CATALOG)
+        with tempfile.TemporaryDirectory() as raw:
+            cache = Path(raw) / "tabby-stack"
+            qwen = cache / "tabbyAPI" / "models" / "Qwen3.5-9B-exl3-4.00bpw"
+            qwen.mkdir(parents=True)
+            (qwen / "model.safetensors").write_bytes(b"weights")
+            from io import StringIO
+            from contextlib import redirect_stdout
+
+            buf = StringIO()
+            with redirect_stdout(buf):
+                self.assertEqual(
+                    main(
+                        [
+                            "--catalog",
+                            str(CATALOG),
+                            "--cache",
+                            str(cache),
+                            "--ids",
+                            "qwen,glm",
+                            "--missing-ids",
+                        ]
+                    ),
+                    0,
+                )
+            self.assertEqual(buf.getvalue().strip(), "glm")
 
     def test_write_selected_catalog_and_disk(self):
         catalog = load_catalog(CATALOG)

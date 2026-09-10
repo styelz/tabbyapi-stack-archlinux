@@ -312,7 +312,7 @@ async def stack_status(request=None, username: str = "") -> dict[str, Any]:
         switch_lock_name,
     )
     from images.jobs import active_mcp_image_job, loaded_tabby_name
-    from select_model import available_profiles, last_profile
+    from select_model import available_profiles, folder_for_choice, last_profile
     from ui.occupancy import snapshot as stack_queue_snapshot
 
     mode = read_mode()
@@ -351,6 +351,7 @@ async def stack_status(request=None, username: str = "") -> dict[str, Any]:
     if comfy_booting and not restarting:
         switching = True
     names = available_profiles()
+    profile_ready = {name: bool(folder_for_choice(name)) for name in names}
     # Prefer the folder actually in VRAM over last.json (VRAM fallback can desync them).
     profile = profile_alias_for_model(tabby) or last_llm_profile_name() or last_profile()
     return {
@@ -361,6 +362,7 @@ async def stack_status(request=None, username: str = "") -> dict[str, Any]:
         "profile": profile,
         "profiles": names,
         "profile_labels": profile_ui_labels(names),
+        "profile_ready": profile_ready,
         "model": _model_card(),
         "health": {"healthy": healthy, "issues": issue_text},
         "units": {

@@ -2550,7 +2550,7 @@ cache_has_any_weights() {
   local root="${1:-}"
   local hit=""
   [[ -n "$root" && -d "$root" ]] || return 1
-  [[ -d "$root/tabbyAPI" || -d "$root/ComfyUI" || -d "$root/models" || -d "$root/hub" ]] && return 0
+  [[ -d "$root/tabbyAPI" || -d "$root/ComfyUI" || -d "$root/models" || -d "$root/hub" || -d "$root/tabby-stack" || -d "$root/tabbyapi-stack" ]] && return 0
   hit="$(find -P "$root" -maxdepth 4 \( \
       -name 'model.safetensors' -o \
       -name 'quantization_config.json' -o \
@@ -2621,6 +2621,14 @@ gpu_prompt_label() {
   else
     printf '%s (VRAM unknown)' "$name"
   fi
+}
+
+models_found_in_cache() {
+  local cache=$1
+  [[ -n "$cache" && -d "$cache" ]] || return 1
+  need_cmd python3 || return 1
+  [[ -f "$FETCH_MODELS" && -f "$CATALOG" ]] || return 1
+  python3 -u "$FETCH_MODELS" --catalog "$CATALOG" --found-ids --cache "$cache" 2>/dev/null
 }
 
 # Prints comma-separated pick ids. Returns 1 if none were listed.
@@ -2763,6 +2771,7 @@ Mount a USB first if you want that option:
 "Folder to search for existing weights. Any of these work:
 
   /mnt/usb/tabbyapi-stack          (full tree: tabbyAPI/ + ComfyUI/)
+  /mnt/usb/tabby-stack
   /mnt/usb/tabbyapi-stack/tabbyAPI/models
   /data/weights                 (model dirs / .safetensors / .gguf)
 
@@ -2793,6 +2802,13 @@ Yes = pick Hugging Face models that fit this GPU instead.
 No = keep the path." 0; then
       WIN_ROOT=""
     fi
+  fi
+  if [[ -n "$WIN_ROOT" && -d "$WIN_ROOT" ]]; then
+    local found
+    found=$(models_found_in_cache "$WIN_ROOT" || true)
+    [[ -n "$found" ]] && MODEL_SET=$found
+  elif [[ -z "$WIN_ROOT" ]]; then
+    MODEL_SET="$(simple_model_baseline "$(gpu_vram_mib)")"
   fi
 }
 
@@ -2827,10 +2843,9 @@ GPU: ${gpu_label}" \
   ${WIN_ROOT}
 
 Yes = show Hugging Face models that fit this GPU instead.
-No = keep core." 1; then
+No = keep the path (Hugging Face fills gaps)." 1; then
           WIN_ROOT=""
         else
-          MODEL_SET=core
           return 0
         fi
         ;;
@@ -3198,6 +3213,12 @@ if [[ "$INTERACTIVE" -eq 0 ]]; then
     WIN_ROOT="$TABBY_CACHE"
   else
     WIN_ROOT="$DEFAULT_CACHE"
+  fi
+  WIN_ROOT="${WIN_ROOT%/}"
+  if [[ -n "${WIN_ROOT:-}" && ! -d "$WIN_ROOT" ]]; then
+    echo "TABBY_CACHE is not a directory in this system: $WIN_ROOT"
+    echo "The live ISO must bind-mount the weights folder (usually /mnt/tsos-cache)."
+    exit 1
   fi
   if [[ -n "${TABBY_BACKUP:-}" ]] && is_stack_backup "$TABBY_BACKUP"; then
     apply_backup_install_settings "$TABBY_BACKUP"
@@ -3827,7 +3848,11 @@ FETCH_ARGS=(
   --ids "$MODEL_SET"
   --update-catalog
 )
-if [[ -n "$WIN_ROOT" && -d "$WIN_ROOT" ]]; then
+if [[ -n "$WIN_ROOT" ]]; then
+  if [[ ! -d "$WIN_ROOT" ]]; then
+    echo "Weights cache is not a directory: $WIN_ROOT" | tee -a "$INSTALL_LOG"
+    exit 1
+  fi
   FETCH_ARGS+=(--cache "$WIN_ROOT")
 fi
 run_quiet "$DEST_TABBY/venv/bin/python" -u "$DEST_FETCH" "${FETCH_ARGS[@]}"

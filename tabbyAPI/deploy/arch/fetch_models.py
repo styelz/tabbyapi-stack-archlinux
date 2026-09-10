@@ -748,12 +748,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--set", dest="model_set", default="core")
     parser.add_argument("--ids", default="", help="Comma-separated pick or item ids")
     parser.add_argument("--list-picks", action="store_true")
+    parser.add_argument(
+        "--found-ids",
+        action="store_true",
+        help="Print comma-separated pick ids found under --cache",
+    )
     parser.add_argument("--baseline", action="store_true", help="Print Simple-mode baseline pick ids")
     parser.add_argument("--extras-only", action="store_true", help="Omit Simple-mode baseline picks")
     parser.add_argument("--selected-ids", default="", help="Picks/items checked in --list-picks output")
     parser.add_argument("--source", choices=("hf", "cache"), default=None)
     parser.add_argument("--vram-mib", type=int, default=0)
     parser.add_argument("--disk-gib", action="store_true")
+    parser.add_argument(
+        "--missing-ids",
+        action="store_true",
+        help="Print selected pick ids that are not present under --cache",
+    )
     parser.add_argument("--update-catalog", action="store_true")
     args = parser.parse_args(argv)
 
@@ -765,6 +775,18 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.baseline:
         print(",".join(baseline_pick_ids(catalog, args.vram_mib)), flush=True)
+        return 0
+
+    if args.found_ids:
+        if cache is None:
+            raise SystemExit("--found-ids needs a --cache directory")
+        rows = list_pick_rows(
+            catalog,
+            cache_root=cache,
+            vram_mib=args.vram_mib or 99999,
+            source="cache",
+        )
+        print(",".join(str(row["id"]) for row in rows), flush=True)
         return 0
 
     if args.list_picks:
@@ -783,6 +805,22 @@ def main(argv: list[str] | None = None) -> int:
         print(disk_gib_for_ids(catalog, selection), flush=True)
         return 0
 
+    if args.missing_ids:
+        if cache is None:
+            raise SystemExit("--missing-ids needs a --cache directory")
+        selected = pick_ids_for_items(catalog, set(expand_pick_ids(catalog, selection)))
+        found = {
+            str(row["id"])
+            for row in list_pick_rows(
+                catalog,
+                cache_root=cache,
+                vram_mib=args.vram_mib or 99999,
+                source="cache",
+            )
+        }
+        print(",".join(pid for pid in selected if pid not in found), flush=True)
+        return 0
+
     selected = expand_pick_ids(catalog, selection)
     extras = extra_items_from_cache(catalog, cache, selected)
     if extras:
@@ -795,7 +833,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.tabby is None or args.comfy is None:
         if args.update_catalog:
             return 0
-        raise SystemExit("--tabby and --comfy are required unless --list-picks / --disk-gib / --update-catalog")
+        raise SystemExit("--tabby and --comfy are required unless --list-picks / --found-ids / --missing-ids / --disk-gib / --update-catalog")
 
     print(f"==> Weights ({selection}): {', '.join(selected)}", flush=True)
     if cache:
