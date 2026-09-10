@@ -1968,6 +1968,32 @@ class SaverKioskSceneTests(unittest.TestCase):
         self.assertEqual(scene["palette"], "down")
         self.assertEqual(scene["weights"]["down"], 1.0)
 
+    def test_follow_restart_clock_advances_despite_stale_elapsed(self):
+        follow = self.kiosk.SceneFollow()
+        gone = self.kiosk.scene_from_state(
+            {
+                "gpu_mode": "llm",
+                "busy": True,
+                "profile": "qwen",
+                "elapsed_s": 1,
+                "typical_s": 75,
+            },
+            False,
+        )
+        self.assertEqual(gone["elapsed_s"], 0)
+        now = 10.0
+        scene = follow.tick(gone, 0.04, now)
+        waiting = self.kiosk.scene_from_state(None, False)
+        for _step in range(80):
+            now += 0.04
+            # Phase may flip waiting/restarting; the clock must keep moving.
+            target = waiting if _step % 11 == 0 else gone
+            scene = follow.tick(target, 0.04, now)
+        self.assertIn(scene["phase"], {"restarting api", "waiting for api"})
+        self.assertGreaterEqual(scene["runtime_s"], 3.0)
+        self.assertEqual(scene["runtime"], "0:03")
+        self.assertNotEqual(scene["runtime"], "0:01")
+
     def test_follow_runtime_advances_on_a_task(self):
         follow = self.kiosk.SceneFollow()
         hot = self.kiosk.scene_from_state(

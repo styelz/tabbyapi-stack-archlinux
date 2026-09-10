@@ -1101,7 +1101,11 @@ class SceneFollow:
             self.image_what = dest_what
         self.note = str(target.get("note") or "")
         self.waiters = float(target.get("waiters") or 0.0)
-        self.elapsed_s = max(0.0, float(target.get("elapsed_s") or 0.0))
+        # Last HTTP elapsed is frozen while the port is down (restart lock age
+        # is often ~1s). Count wall time from when this down/load phase began.
+        self.elapsed_s = (
+            0.0 if down else max(0.0, float(target.get("elapsed_s") or 0.0))
+        )
         dest_typical = target.get("typical_s")
         self.typical_s = max(0.0, float(dest_typical)) if dest_typical is not None else 0.0
         wall = time.time()
@@ -1151,8 +1155,12 @@ class SceneFollow:
             self._last_chat = 0.0
         if self.phase != self.task_name:
             same_run = self.task_name in _CHAT_RUN_PHASES and chat_run
+            same_down = {self.task_name, self.phase} <= {
+                "restarting api",
+                "waiting for api",
+            }
             self.task_name = self.phase
-            if not same_run:
+            if not same_run and not same_down:
                 self._task_t0 = now
             if same_run:
                 self._step_t0 = now
@@ -1162,7 +1170,9 @@ class SceneFollow:
         step_s = max(0.0, now - self._step_t0) if chat_run and self._step_t0 else 0.0
         show_clock = dest == "down" or self.phase not in {"idle", "stirring", "settling"}
         if show_clock:
-            clock_s = self.elapsed_s if self.elapsed_s > 0.5 else self.runtime_s
+            clock_s = self.runtime_s if down else (
+                self.elapsed_s if self.elapsed_s > 0.5 else self.runtime_s
+            )
             if chat_run and self._run_t0:
                 clock_s = max(clock_s, now - self._run_t0)
             runtime = (
@@ -1369,7 +1379,7 @@ def scene_from_state(
         "image_what": str(data.get("image_what") or "").strip(),
         "note": note,
         "waiters": _num(data.get("waiters")),
-        "elapsed_s": _num(data.get("elapsed_s")),
+        "elapsed_s": 0.0 if down else _num(data.get("elapsed_s")),
         "typical_s": _num(typical) if typical is not None else None,
     }
 
