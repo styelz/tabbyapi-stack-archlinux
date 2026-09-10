@@ -765,7 +765,10 @@
       '<div class="progress-head">' +
       '<div class="progress-head-main"><span class="progress-spin" aria-hidden="true"></span><h2></h2></div>' +
       '<span class="muted progress-elapsed">0s</span></div>' +
+      '<div class="progress-status">' +
       '<p class="progress-note"></p>' +
+      '<p class="progress-idle"></p>' +
+      '</div>' +
       '<div class="progress-meter is-indeterminate" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">' +
       '<div class="progress-meter-fill"></div></div>' +
       '<div class="progress-log-wrap">' +
@@ -781,6 +784,7 @@
     const hintEl = wrap.querySelector(".progress-log-hint");
     const actionsEl = wrap.querySelector(".dialog-actions");
     const noteEl = wrap.querySelector(".progress-note");
+    const idleEl = wrap.querySelector(".progress-idle");
     const elapsedEl = wrap.querySelector(".progress-elapsed");
     const meterEl = wrap.querySelector(".progress-meter");
     const fillEl = wrap.querySelector(".progress-meter-fill");
@@ -802,6 +806,7 @@
     let currentPercent = null;
     let currentStep = "";
     let lastLogAt = Date.now();
+    let idleLatched = false;
     let statusNoteOverride = "";
     const startedAt = Date.now();
     const initialNote = note || "Working…";
@@ -822,24 +827,30 @@
     function paintNote() {
       if (statusNoteOverride) {
         noteEl.textContent = statusNoteOverride;
-        return;
-      }
-      if (currentStep) {
+      } else if (currentStep) {
         noteEl.textContent = currentStep;
-        return;
+      } else {
+        noteEl.textContent = initialNote;
       }
-      noteEl.textContent = initialNote;
+      paintIdleHint();
     }
 
     function paintIdleHint() {
-      if (!busy || statusNoteOverride || !currentStep) return;
-      const idle = Date.now() - lastLogAt;
-      if (idle < 8000) {
-        if (noteEl.textContent !== currentStep) paintNote();
+      if (!idleEl) return;
+      if (!busy || statusNoteOverride || !currentStep) {
+        idleLatched = false;
+        if (idleEl.textContent) idleEl.textContent = "";
         return;
       }
-      const wait = formatDuration(idle / 1000);
-      noteEl.textContent = `${currentStep} — still working (${wait} since last log line). This step can take a few minutes.`;
+      const idle = Date.now() - lastLogAt;
+      if (idle >= 8000) idleLatched = true;
+      if (!idleLatched) {
+        if (idleEl.textContent) idleEl.textContent = "";
+        return;
+      }
+      const wait = formatDuration(Math.max(idle, 0) / 1000);
+      const next = `Still working (${wait} since last log line). This step can take a few minutes.`;
+      if (idleEl.textContent !== next) idleEl.textContent = next;
     }
 
     function setProgress(percent, step) {
@@ -1179,6 +1190,7 @@
         statusNoteOverride = "";
         if (value) currentStep = value;
         noteEl.textContent = value || "";
+        paintIdleHint();
       },
       setProgress,
       setBusy(value) {
@@ -1188,6 +1200,7 @@
           statusNoteOverride = "";
           meterEl.classList.remove("is-indeterminate");
           if (currentPercent == null) setProgress(100, currentStep);
+          else paintIdleHint();
         }
       },
       appendLine,

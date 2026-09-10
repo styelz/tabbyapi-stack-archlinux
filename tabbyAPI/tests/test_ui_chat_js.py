@@ -208,7 +208,8 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
         self.assertIn("progress-meter", utils_src)
         self.assertIn("startUpdateLog", status_src)
         self.assertIn("Waiting for the first log lines", utils_src)
-        self.assertIn("still working", utils_src)
+        self.assertIn("Still working", utils_src)
+        self.assertIn('class="progress-idle"', utils_src)
         self.assertIn("function setProgress(", utils_src)
         self.assertIn("get updatePrompt()", utils_src)
         self.assertIn("data.prompt", utils_src)
@@ -217,6 +218,8 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
         self.assertIn(".progress-meter", css)
         self.assertIn(".progress-spin", css)
         self.assertIn(".progress-log-hint", css)
+        self.assertIn(".progress-idle", css)
+        self.assertIn(".progress-status", css)
 
     def test_tree_drag_and_editor_find(self):
         self.assertIn('application/x-tabby-path', self.src)
