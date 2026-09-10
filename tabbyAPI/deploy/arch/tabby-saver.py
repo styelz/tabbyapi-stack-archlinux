@@ -42,6 +42,9 @@ DOWN_TEXT = (232, 96, 90)
 
 VT_ACTIVATE = 0x5606
 VT_WAITACTIVE = 0x5607
+FBIOGET_VSCREENINFO = 0x4600
+# In-memory B,G,R,X — what nvidia-drm fbdev and most 32bpp consoles expose.
+XRGB_MASKS = (0x00FF0000, 0x0000FF00, 0x000000FF, 0)
 KDSETMODE = 0x4B3A
 KD_TEXT = 0
 KD_GRAPHICS = 1
@@ -65,6 +68,10 @@ HUD_IDLE_HIDE_ALPHA = 0.02
 HUD_IDLE_PEEK_GRACE_S = 1.0
 IDLE_FIELD_HUE_HOLD_S = 300.0
 IDLE_FIELD_HUE_BLEND_S = 40.0
+# Idle only breathes (~0.25 Hz) and drifts a few px/s. Each 4K present is a
+# 33 MB framebuffer write that costs ~20 ms once the core has clocked down
+# between frames, so idle paints at 8 fps; live states use --fps.
+IDLE_FPS = 8
 
 SIN_BITS = 12
 SIN_SIZE = 1 << SIN_BITS
@@ -106,6 +113,30 @@ def read_fb0_geometry(
     return width, height, stride, bpp
 
 
+def fb_channel_masks(fd: int) -> tuple[int, int, int, int] | None:
+    """(r, g, b, 0) bitmasks from FBIOGET_VSCREENINFO; None when unreadable.
+
+    The console ignores the fourth byte, so it is never treated as alpha.
+    """
+    try:
+        raw = fcntl.ioctl(fd, FBIOGET_VSCREENINFO, bytes(160))
+    except OSError:
+        return None
+    try:
+        fields = struct.unpack_from("20I", raw, 0)
+    except struct.error:
+        return None
+    if fields[6] != 32:
+        return None
+    masks: list[int] = []
+    for idx in range(3):
+        offset, length = fields[8 + idx * 3], fields[9 + idx * 3]
+        if length <= 0 or length > 8 or offset + length > 32:
+            return None
+        masks.append(((1 << length) - 1) << offset)
+    return masks[0], masks[1], masks[2], 0
+
+
 def compose_size(fb_w: int, fb_h: int, max_edge: int = 1280) -> tuple[int, int]:
     """Pygame draw size. Keep 4K fb presents as a cheap nearest upsample."""
     width = max(64, int(fb_w))
@@ -116,30 +147,6 @@ def compose_size(fb_w: int, fb_h: int, max_edge: int = 1280) -> tuple[int, int]:
         return width, height
     scale = cap / long
     return max(64, int(round(width * scale))), max(36, int(round(height * scale)))
-
-
-def nearest_rgb(rgb: Any, width: int, height: int) -> Any:
-    import numpy as np
-
-    src_h, src_w = int(rgb.shape[0]), int(rgb.shape[1])
-    if src_h == height and src_w == width:
-        return rgb
-    y = (np.arange(height) * src_h) // height
-    x = (np.arange(width) * src_w) // width
-    return rgb[y[:, None], x]
-
-
-def pack_rgb_into_fb(rgb: Any, fb: Any, width: int, stride: int) -> None:
-    """Copy HxWx3 RGB into a BGRA mmap view shaped (height, stride/4, 4)."""
-    h = int(rgb.shape[0])
-    w = min(int(rgb.shape[1]), int(width))
-    cols = stride // 4
-    fb[:h, :w, 0] = rgb[:, :w, 2]
-    fb[:h, :w, 1] = rgb[:, :w, 1]
-    fb[:h, :w, 2] = rgb[:, :w, 0]
-    fb[:h, :w, 3] = 255
-    if cols > w:
-        fb[:h, w:cols, :] = 0
 
 
 class CpuFramebuffer:
@@ -153,31 +160,61 @@ class CpuFramebuffer:
         self.width, self.height, self.stride, self.bpp = read_fb0_geometry(sys_dir)
         self.fd = os.open(dev, os.O_RDWR)
         self.mem = mmap.mmap(self.fd, self.stride * self.height)
-        self._view: Any = None
+        self.masks = fb_channel_masks(self.fd) or XRGB_MASKS
+        self._staging: Any = None
+        self._rows: Any = None
+        self._pad_cleared = False
 
     def size(self) -> tuple[int, int]:
         return self.width, self.height
 
-    def present_rgb(self, rgb: Any) -> None:
-        import numpy as np
+    def _fb_rows(self, np_mod: Any) -> Any:
+        if self._rows is None:
+            self._rows = np_mod.ndarray((self.height, self.stride), dtype=np_mod.uint8, buffer=self.mem)
+        if not self._pad_cleared:
+            # Bytes past each row's pixels are never shown; zero them once.
+            if self.stride > self.width * 4:
+                self._rows[:, self.width * 4 :] = 0
+            self._pad_cleared = True
+        return self._rows
 
-        if self._view is None:
-            self._view = np.ndarray(
-                (self.height, self.stride // 4, 4),
-                dtype=np.uint8,
-                buffer=self.mem,
-            )
-        pack_rgb_into_fb(rgb, self._view, self.width, self.stride)
+    def _staging_surface(self, pygame_mod: Any, height: int) -> Any:
+        if self._staging is None or self._staging.get_height() != height:
+            # Same masks as the compose surface (see _init_display), so
+            # transform.scale can write into it with no conversion.
+            self._staging = pygame_mod.Surface((self.width, height), 0, 32, self.masks)
+        return self._staging
 
     def present_surface(self, pygame_mod: Any, surface: Any) -> None:
+        """Nearest upsample into fb0 with one C scale pass and one row copy.
+
+        Nearest scaling repeats rows, so when fb height is a multiple of the
+        compose height (4K from 1280x720) only a width-wise scale is needed;
+        numpy then broadcasts each scaled row ky times straight into the
+        mapping at memcpy speed. Other ratios scale to full size first.
+
+        The old path pulled the frame through surfarray, gathered a 4K nearest
+        upsample in numpy, and wrote four strided byte planes into the mmap.
+        On a 3840x2160 console that alone was ~120 ms a frame.
+        """
         import numpy as np
 
-        arr = pygame_mod.surfarray.array3d(surface)
-        rgb = nearest_rgb(np.transpose(arr, (1, 0, 2)), self.width, self.height)
-        self.present_rgb(rgb)
+        row_bytes = self.width * 4
+        rows = self._fb_rows(np)
+        ch = max(1, int(surface.get_height()))
+        ky = self.height // ch if self.height % ch == 0 else 1
+        stage_h = self.height // ky
+        stage = self._staging_surface(pygame_mod, stage_h)
+        pygame_mod.transform.scale(surface, (self.width, stage_h), stage)
+        view = stage.get_buffer()
+        src = np.frombuffer(view, dtype=np.uint8).reshape(stage_h, 1, stage.get_pitch())
+        rows.reshape(stage_h, ky, self.stride)[:, :, :row_bytes] = src[:, :, :row_bytes]
+        # Drop the buffer proxy now so the staging surface is unlocked for the next frame.
+        del src, view
 
     def close(self) -> None:
-        self._view = None
+        self._staging = None
+        self._rows = None
         try:
             self.mem.close()
         except Exception:
@@ -264,12 +301,30 @@ def _shift_color(color: tuple[int, int, int], hue_delta: float) -> tuple[int, in
     return (int(nr * 255.0 + 0.5), int(ng * 255.0 + 0.5), int(nb * 255.0 + 0.5))
 
 
+# Hue-shifted ramps keyed by (ramp identity, hue in 1/2048 turn). colorsys on
+# 256 stops every frame was ~1.5 ms; a 0.18 degree step is invisible.
+_SHIFT_Q = 2048.0
+_SHIFT_CACHE: dict[tuple[int, int], tuple[list[tuple[int, int, int]], list[tuple[int, int, int]]]] = {}
+_SHIFT_CACHE_MAX = 512
+
+
 def _shift_ramp(
     ramp: list[tuple[int, int, int]], hue_delta: float
 ) -> list[tuple[int, int, int]]:
     if abs(hue_delta) < 1e-6:
         return ramp
-    return [_shift_color(c, hue_delta) for c in ramp]
+    q = int(round((hue_delta % 1.0) * _SHIFT_Q)) % int(_SHIFT_Q)
+    if q == 0:
+        return ramp
+    key = (id(ramp), q)
+    hit = _SHIFT_CACHE.get(key)
+    if hit is None or hit[0] is not ramp:
+        if len(_SHIFT_CACHE) >= _SHIFT_CACHE_MAX:
+            _SHIFT_CACHE.clear()
+        shifted = [_shift_color(c, q / _SHIFT_Q) for c in ramp]
+        _SHIFT_CACHE[key] = (ramp, shifted)
+        return shifted
+    return hit[1]
 
 
 def _chat_hue_rate(speed: float, token_rate: float, chatty: bool) -> float:
@@ -1735,7 +1790,9 @@ _SLEEP_LIFE = 0.56
 _SLEEP_FADE = 0.18
 _SLEEP_SPAN_FRAC = 0.48
 _SLEEP_SPAN_MAX = 520
-_SLEEP_RT_MAX = 256
+# March at most this many px on a side, then smoothscale up. The solids are
+# soft and dim, so 192 reads the same as 256 at 40% less work.
+_SLEEP_RT_MAX = 192
 _SLEEP_TINT = (56, 84, 132)
 
 
@@ -2056,23 +2113,76 @@ def _draw_sleeping_solid(pygame_mod: Any, screen: Any, item: dict[str, Any]) -> 
     amt = float(item.get("amt") or 0.0)
     if amt <= 0.02:
         return
-    span = max(80, min(_SLEEP_SPAN_MAX, int(item.get("size") or 160)))
-    rt = max(48, min(_SLEEP_RT_MAX, span))
-    kind = str(item.get("kind") or "sphere")
-    tint = item.get("tint") or _SLEEP_TINT
-    rgb = _sleep_rt_rgb(
-        kind,
-        rt,
-        rt,
-        float(item.get("yaw") or 0.0),
-        float(item.get("pitch") or 0.0),
-        amt,
-        tint,
-    )
-    surf = pygame_mod.image.frombuffer(rgb, (rt, rt), "RGB").convert()
-    if span != rt:
-        surf = pygame_mod.transform.smoothscale(surf, (span, span))
+    key = sleep_cache_key(item)
+    q_amt = max(1, int(round(_clamp01(amt) * _SLEEP_FADE_STEPS)))
+    surf = _SLEEP_SURF_CACHE.get((key, q_amt))
+    if surf is None:
+        kind, _qyaw, _qpitch, _tint, span = key
+        rt = max(48, min(_SLEEP_RT_MAX, span))
+        rgb = _sleep_fade_rgb(_sleep_solid_rgb(key, rt), q_amt / _SLEEP_FADE_STEPS)
+        surf = pygame_mod.image.frombuffer(rgb, (rt, rt), "RGB").convert()
+        if span != rt:
+            surf = pygame_mod.transform.smoothscale(surf, (span, span))
+        if len(_SLEEP_SURF_CACHE) >= _SLEEP_SURF_CACHE_MAX:
+            _SLEEP_SURF_CACHE.clear()
+        _SLEEP_SURF_CACHE[(key, q_amt)] = surf
     _blit_sleep_add(pygame_mod, screen, surf, float(item["x"]), float(item["y"]))
+
+
+# Yaw moves ~0.055 rad/s, so a fresh march every frame is wasted work. Render
+# at quantised angles and reuse until the solid has turned _SLEEP_ANGLE_Q
+# (about 1 degree, roughly every 0.3 s). The march is cached as RGB (survives
+# a display restart); the scaled Surface per fade step is cached too, and
+# those die with pygame.quit(), so _close_display drops them.
+_SLEEP_ANGLE_Q = 0.016
+_SLEEP_FADE_STEPS = 32
+_SLEEP_CACHE: dict[tuple[Any, ...], Any] = {}
+_SLEEP_CACHE_MAX = 8
+_SLEEP_SURF_CACHE: dict[tuple[Any, ...], Any] = {}
+_SLEEP_SURF_CACHE_MAX = 24
+
+
+def sleep_cache_key(item: dict[str, Any]) -> tuple[Any, ...]:
+    span = max(80, min(_SLEEP_SPAN_MAX, int(item.get("size") or 160)))
+    return (
+        str(item.get("kind") or "sphere"),
+        int(round(float(item.get("yaw") or 0.0) / _SLEEP_ANGLE_Q)),
+        int(round(float(item.get("pitch") or 0.0) / _SLEEP_ANGLE_Q)),
+        tuple(item.get("tint") or _SLEEP_TINT),
+        span,
+    )
+
+
+def _sleep_solid_rgb(key: tuple[Any, ...], rt: int) -> Any:
+    """Full-strength march for one quantised pose (bytes, or ndarray with numpy)."""
+    hit = _SLEEP_CACHE.get(key)
+    if hit is not None:
+        return hit
+    kind, qyaw, qpitch, tint, _span = key
+    raw = _sleep_rt_rgb(kind, rt, rt, qyaw * _SLEEP_ANGLE_Q, qpitch * _SLEEP_ANGLE_Q, 1.0, tint)
+    try:
+        import numpy as np
+    except ImportError:
+        base: Any = raw
+    else:
+        base = np.frombuffer(raw, dtype=np.uint8).reshape(rt, rt, 3)
+    if len(_SLEEP_CACHE) >= _SLEEP_CACHE_MAX:
+        _SLEEP_CACHE.clear()
+    _SLEEP_CACHE[key] = base
+    return base
+
+
+def _sleep_fade_rgb(base: Any, amt: float) -> Any:
+    """Lighting is linear in amt, so dim the cached render instead of re-marching."""
+    amt = _clamp01(amt)
+    if amt >= 0.995:
+        return base
+    level = int(round(256.0 * amt))
+    if hasattr(base, "astype"):
+        import numpy as np
+
+        return ((base.astype(np.uint16) * np.uint16(level)) >> 8).astype(np.uint8)
+    return bytes((b * level) >> 8 for b in base)
 
 
 def draw_sleepers(pygame_mod: Any, screen: Any, scene: dict[str, Any]) -> None:
@@ -2144,62 +2254,113 @@ def _field_common(width: int, height: int, scene: dict[str, Any]):
     return palette, mix, st, gain, cx, cy, inv_diag, pulse, ax, ay, bx, by
 
 
-def _draw_field_numpy(width: int, height: int, scene: dict[str, Any], np_mod: Any) -> Any:
+class _FieldGrid:
+    """Per-size constants for the numpy field.
+
+    Four of the six idle sine terms (and all four live ones) only depend on
+    x, y, x+y, or distance from centre, so their LUT indices are computed
+    once; per frame that is an integer add and a gather instead of float
+    multiply, convert, and mask over the whole grid. x and y terms are 1-D.
+    """
+
+    def __init__(self, width: int, height: int, np_mod: Any) -> None:
+        np = np_mod
+        self.np = np
+        self.x1 = np.arange(width, dtype=np.float32)
+        self.y1 = np.arange(height, dtype=np.float32)
+        self.x, self.y = np.meshgrid(self.x1, self.y1)
+        cx = (width - 1) * 0.5
+        cy = (height - 1) * 0.5
+        self.dist = np.sqrt((self.x - cx) ** 2 + (self.y - cy) ** 2).astype(np.float32)
+        inv_diag = 1.0 / (math.hypot(cx, cy) + 1.0)
+        self.glow_shape = np.exp(-self.dist * np.float32(inv_diag * 3.2)).astype(np.float32)
+        self.lut = np.asarray(SIN_LUT, dtype=np.float32)
+        self._bases = {"x": self.x1, "y": self.y1, "xy": self.x + self.y, "dist": self.dist}
+        self._idx: dict[tuple[str, float], Any] = {}
+
+    def sin_static(self, name: str, coef: float, phase: float) -> Any:
+        """sin(base * coef + phase) via the LUT; base is one of the fixed grids."""
+        key = (name, float(coef))
+        idx = self._idx.get(key)
+        if idx is None:
+            idx = (self._bases[name] * self.np.float32(coef * SIN_SIZE / TWO_PI)).astype(self.np.int32)
+            self._idx[key] = idx
+        off = int(round((phase % TWO_PI) * (SIN_SIZE / TWO_PI)))
+        return self.lut[(idx + off) & SIN_MASK]
+
+
+_FIELD_GRID: dict[tuple[int, int], _FieldGrid] = {}
+
+
+def _field_grid(width: int, height: int, np_mod: Any) -> _FieldGrid:
+    key = (int(width), int(height))
+    hit = _FIELD_GRID.get(key)
+    if hit is None:
+        _FIELD_GRID.clear()
+        hit = _FIELD_GRID[key] = _FieldGrid(width, height, np_mod)
+    return hit
+
+
+def _draw_field_numpy(
+    width: int, height: int, scene: dict[str, Any], np_mod: Any, like: Any | None = None
+) -> Any:
     import pygame
 
     palette, mix, st, gain, cx, cy, inv_diag, pulse, ax, ay, bx, by = _field_common(
         width, height, scene
     )
     pal = np_mod.asarray(palette, dtype=np_mod.uint8)
-    lut = np_mod.asarray(SIN_LUT, dtype=np_mod.float32)
+    grid = _field_grid(width, height, np_mod)
+    lut = grid.lut
     scale = np_mod.float32(SIN_SIZE / TWO_PI)
+    f32 = np_mod.float32
 
     def vsin(arr: Any) -> Any:
         idx = (arr * scale).astype(np_mod.int32) & SIN_MASK
         return lut[idx]
 
-    xs = np_mod.arange(width, dtype=np_mod.float32)
-    ys = np_mod.arange(height, dtype=np_mod.float32)
-    x, y = np_mod.meshgrid(xs, ys)
-    dist = np_mod.sqrt((x - cx) ** 2 + (y - cy) ** 2)
-    glow = pulse * np_mod.exp(-dist * inv_diag * 3.2)
+    glow42 = grid.glow_shape * f32(0.42 * pulse)
     use_idle = mix <= 0.02
     use_live = mix >= 0.98
     v_idle = None
     v_live = None
     if not use_live:
-        da = np_mod.sqrt((x - ax) ** 2 + (y - ay) ** 2)
-        db = np_mod.sqrt((x - bx) ** 2 + (y - by) ** 2)
-        wave = (
-            vsin(x * 0.048 + st * 1.35)
-            + vsin(y * 0.042 - st * 1.18)
-            + vsin((x + y) * 0.028 + st * 0.92)
-            + vsin(dist * 0.055 - st * 0.74)
-            + vsin(da * 0.062 - st * 1.05)
-            + vsin(db * 0.051 + st * 0.88)
-        ) * (1.0 / 6.0) + 0.5
-        blob = pulse * np_mod.exp(-np_mod.minimum(da, db) * inv_diag * 2.4)
-        v_idle = 0.27 + wave * 0.62 * gain + glow * 0.42 + blob * 0.44
+        da = np_mod.sqrt((grid.x - f32(ax)) ** 2 + (grid.y - f32(ay)) ** 2)
+        db = np_mod.sqrt((grid.x - f32(bx)) ** 2 + (grid.y - f32(by)) ** 2)
+        # Same terms as before: sum of six sines / 6 + 0.5, folded into the gain.
+        wave = grid.sin_static("x", 0.048, st * 1.35)[None, :] + grid.sin_static("y", 0.042, -st * 1.18)[:, None]
+        wave += grid.sin_static("xy", 0.028, st * 0.92)
+        wave += grid.sin_static("dist", 0.055, -st * 0.74)
+        wave += vsin(da * f32(0.062) - f32((st * 1.05) % TWO_PI))
+        wave += vsin(db * f32(0.051) + f32((st * 0.88) % TWO_PI))
+        blob = np_mod.exp(np_mod.minimum(da, db) * f32(-inv_diag * 2.4))
+        v_idle = wave * f32(0.62 * gain / 6.0)
+        v_idle += f32(0.27 + 0.31 * gain)
+        v_idle += glow42
+        v_idle += blob * f32(0.44 * pulse)
     if not use_idle:
-        wave = (
-            vsin(x * 0.041 + st)
-            + vsin(y * 0.036 - st * 0.81)
-            + vsin((x + y) * 0.021 + st * 1.13)
-            + vsin(dist * 0.048 - st * 0.47)
-        ) * 0.25 + 0.5
-        v_live = 0.24 + wave * 0.40 * gain + glow * 0.42
+        wave = grid.sin_static("x", 0.041, st)[None, :] + grid.sin_static("y", 0.036, -st * 0.81)[:, None]
+        wave += grid.sin_static("xy", 0.021, st * 1.13)
+        wave += grid.sin_static("dist", 0.048, -st * 0.47)
+        v_live = wave * f32(0.40 * gain / 4.0)
+        v_live += f32(0.24 + 0.20 * gain)
+        v_live += glow42
     if use_idle:
         v = v_idle
     elif use_live:
         v = v_live
     else:
-        v = v_idle + (v_live - v_idle) * mix
-    v = np_mod.clip(v, 0.0, 0.999)
-    rgb = np_mod.ascontiguousarray(pal[(v * 255.0).astype(np_mod.int32)], dtype=np_mod.uint8)
-    return pygame.image.frombuffer(rgb.tobytes(), (width, height), "RGB").convert()
+        v = v_idle + (v_live - v_idle) * f32(mix)
+    v *= f32(255.0)
+    idx = np_mod.clip(v.astype(np_mod.int32), 0, 254)
+    rgb = np_mod.ascontiguousarray(pal[idx])
+    surf = pygame.image.frombuffer(rgb, (width, height), "RGB")
+    return surf.convert(like) if like is not None else surf.convert()
 
 
-def _draw_field_python(width: int, height: int, scene: dict[str, Any]) -> Any:
+def _draw_field_python(
+    width: int, height: int, scene: dict[str, Any], like: Any | None = None
+) -> Any:
     import pygame
 
     palette, mix, st, gain, cx, cy, inv_diag, pulse, ax, ay, bx, by = _field_common(
@@ -2252,19 +2413,22 @@ def _draw_field_python(width: int, height: int, scene: dict[str, Any]) -> Any:
             buf[i + 1] = g
             buf[i + 2] = b
             i += 3
-    return pygame.image.frombuffer(buf, (width, height), "RGB").convert()
+    surf = pygame.image.frombuffer(buf, (width, height), "RGB")
+    return surf.convert(like) if like is not None else surf.convert()
 
 
 def draw_field(
     width: int,
     height: int,
     scene: dict[str, Any],
+    like: Any | None = None,
 ) -> Any:
+    """Low-res field surface. `like` is the surface it will be scaled into."""
     try:
         import numpy as np
     except ImportError:
-        return _draw_field_python(width, height, scene)
-    return _draw_field_numpy(width, height, scene, np)
+        return _draw_field_python(width, height, scene, like)
+    return _draw_field_numpy(width, height, scene, np, like)
 
 
 HUD_CLOCK_SLOT = "00:00:00"
@@ -2425,6 +2589,27 @@ def hud_halo_offsets(radius: int = 3) -> list[tuple[int, int]]:
     return out
 
 
+# Composed halo+fill per (font, text, colour). HUD text changes about once a
+# second (the clock), so this turns ~38 blits and two renders per label per
+# frame into one blit. Cleared with the display: Surfaces die on pygame.quit().
+_HUD_LAYER_CACHE: dict[tuple[Any, ...], Any] = {}
+_HUD_LAYER_CACHE_MAX = 96
+
+
+def _hud_layer(face: Any, text: str, color: Any, shadow: Any, halo: list[tuple[int, int]], radius: int) -> Any | None:
+    key = (id(face), text, tuple(color))
+    layer = _HUD_LAYER_CACHE.get(key)
+    if layer is not None:
+        return layer
+    layer = _hud_fade_layer(face.render(text, True, color), face.render(text, True, shadow), halo, radius)
+    if layer is None:
+        return None
+    if len(_HUD_LAYER_CACHE) >= _HUD_LAYER_CACHE_MAX:
+        _HUD_LAYER_CACHE.clear()
+    _HUD_LAYER_CACHE[key] = layer
+    return layer
+
+
 def _hud_fit(face: Any, text: str, max_w: int) -> str:
     raw = str(text or "")
     if not raw or max_w <= 0:
@@ -2504,14 +2689,15 @@ def draw_hud(
     ) -> None:
         used = face or (small if use_small else font)
         x, y = pos
+        layer = _hud_layer(used, text, color, shadow, halo, 3)
+        if layer is not None:
+            _hud_apply_alpha(layer, fade_amt)
+            screen.blit(layer, (x - 3, y - 3))
+            return
+        # No pygame Surface (tests): halo by repeated shadow blits.
         img = used.render(text, True, shadow)
         fg = used.render(text, True, color)
         if fade_amt < 0.999:
-            layer = _hud_fade_layer(fg, img, halo, 3)
-            if layer is not None:
-                _hud_apply_alpha(layer, fade_amt)
-                screen.blit(layer, (x - 3, y - 3))
-                return
             _hud_apply_alpha(img, fade_amt)
             _hud_apply_alpha(fg, fade_amt)
         for dx, dy in halo:
@@ -2729,9 +2915,39 @@ def console_logged_in(tty: str) -> bool:
     return login_from_ps(ps_out)
 
 
-def activate_vt(nr: int) -> None:
+def vt_control_paths(own_tty: str = "") -> list[str]:
+    """VT_ACTIVATE works on any console fd. Try the one this service owns
+    first: /dev/tty0 and /dev/console are root-only (0600) on most boxes."""
+    paths: list[str] = []
+    own = (own_tty or "").strip()
+    if own:
+        paths.append(own if own.startswith("/dev/") else f"/dev/{own}")
+    for extra in ("/dev/tty0", "/dev/console"):
+        if extra not in paths:
+            paths.append(extra)
+    return paths
+
+
+def _stdin_console_fd() -> int | None:
+    """stdin when systemd handed us a TTY (TTYPath + StandardInput=tty)."""
+    try:
+        fd = sys.stdin.fileno()
+    except (AttributeError, OSError, ValueError):
+        return None
+    return fd if os.isatty(fd) else None
+
+
+def activate_vt(nr: int, own_tty: str = "") -> None:
     last_exc: OSError | None = None
-    for path in ("/dev/tty0", "/dev/console"):
+    fd = _stdin_console_fd()
+    if fd is not None:
+        try:
+            fcntl.ioctl(fd, VT_ACTIVATE, nr)
+            fcntl.ioctl(fd, VT_WAITACTIVE, nr)
+            return
+        except OSError as exc:
+            last_exc = exc
+    for path in vt_control_paths(own_tty):
         try:
             fd = os.open(path, os.O_RDWR | os.O_NOCTTY)
         except OSError as exc:
@@ -2962,6 +3178,9 @@ def _init_display(windowed: bool):
             "tabby-saver: pygame is missing. On Arch: sudo pacman -S --needed python-pygame python-numpy"
         ) from exc
     pygame.init()
+    _SLEEP_CACHE.clear()
+    _SLEEP_SURF_CACHE.clear()
+    _HUD_LAYER_CACHE.clear()
     pygame.mouse.set_visible(False)
     allowed = [pygame.QUIT, pygame.KEYDOWN, pygame.KEYUP]
     for name in _DISMISS_EVENT_NAMES:
@@ -2975,12 +3194,18 @@ def _init_display(windowed: bool):
         return pygame, screen, None
     fb = CpuFramebuffer()
     pygame.display.set_mode((1, 1))
-    screen = pygame.Surface(compose_size(*fb.size()))
+    # Same pixel layout as fb0 so present_surface can scale straight into it.
+    screen = pygame.Surface(compose_size(*fb.size()), 0, 32, fb.masks)
     set_tty_graphics(True)
     return pygame, screen, fb
 
 
 def _close_display(pygame_mod: Any, fb: CpuFramebuffer | None = None) -> None:
+    # Free the marched solids while the field is hidden, and drop HUD layers:
+    # those Surfaces die with pygame.quit(), and the next run makes new fonts.
+    _SLEEP_CACHE.clear()
+    _SLEEP_SURF_CACHE.clear()
+    _HUD_LAYER_CACHE.clear()
     if fb is not None:
         try:
             fb.close()
@@ -3076,8 +3301,8 @@ def run_visible_field(
                 )
             ok = bool(ok or (data and data.get("busy")))
             scene = follow.tick(scene_from_state(data, ok), dt, now)
-            field = draw_field(max(64, args.width), max(36, args.height), scene)
-            screen.blit(pygame.transform.scale(field, screen.get_size()), (0, 0))
+            field = draw_field(max(64, args.width), max(36, args.height), scene, screen)
+            pygame.transform.scale(field, screen.get_size(), screen)
             draw_sleepers(pygame, screen, scene)
             draw_neurons(pygame, screen, scene)
             draw_cycle_fx(pygame, screen, scene)
@@ -3096,7 +3321,9 @@ def run_visible_field(
             live = bool(scene and (scene.get("live") or overlay_amount(scene) > 0.04))
             fps = max(8, min(30, args.fps))
             if not live:
-                fps = min(fps, 12)
+                # Idle only breathes and drifts; every 4K present is ~33 MB of
+                # framebuffer writes, so do not spend them on motion nobody sees.
+                fps = min(fps, IDLE_FPS)
             clock.tick(fps)
     finally:
         _close_display(pygame, fb)
@@ -3134,7 +3361,7 @@ def main(argv: list[str] | None = None) -> int:
         show = True
         while True:
             if show:
-                activate_vt(saver_nr)
+                activate_vt(saver_nr, args.saver_tty)
                 try:
                     action = run_visible_field(args, bus, follow, watch=watch)
                 except Exception as exc:
@@ -3146,23 +3373,26 @@ def main(argv: list[str] | None = None) -> int:
                 watch.bump()
                 boot = False
                 logged_in = console_logged_in(user_tty)
-                activate_vt(user_nr)
+                activate_vt(user_nr, args.saver_tty)
                 show = False
                 continue
+            login_checked = time.monotonic()
             while not show:
                 now = time.monotonic()
-                now_login = console_logged_in(user_tty)
+                # loginctl + ps are two forks; every 0.25 s is wasted while the
+                # user is at the console. 2 s is well inside the logout wait.
+                if (now - login_checked) >= 2.0:
+                    logged_in = console_logged_in(user_tty)
+                    login_checked = now
                 if should_resume_saver(
                     now=now,
                     last_input=watch.last(),
                     idle_s=max(1.0, float(args.idle)),
                     logout_idle_s=max(0.0, float(args.logout_idle)),
-                    logged_in=now_login,
+                    logged_in=logged_in,
                     boot=boot,
                 ):
                     show = True
-                logged_in = now_login
-                if show:
                     break
                 time.sleep(0.25)
     finally:

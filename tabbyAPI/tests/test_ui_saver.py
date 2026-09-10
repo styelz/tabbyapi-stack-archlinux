@@ -1407,17 +1407,91 @@ class SaverKioskSceneTests(unittest.TestCase):
                 (3840, 2160, 15360, 32),
             )
 
-    def test_pack_rgb_into_fb_is_bgra(self):
+    def _fake_fb(self, mmap, width: int, height: int, stride: int):
+        fb = self.kiosk.CpuFramebuffer.__new__(self.kiosk.CpuFramebuffer)
+        fb.width, fb.height, fb.stride, fb.bpp = width, height, stride, 32
+        fb.fd = -1
+        fb.mem = mmap.mmap(-1, stride * height)
+        fb.mem[:] = b"\xee" * (stride * height)
+        fb.masks = self.kiosk.XRGB_MASKS
+        fb._staging = fb._rows = None
+        fb._pad_cleared = False
+        return fb
+
+    def test_present_surface_scales_into_xrgb_fb_rows(self):
         try:
+            import mmap
+
             import numpy as np
+            import pygame
         except ImportError:
-            self.skipTest("numpy")
-        rgb = np.zeros((2, 2, 3), dtype=np.uint8)
-        rgb[0, 0] = (255, 0, 0)
-        fb = np.zeros((2, 4, 4), dtype=np.uint8)
-        self.kiosk.pack_rgb_into_fb(rgb, fb, 2, 16)
-        self.assertEqual(list(fb[0, 0]), [0, 0, 255, 255])
-        self.assertEqual(list(fb[0, 2]), [0, 0, 0, 0])
+            self.skipTest("pygame/numpy")
+        os.environ["SDL_VIDEODRIVER"] = "dummy"
+        pygame.init()
+        try:
+            pygame.display.set_mode((1, 1))
+            # (compose h, stride): 2 -> integer row repeat; 3 -> full scale path.
+            for ch, stride in ((2, 32), (2, 48), (3, 48)):
+                fb = self._fake_fb(mmap, 8, 4, stride)
+                screen = pygame.Surface((4, ch), 0, 32, fb.masks)
+                screen.fill((10, 20, 30))
+                fb.present_surface(pygame, screen)
+                rows = np.frombuffer(fb.mem, dtype=np.uint8).reshape(4, stride)
+                # B, G, R in memory; the nearest upsample fills every pixel.
+                self.assertEqual(list(rows[0, 0:3]), [30, 20, 10], (ch, stride))
+                self.assertEqual(list(rows[3, 28:31]), [30, 20, 10], (ch, stride))
+                # Row padding past the pixels is zeroed, not left as garbage.
+                self.assertTrue((rows[:, 32:] == 0).all(), (ch, stride))
+                screen.fill((1, 2, 3))
+                fb.present_surface(pygame, screen)
+                self.assertEqual(list(rows[0, 0:3]), [3, 2, 1], (ch, stride))
+                self.assertEqual(list(rows[3, 28:31]), [3, 2, 1], (ch, stride))
+                del rows
+                fb.close()
+                self.assertTrue(fb.mem.closed, (ch, stride))
+        finally:
+            pygame.quit()
+
+    def test_vt_control_paths_try_own_tty_before_root_only_consoles(self):
+        self.assertEqual(
+            self.kiosk.vt_control_paths("tty8"),
+            ["/dev/tty8", "/dev/tty0", "/dev/console"],
+        )
+        self.assertEqual(
+            self.kiosk.vt_control_paths("/dev/tty0"), ["/dev/tty0", "/dev/console"]
+        )
+        self.assertEqual(self.kiosk.vt_control_paths(""), ["/dev/tty0", "/dev/console"])
+
+    def test_sleep_cache_key_quantises_slow_rotation(self):
+        key = self.kiosk.sleep_cache_key
+        q = self.kiosk._SLEEP_ANGLE_Q
+        base = {"kind": "torus", "yaw": 100 * q, "pitch": 12 * q, "tint": (56, 84, 132), "size": 344}
+        self.assertEqual(key(base), key(dict(base, yaw=base["yaw"] + q * 0.4)))
+        self.assertNotEqual(key(base), key(dict(base, yaw=base["yaw"] + q * 1.4)))
+        self.assertNotEqual(key(base), key(dict(base, kind="box")))
+        self.assertNotEqual(key(base), key(dict(base, size=400)))
+
+    def test_close_display_drops_cached_solids(self):
+        kiosk = self.kiosk
+        kiosk._SLEEP_CACHE[("sphere", 0, 0, (1, 2, 3), 160)] = b"\0" * 3
+        kiosk._SLEEP_SURF_CACHE[(("sphere", 0, 0, (1, 2, 3), 160), 32)] = object()
+        kiosk._HUD_LAYER_CACHE[(1, "12:00:00", (1, 2, 3))] = object()
+        kiosk._close_display(None, None)
+        self.assertEqual(kiosk._SLEEP_CACHE, {})
+        self.assertEqual(kiosk._SLEEP_SURF_CACHE, {})
+        self.assertEqual(kiosk._HUD_LAYER_CACHE, {})
+
+    def test_sleep_fade_is_linear_and_shift_ramp_is_cached(self):
+        kiosk = self.kiosk
+        faded = kiosk._sleep_fade_rgb(bytes([200, 100, 0]), 0.5)
+        self.assertEqual(list(faded), [100, 50, 0])
+        self.assertEqual(kiosk._sleep_fade_rgb(bytes([9, 9, 9]), 1.0), bytes([9, 9, 9]))
+        ramp = kiosk.PALETTES["chat"]
+        first = kiosk._shift_ramp(ramp, 0.25)
+        self.assertIs(kiosk._shift_ramp(ramp, 0.25 + 1e-5), first)
+        self.assertIsNot(kiosk._shift_ramp(ramp, 0.26), first)
+        self.assertEqual(first, [kiosk._shift_color(c, 0.25) for c in ramp])
+        self.assertIs(kiosk._shift_ramp(ramp, 0.0), ramp)
 
     def test_watch_field_action_peeks_motion_when_hud_hidden(self):
         action = self.kiosk.watch_field_action
