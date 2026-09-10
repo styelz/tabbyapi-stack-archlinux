@@ -7,6 +7,7 @@ from unittest import mock
 
 from ui import models as ui_models
 from ui.models import (
+    JOB_DONE_TTL_SEC,
     ModelPaths,
     ModelsError,
     cancel_download,
@@ -14,11 +15,14 @@ from ui.models import (
     hf_folder_name,
     inspect_repo,
     is_gguf_only,
+    job_is_visible,
+    job_state,
     library_state,
     matches_format,
     maybe_write_hf_profile,
     parse_repo_id,
     profile_slug,
+    public_job,
     recover_stale_job,
     sanitize_folder_name,
     search_models,
@@ -375,6 +379,71 @@ class JobStateTests(unittest.TestCase):
             cancel_download(paths)
             self.assertTrue(ui_models._CANCEL.is_set())
             self.assertEqual(ui_models.read_job(paths)["status"], "cancelling")
+
+    def test_finished_job_drops_off_after_ttl(self):
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime(2026, 9, 11, 2, 30, tzinfo=timezone.utc)
+        fresh = {
+            "id": "1",
+            "status": "done",
+            "message": "Download finished",
+            "updated_at": (now - timedelta(seconds=20)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+        stale = {
+            "id": "2",
+            "status": "done",
+            "message": "Download finished",
+            "updated_at": (now - timedelta(seconds=JOB_DONE_TTL_SEC + 5)).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            ),
+        }
+        running = {"id": "3", "status": "running", "updated_at": "2020-01-01T00:00:00Z"}
+        self.assertTrue(job_is_visible(fresh, now))
+        self.assertFalse(job_is_visible(stale, now))
+        self.assertTrue(job_is_visible(running, now))
+        self.assertIsNone(public_job(stale, now))
+        self.assertEqual(public_job(fresh, now)["id"], "1")
+        self.assertIsNone(public_job({"status": "done"}, now))
+
+    def test_library_omits_old_finished_job(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            paths = _paths(root)
+            stale = {
+                "id": "old",
+                "status": "done",
+                "message": "Download finished",
+                "updated_at": "2020-01-01T00:00:00Z",
+            }
+            paths.job_path.write_text(json.dumps(stale, indent=2) + "\n", encoding="utf-8")
+            empty = {
+                "llms": [],
+                "images": [],
+                "catalog": [],
+                "disk": DISK_OK,
+            }
+            with mock.patch.object(ui_models, "library_llms", return_value=[]):
+                with mock.patch.object(ui_models, "library_images", return_value=[]):
+                    with mock.patch.object(ui_models, "catalog_pick_rows", return_value=[]):
+                        data = library_state(paths, loaded="")
+                        payload = job_state(paths)
+            self.assertIsNone(data["job"])
+            self.assertIsNone(payload["job"])
+            self.assertEqual(data.get("ok"), True)
+
+    def test_library_keeps_fresh_finished_job(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            paths = _paths(root)
+            write_job({"id": "new", "status": "done", "message": "Download finished"}, paths)
+            with mock.patch.object(ui_models, "library_llms", return_value=[]):
+                with mock.patch.object(ui_models, "library_images", return_value=[]):
+                    with mock.patch.object(ui_models, "catalog_pick_rows", return_value=[]):
+                        data = library_state(paths, loaded="")
+                        payload = job_state(paths)
+            self.assertEqual(data["job"]["status"], "done")
+            self.assertEqual(payload["job"]["id"], "new")
 
     def test_recover_stale_running_job(self):
         with tempfile.TemporaryDirectory() as raw:

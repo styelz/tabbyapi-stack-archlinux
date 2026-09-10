@@ -26,6 +26,10 @@ MAX_SEQ_CAP = 32768
 SEARCH_LIMIT = 40
 REVISION_SIZE_CAP = 10
 BUSY_STATUSES = frozenset({"queued", "running", "cancelling"})
+TERMINAL_STATUSES = frozenset({"done", "error", "cancelled"})
+# Finished banners stay on the Models page until this TTL; after that the API
+# omits the job so a leftover download_job.json cannot stick around all day.
+JOB_DONE_TTL_SEC = 90
 HF_URL_RE = re.compile(
     r"(?:https?://)?(?:www\.)?huggingface\.co/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)",
     re.IGNORECASE,
@@ -257,6 +261,43 @@ def patch_job(paths: ModelPaths | None = None, **fields: Any) -> dict | None:
 
 def job_is_busy(job: dict | None) -> bool:
     return bool(job) and str(job.get("status") or "") in BUSY_STATUSES
+
+
+def parse_job_time(job: dict | None) -> datetime | None:
+    if not job:
+        return None
+    raw = str(job.get("updated_at") or job.get("started_at") or "").strip()
+    if not raw:
+        return None
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        when = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return when.astimezone(timezone.utc)
+
+
+def job_is_visible(job: dict | None, now: datetime | None = None) -> bool:
+    if not job:
+        return False
+    if job_is_busy(job):
+        return True
+    if str(job.get("status") or "") not in TERMINAL_STATUSES:
+        return True
+    when = parse_job_time(job)
+    if when is None:
+        return False
+    clock = now or datetime.now(timezone.utc)
+    if clock.tzinfo is None:
+        clock = clock.replace(tzinfo=timezone.utc)
+    return (clock - when).total_seconds() < JOB_DONE_TTL_SEC
+
+
+def public_job(job: dict | None, now: datetime | None = None) -> dict | None:
+    return job if job_is_visible(job, now) else None
 
 
 def recover_stale_job(paths: ModelPaths | None = None) -> dict | None:
@@ -635,7 +676,7 @@ def library_state(
         "catalog": catalog_pick_rows(p),
         "disk": disk_usage_for(p.models_dir),
         "loaded": loaded_name,
-        "job": read_job(p),
+        "job": public_job(read_job(p)),
         "has_token": bool(hf_token()),
     }
 
@@ -643,7 +684,7 @@ def library_state(
 def job_state(paths: ModelPaths | None = None) -> dict:
     p = paths or default_paths()
     recover_stale_job(p)
-    return {"ok": True, "job": read_job(p)}
+    return {"ok": True, "job": public_job(read_job(p))}
 
 
 def _need_bytes(reported: int | None, disk_gib: int = 0) -> int:

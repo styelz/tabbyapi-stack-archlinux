@@ -10,7 +10,7 @@ function mountModels(root) {
           <span id="models-job-fill"></span>
         </div>
         <span class="models-job-pct" id="models-job-pct">0%</span>
-        <button type="button" class="btn" id="models-job-cancel">Cancel</button>
+        <button type="button" class="btn" id="models-job-cancel" data-action="cancel">Cancel</button>
       </div>
       <p class="error" id="models-error" hidden></p>
       <p class="muted" id="models-ok" hidden></p>
@@ -73,9 +73,14 @@ function mountModels(root) {
   const queryInput = root.querySelector("#models-q");
   let format = "exl3";
   let pollTimer = 0;
+  let hideTimer = 0;
   let paused = false;
   let lastJobId = "";
+  let paintedJobId = "";
   let loading = false;
+  const JOB_DONE_TTL_MS = 90 * 1000;
+  const JOB_DONE_HIDE_MS = 8 * 1000;
+  const JOB_DISMISS_KEY = "tabby-models-dismissed-job";
 
   function showError(message) {
     err.hidden = !message;
@@ -111,12 +116,67 @@ function mountModels(root) {
     return status === "queued" || status === "running" || status === "cancelling";
   }
 
+  function jobTerminal(job) {
+    const status = job && job.status;
+    return status === "done" || status === "error" || status === "cancelled";
+  }
+
+  function jobUpdatedAt(job) {
+    const t = Date.parse((job && (job.updated_at || job.started_at)) || "");
+    return Number.isFinite(t) ? t : 0;
+  }
+
+  function dismissedJobId() {
+    try {
+      return sessionStorage.getItem(JOB_DISMISS_KEY) || "";
+    } catch (_exc) {
+      return "";
+    }
+  }
+
+  function rememberDismissed(id) {
+    try {
+      if (id) sessionStorage.setItem(JOB_DISMISS_KEY, id);
+    } catch (_exc) {
+      /* ignore quota / private mode */
+    }
+  }
+
+  function jobIsFresh(job) {
+    const t = jobUpdatedAt(job);
+    return t > 0 && Date.now() - t < JOB_DONE_TTL_MS;
+  }
+
+  function shouldPaintJob(job) {
+    if (!job) return false;
+    if (jobBusy(job)) return true;
+    if (!jobTerminal(job)) return false;
+    if (job.id && job.id === dismissedJobId()) return false;
+    return jobIsFresh(job);
+  }
+
+  function clearHideTimer() {
+    if (hideTimer) window.clearTimeout(hideTimer);
+    hideTimer = 0;
+  }
+
+  function dismissPaintedJob() {
+    clearHideTimer();
+    if (paintedJobId) rememberDismissed(paintedJobId);
+    jobEl.hidden = true;
+    paintedJobId = "";
+  }
+
   function paintJob(job) {
-    if (!job || (!jobBusy(job) && job.status !== "done" && job.status !== "error" && job.status !== "cancelled")) {
-      if (!jobBusy(job)) jobEl.hidden = true;
+    if (!shouldPaintJob(job)) {
+      if (!jobBusy(job)) {
+        clearHideTimer();
+        jobEl.hidden = true;
+      }
       return;
     }
     jobEl.hidden = false;
+    paintedJobId = job.id || paintedJobId;
     jobEl.classList.toggle("is-error", job.status === "error");
     jobEl.classList.toggle("is-done", job.status === "done");
     const percent = Math.max(0, Math.min(100, Number(job.percent) || 0));
@@ -124,13 +184,23 @@ function mountModels(root) {
     jobPct.textContent = `${percent}%`;
     jobTitle.textContent = job.label || "Download";
     const bits = [job.message || job.status || ""];
-    if (job.file) bits.push(job.file);
-    if (job.bytes_total) {
-      bits.push(`${TabbyUI.formatBytes(job.bytes_done || 0)} / ${TabbyUI.formatBytes(job.bytes_total)}`);
+    if (jobBusy(job)) {
+      if (job.file) bits.push(job.file);
+      if (job.bytes_total) {
+        bits.push(`${TabbyUI.formatBytes(job.bytes_done || 0)} / ${TabbyUI.formatBytes(job.bytes_total)}`);
+      }
     }
     jobMsg.textContent = bits.filter(Boolean).join(" · ");
-    jobCancel.hidden = !jobBusy(job);
+    const busy = jobBusy(job);
+    jobCancel.hidden = false;
     jobCancel.disabled = job.status === "cancelling";
+    jobCancel.textContent = busy ? "Cancel" : "Dismiss";
+    jobCancel.dataset.action = busy ? "cancel" : "dismiss";
+    if (jobTerminal(job) && job.status !== "error") {
+      if (!hideTimer) hideTimer = window.setTimeout(dismissPaintedJob, JOB_DONE_HIDE_MS);
+    } else {
+      clearHideTimer();
+    }
   }
 
   function libraryRows(data) {
@@ -327,9 +397,8 @@ function mountModels(root) {
     const data = await TabbyUI.api("models");
     paintLibrary(data);
     paintJob(data.job);
-    if (data.job && data.job.status === "error") showError(data.job.error || data.job.message);
-    if (data.job && data.job.status === "done" && data.job.id && data.job.id !== lastJobId) {
-      showOk(data.job.message || "Download finished");
+    if (data.job && data.job.status === "error" && shouldPaintJob(data.job)) {
+      showError(data.job.error || data.job.message);
     }
     lastJobId = (data.job && data.job.id) || lastJobId;
     return data;
@@ -345,9 +414,7 @@ function mountModels(root) {
       stopPoll();
       if (job && (job.status === "done" || job.status === "error" || job.status === "cancelled")) {
         await loadLibrary();
-        if (job.status === "done") showOk(job.message || "Download finished");
         if (job.status === "error") showError(job.error || job.message || "Download failed");
-        if (job.status === "cancelled") showOk(job.message || "Cancelled");
       }
     } catch (exc) {
       showError(exc.message || String(exc));
@@ -484,6 +551,11 @@ function mountModels(root) {
 
   jobCancel.addEventListener("click", async () => {
     try {
+      if (jobCancel.dataset.action === "dismiss") {
+        dismissPaintedJob();
+        showOk("");
+        return;
+      }
       await TabbyUI.api("models/job/cancel", { method: "POST", body: {} });
       startPoll();
     } catch (exc) {
@@ -514,6 +586,7 @@ function mountModels(root) {
     pause() {
       paused = true;
       stopPoll();
+      clearHideTimer();
     },
   };
 }
