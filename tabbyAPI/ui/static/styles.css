@@ -5050,6 +5050,9 @@ figure.shot .open { display: block; }
   justify-content: end;
   align-items: center;
   flex-wrap: nowrap;
+  /* Reserve room for the fixed two-button grid so it stays in its own
+     column instead of overflowing left over the Kind/Size cells. */
+  width: 13rem;
 }
 #models-lib-body .models-actions .btn {
   width: 100%;
