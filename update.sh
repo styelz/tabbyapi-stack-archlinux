@@ -92,12 +92,13 @@ need_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
 
-# Same reason as install.sh: a leftover ~/.dialogrc or DIALOGRC with
-# use_scrollbar=ON puts a meaningless N% on the lower-right of menus.
+# Same reason as install.sh: dialog's lower-right N% is list-scroll
+# position. Hide it even if ~/.dialogrc turns the scrollbar back on.
 write_dialogrc() {
   local f="${TMPDIR:-/tmp}/tabby-update-dialogrc"
   cat >"$f" <<'EOF'
 use_scrollbar = OFF
+position_indicator_color = (WHITE,WHITE,ON)
 EOF
   export DIALOGRC="$f"
 }

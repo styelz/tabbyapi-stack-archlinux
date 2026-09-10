@@ -164,6 +164,7 @@ class IsoBuildSmallTests(unittest.TestCase):
     def test_installer_hides_unused_dialog_percent_marker(self):
         src = INSTALLER.read_text(encoding="utf-8")
         self.assertIn("use_scrollbar = OFF", src)
+        self.assertIn("position_indicator_color = (WHITE,WHITE,ON)", src)
         self.assertNotIn("use_scrollbar = ON", src)
 
     def test_installer_uses_github_main_when_online(self):

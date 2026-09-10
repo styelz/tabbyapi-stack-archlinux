@@ -306,13 +306,14 @@ tui_cmd() {
 }
 
 # Standard dialog colours (same palette as `dialog --create-rc`).
+# use_scrollbar OFF stops dialog painting N% on lists that already fit.
+# position_indicator matches the lit menubox edge so a scrolling list's
+# leftover N% is not visible either (it is only a scroll position).
 write_dialogrc() {
   local f="${TMPDIR:-/tmp}/tsos-dialogrc"
   cat >"$f" <<'EOF'
 use_shadow = ON
 use_colors = ON
-# OFF: dialog's lower-right N% is list-scroll position. ON paints it on
-# every menu, even when every item already fits.
 use_scrollbar = OFF
 visit_items = OFF
 aspect = 0
@@ -357,17 +358,23 @@ inputbox_border2_color = (BLACK,WHITE,OFF)
 searchbox_color = (BLACK,WHITE,OFF)
 searchbox_title_color = (BLUE,WHITE,ON)
 searchbox_border_color = (WHITE,WHITE,ON)
-position_indicator_color = (BLUE,WHITE,ON)
+position_indicator_color = (WHITE,WHITE,ON)
 uarrow_color = (GREEN,WHITE,ON)
 darrow_color = (GREEN,WHITE,ON)
 itemhelp_color = (WHITE,BLACK,OFF)
 EOF
   export DIALOGRC="$f"
-  # A bad dialogrc makes every widget exit before drawing. Validate it now
-  # and fall back to dialog's built-in theme instead of aborting the installer.
+  # A bad dialogrc makes every widget exit before drawing. Keep at least
+  # the percent-hide settings; only drop DIALOGRC if those fail too.
   if command -v dialog >/dev/null 2>&1 && ! dialog --version >/dev/null 2>&1; then
-    unset DIALOGRC
-    warn "custom dialog theme was rejected; using the built-in theme"
+    cat >"$f" <<'EOF'
+use_scrollbar = OFF
+position_indicator_color = (WHITE,WHITE,ON)
+EOF
+    if ! dialog --version >/dev/null 2>&1; then
+      unset DIALOGRC
+      warn "custom dialog theme was rejected; using the built-in theme"
+    fi
   fi
 }
 
@@ -3983,7 +3990,9 @@ ENV
     *) printf 'FAIL page frame content: %q\n' "$PAGE_BUF" >&2; failed=1 ;;
   esac
   write_dialogrc
-  if [[ -n "${DIALOGRC:-}" ]] && grep -q '^use_scrollbar = OFF$' "$DIALOGRC"; then
+  if [[ -n "${DIALOGRC:-}" ]] &&
+    grep -q '^use_scrollbar = OFF$' "$DIALOGRC" &&
+    grep -q '^position_indicator_color = (WHITE,WHITE,ON)$' "$DIALOGRC"; then
     printf 'ok   dialogrc hides unused percent marker\n'
   else
     printf 'FAIL dialogrc scrollbar: %s\n' "${DIALOGRC:-unset}" >&2

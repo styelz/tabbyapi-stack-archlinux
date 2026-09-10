@@ -20,6 +20,7 @@ class UpdateShRestartOptionTests(unittest.TestCase):
         self.assertIn('if [[ "$RESTART_API" == 1 ]]; then', src)
         self.assertIn("TABBY_UPDATE_RESTART", src)
         self.assertIn("use_scrollbar = OFF", src)
+        self.assertIn("position_indicator_color = (WHITE,WHITE,ON)", src)
         self.assertIn("write_dialogrc", src)
 
     def test_git_update_always_offers_restart_button(self):
@@ -247,6 +248,7 @@ class InstallShHeadlessUpdateTests(unittest.TestCase):
     def test_dialogrc_hides_unused_percent_marker(self):
         src = INSTALL_SH.read_text()
         self.assertIn("use_scrollbar = OFF", src)
+        self.assertIn("position_indicator_color = (WHITE,WHITE,ON)", src)
         self.assertNotIn("use_scrollbar = ON", src)
 
     def test_text_gauge_requires_writable_tty(self):
