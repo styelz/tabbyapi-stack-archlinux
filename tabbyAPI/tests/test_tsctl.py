@@ -140,6 +140,13 @@ class TsctlTests(unittest.TestCase):
         self.assertIn("--config", flags)
         self.assertIn("--dry-run", flags)
 
+    def test_menu_actions_use_plain_tags(self):
+        tags = [tag for tag, _label in self.tsctl.MENU_ACTIONS]
+        self.assertEqual(tags, ["start", "stop", "restart", "status", "backup", "restore"])
+        for tag in tags:
+            self.assertFalse(tag.startswith("_"))
+            self.assertFalse(tag.endswith("_"))
+
     def test_complete_lists_api_unit_commands(self):
         payload = {"tabby": [], "screensaver": {}, "gpu": {}, "system": {}}
         with mock.patch.object(self.tsctl, "load_settings", return_value=payload):

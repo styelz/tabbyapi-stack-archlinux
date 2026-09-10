@@ -24,6 +24,14 @@ from ui.settings import (  # noqa: E402
 )
 
 GPU_PROFILE_NAMES = ("auto", "quiet", "balanced", "performance", "custom")
+MENU_ACTIONS = (
+    ("start", "Start TabbyAPI"),
+    ("stop", "Stop TabbyAPI"),
+    ("restart", "Restart TabbyAPI"),
+    ("status", "TabbyAPI unit status"),
+    ("backup", "Backup models and stack data"),
+    ("restore", "Restore a stack backup"),
+)
 
 USAGE = """\
 tsctl — tabbyapi-stack settings
@@ -365,38 +373,37 @@ def tui_dialog() -> int:
     while True:
         data = load_settings()
         sections = _sections(data)
-        items: list[str] = [
-            "__start__",
-            "Start TabbyAPI",
-            "__stop__",
-            "Stop TabbyAPI",
-            "__restart__",
-            "Restart TabbyAPI",
-            "__status__",
-            "TabbyAPI unit status",
-            "__backup__",
-            "Backup models and stack data",
-            "__restore__",
-            "Restore a stack backup",
-        ]
+        items: list[str] = []
+        for tag, label in MENU_ACTIONS:
+            items.extend([tag, label])
         for section in sections:
             items.extend([str(section["name"]), str(section.get("label") or section["name"])[:40]])
         code, choice = run_dialog(
-            ["--title", "tsctl", "--menu", "Pick a section. Esc quits.", "20", "72", "12", *items]
+            [
+                "--title",
+                "tsctl",
+                "--no-tags",
+                "--menu",
+                "Pick a section. Esc quits.",
+                "20",
+                "72",
+                "12",
+                *items,
+            ]
         )
         if code != 0 or not choice:
             return 0
-        if choice in ("__backup__", "__restore__"):
-            dialog_stack_backup("backup" if choice == "__backup__" else "restore")
+        if choice in ("backup", "restore"):
+            dialog_stack_backup(choice)
             continue
-        if choice in ("__start__", "__stop__", "__restart__", "__status__"):
+        if choice in ("start", "stop", "restart", "status"):
             import io
             from contextlib import redirect_stderr, redirect_stdout
 
             buf = io.StringIO()
             err = io.StringIO()
             with redirect_stdout(buf), redirect_stderr(err):
-                api_unit(choice.strip("_"))
+                api_unit(choice)
             note = (buf.getvalue() + err.getvalue()).strip() or "ok"
             run_dialog(["--msgbox", note, "10", "70"])
             continue
