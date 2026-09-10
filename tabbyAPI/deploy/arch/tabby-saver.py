@@ -625,7 +625,7 @@ def scene_help_note(
         loading = unit_state in {"active", "activating"}
         extra = ""
         if loading and phase == "waiting for api":
-            extra = " the service is up and still copying weights into VRAM."
+            extra = " the unit started; /health is still down while copying weights into VRAM."
         elif loading:
             extra = " the process is running; it has not opened the port yet."
         if phase == "waiting for api":
@@ -1398,46 +1398,55 @@ class StateBus:
             if self.data is None:
                 self.ok = False
 
-    def run(self, url: str, interval: float) -> None:
+    def poll_once(
+        self,
+        url: str,
+        interval: float,
+        *,
+        last_http: float,
+        now: float | None = None,
+    ) -> float:
+        """One poll. A closed port stays down; leftover busy JSON is not 'up'."""
         host, port = origin_peer(url)
+        live = read_saver_live()
+        with self.lock:
+            had_http = self.data is not None
+            cached = dict(self.data) if self.data else None
+        now = time.monotonic() if now is None else now
+        due = (now - last_http) >= http_poll_gap(
+            busy=state_is_busy(cached, live), idle_s=interval
+        )
+        if not due:
+            with self.lock:
+                still_up = self.ok
+            # Sidecar can mark thinking the instant a generate POST lands, but
+            # only while this process still sees the API as up. A restart must
+            # not treat leftover JSON as a live prompt.
+            if still_up and live and live.get("busy") and had_http:
+                self.ingest(overlay_saver_live(cached, live), True)
+            return last_http
+        reachable = tcp_up(host, port)
+        payload = fetch_state(url, timeout=0.8) if reachable else None
+        if payload is None:
+            reachable = tcp_up(host, port)
+        live = read_saver_live()
+        if not reachable:
+            self.ingest(None, False)
+            return now
+        if payload is None and live and live.get("busy") and had_http:
+            self.ingest(overlay_saver_live(cached, live), True)
+            return now
+        if payload is None:
+            self.ingest(None, True)
+            return now
+        self.ingest(overlay_saver_live(payload, live, trust_idle_http=True), True)
+        return now
+
+    def run(self, url: str, interval: float) -> None:
         last_http = 0.0
         tick = 0.1
         while not self.stop.is_set():
-            live = read_saver_live()
-            with self.lock:
-                had_http = self.data is not None
-                cached = dict(self.data) if self.data else None
-            # Sidecar can mark thinking the instant a generate POST lands, but
-            # only after this process has seen the API once. A restart must not
-            # treat a leftover file as a live prompt.
-            if live and live.get("busy") and had_http:
-                self.ingest(overlay_saver_live(cached, live), True)
-            now = time.monotonic()
-            due = (now - last_http) >= http_poll_gap(
-                busy=state_is_busy(cached, live), idle_s=interval
-            )
-            payload = None
-            http_fresh = False
-            reachable = True
-            if due:
-                reachable = tcp_up(host, port)
-                payload = fetch_state(url, timeout=0.8) if reachable else None
-                last_http = now
-                http_fresh = payload is not None
-                if payload is None:
-                    reachable = tcp_up(host, port)
-            live = read_saver_live()
-            if payload is None and live and live.get("busy") and had_http:
-                payload = dict(cached) if cached else None
-            elif payload is None and cached is not None:
-                payload = dict(cached)
-            payload = overlay_saver_live(
-                payload, live, trust_idle_http=http_fresh
-            )
-            self.ingest(
-                payload,
-                (reachable if due else True) or bool(payload and payload.get("busy")),
-            )
+            last_http = self.poll_once(url, interval, last_http=last_http)
             self.stop.wait(tick)
 
 
@@ -2508,8 +2517,12 @@ def hud_anchor_right(face: Any, template: str, right: int) -> int:
     return int(right) - int(face.size(template)[0])
 
 
+def _hud_ends_sentence(word: str) -> bool:
+    return word.rstrip("\"')").endswith((".", "?", "!"))
+
+
 def hud_caption(text: str) -> str:
-    """Title-case HUD words. Keep times and API/LLM/CPU/GPU as acronyms."""
+    """Sentence-case HUD text. Keep API/LLM and names; do not title every word."""
     special = {
         "api": "API",
         "llm": "LLM",
@@ -2517,6 +2530,7 @@ def hud_caption(text: str) -> str:
         "gpu": "GPU",
         "vram": "VRAM",
         "comfy": "Comfy",
+        "comfyui": "ComfyUI",
         "gb": "GB",
         "rtx": "RTX",
         "gpt-4o": "gpt-4o",
@@ -2532,6 +2546,7 @@ def hud_caption(text: str) -> str:
         "/health": "/health",
     }
     bits: list[str] = []
+    start = True
     for word in str(text or "").split(" "):
         if not word:
             bits.append(word)
@@ -2539,16 +2554,28 @@ def hud_caption(text: str) -> str:
         key = word.lower()
         if key in special:
             bits.append(special[key])
+            start = _hud_ends_sentence(word)
             continue
-        stem = word.rstrip(".,;:")
+        stem = word.rstrip(".,;:)")
         suffix = word[len(stem) :]
         if stem.lower() in special:
             bits.append(special[stem.lower()] + suffix)
+            start = _hud_ends_sentence(word)
             continue
         if word[:1].isdigit() or word.startswith("~") or word.startswith("%"):
             bits.append(word)
+            start = _hud_ends_sentence(word)
             continue
-        bits.append(word[:1].upper() + word[1:] if word else word)
+        if start:
+            chars = list(word)
+            for i, ch in enumerate(chars):
+                if ch.isalpha():
+                    chars[i] = ch.upper()
+                    break
+            bits.append("".join(chars))
+        else:
+            bits.append(word)
+        start = _hud_ends_sentence(word)
     return " ".join(bits)
 
 
@@ -2759,8 +2786,8 @@ def draw_hud(
         stats = ""
         stats_slot = ""
     else:
-        stats = "API Down"
-        stats_slot = "API Down"
+        stats = "API down"
+        stats_slot = "API down"
     max_left = max(80, w - pad - small.size(stats_slot)[0] - pad) if stats else w - pad * 2
 
     dest = str(scene.get("image_file") or "").strip()
@@ -2778,7 +2805,7 @@ def draw_hud(
         waiters = int(round(float(scene.get("waiters") or 0)))
     except (TypeError, ValueError):
         waiters = 0
-    wait_line = f"{waiters} Waiting" if waiters > 0 else ""
+    wait_line = f"{waiters} waiting" if waiters > 0 else ""
     tok_line = ""
     try:
         step_tok = int(round(float(scene.get("tokens") or 0)))
@@ -3298,11 +3325,10 @@ def run_visible_field(
             dt = now - prev
             prev = now
             data, ok = bus.snapshot()
-            if data is not None:
+            if ok and data is not None:
                 data = overlay_saver_live(
                     data, read_saver_live(), trust_idle_http=True
                 )
-            ok = bool(ok or (data and data.get("busy")))
             scene = follow.tick(scene_from_state(data, ok), dt, now)
             field = draw_field(max(64, args.width), max(36, args.height), scene, screen)
             pygame.transform.scale(field, screen.get_size(), screen)

@@ -351,14 +351,25 @@ class SaverKioskSceneTests(unittest.TestCase):
         self.assertEqual(clock, "14:20:07")
         self.assertIn("Sep", date)
 
-    def test_hud_caption_title_cases_status_words(self):
+    def test_hud_caption_sentence_cases_status_words(self):
         cap = self.kiosk.hud_caption
         self.assertEqual(cap("thinking"), "Thinking")
         self.assertEqual(cap("settling"), "Settling")
         self.assertEqual(cap("loading llm"), "Loading LLM")
         self.assertEqual(cap("cpu"), "CPU")
         self.assertEqual(cap("restarting api"), "Restarting API")
-        self.assertEqual(cap("resetting generator"), "Resetting Generator")
+        self.assertEqual(cap("resetting generator"), "Resetting generator")
+        self.assertEqual(cap("waiting for api"), "Waiting for API")
+        self.assertEqual(cap("using tools"), "Using tools")
+        self.assertEqual(cap("in use"), "In use")
+        self.assertEqual(
+            cap("the API is coming up after a reboot or restart. last model is qwen."),
+            "The API is coming up after a reboot or restart. Last model is qwen.",
+        )
+        self.assertEqual(
+            cap("tabbyapi is stopped. send restart from Status or in chat."),
+            "TabbyAPI is stopped. Send restart from Status or in chat.",
+        )
 
     def test_overlay_live_file_makes_idle_http_live(self):
         idle = {"gpu_mode": "llm", "profile": "qwen", "busy": False, "stage": "idle"}
@@ -569,7 +580,8 @@ class SaverKioskSceneTests(unittest.TestCase):
         self.assertIn("qwen", idle_text)
         self.assertIn("14:20:07", idle_text)
         self.assertIn("Sat 5 Sep", idle_text)
-        self.assertIn("This Box Is A RTX 4070 Ti 12 GB", idle_text)
+        self.assertIn("This box is a RTX 4070 Ti 12 GB", idle_text)
+        self.assertNotIn("This Box Is A", idle_text)
         self.assertNotIn("thinking", idle_text)
         self.assertGreater(len(hot_screen.blits), 0)
         self.assertIn("Thinking", hot_text)
@@ -986,7 +998,7 @@ class SaverKioskSceneTests(unittest.TestCase):
         scene["util"] = 40
         self.kiosk.draw_hud(screen, _FakeFont(), _FakeFont(), scene)
         text = " ".join(str(item) for item in screen.blits)
-        self.assertIn("Resetting Generator", text)
+        self.assertIn("Resetting generator", text)
         self.assertIn("GPU ran out of memory", text)
 
     def test_waiting_hud_mentions_reboot_ready_time(self):
@@ -997,9 +1009,11 @@ class SaverKioskSceneTests(unittest.TestCase):
         screen = _FakeScreen()
         self.kiosk.draw_hud(screen, _FakeFont(), _FakeFont(), waiting)
         text = " ".join(str(item) for item in screen.blits)
-        self.assertIn("Waiting For API", text)
-        self.assertIn("Reboot", text)
+        self.assertIn("Waiting for API", text)
+        self.assertIn("reboot", text)
         self.assertIn("/health", text)
+        self.assertNotIn("Coming Up", text)
+        self.assertNotIn("Waiting For", text)
 
     def test_waiting_note_names_last_profile_and_service(self):
         scene = self.kiosk.scene_from_state(
@@ -1017,8 +1031,11 @@ class SaverKioskSceneTests(unittest.TestCase):
     def test_cold_boot_note_when_service_is_loading(self):
         scene = self.kiosk.scene_from_state(None, False, unit_state="active")
         self.assertEqual(scene["phase"], "waiting for api")
+        self.assertFalse(scene["connected"])
         self.assertIn("reboot", scene["note"])
         self.assertIn("copying weights", scene["note"])
+        self.assertIn("/health is still down", scene["note"])
+        self.assertNotIn("service is up", scene["note"])
 
     def test_failed_service_note(self):
         scene = self.kiosk.scene_from_state(None, False, unit_state="failed")
@@ -1103,6 +1120,123 @@ class SaverKioskSceneTests(unittest.TestCase):
         data, ok = bus.snapshot()
         self.assertFalse(ok)
         self.assertEqual(data["stage"], "decode")
+
+    def test_poll_marks_down_when_port_closes_during_restart(self):
+        bus = self.kiosk.StateBus()
+        bus.ingest(
+            {
+                "gpu_mode": "llm",
+                "busy": True,
+                "kind": "chat",
+                "stage": "decode",
+                "profile": "qwen",
+            },
+            True,
+        )
+        with (
+            mock.patch.object(self.kiosk, "tcp_up", return_value=False),
+            mock.patch.object(self.kiosk, "fetch_state", return_value=None),
+            mock.patch.object(self.kiosk, "read_saver_live", return_value=None),
+        ):
+            bus.poll_once(
+                "http://127.0.0.1:5000/v1/ui/saver/state",
+                1.0,
+                last_http=0.0,
+                now=10.0,
+            )
+        data, ok = bus.snapshot()
+        self.assertFalse(ok)
+        self.assertEqual(data["profile"], "qwen")
+        scene = self.kiosk.scene_from_state(data, ok, unit_state="activating")
+        self.assertFalse(scene["connected"])
+        self.assertEqual(scene["phase"], "restarting api")
+        self.assertEqual(scene["palette"], "down")
+        screen = _FakeScreen()
+        self.kiosk.draw_hud(screen, _FakeFont(), _FakeFont(), scene)
+        text = " ".join(str(item) for item in screen.blits)
+        self.assertIn("API down", text)
+        self.assertIn("Restarting API", text)
+
+    def test_poll_ignores_leftover_sidecar_when_port_is_down(self):
+        bus = self.kiosk.StateBus()
+        bus.ingest(
+            {"gpu_mode": "llm", "busy": False, "stage": "idle", "profile": "qwen"},
+            True,
+        )
+        leftover = {"busy": True, "stage": "prefill", "pid": os.getpid()}
+        with (
+            mock.patch.object(self.kiosk, "tcp_up", return_value=False),
+            mock.patch.object(self.kiosk, "fetch_state", return_value=None),
+            mock.patch.object(self.kiosk, "read_saver_live", return_value=leftover),
+        ):
+            bus.poll_once(
+                "http://127.0.0.1:5000/v1/ui/saver/state",
+                1.0,
+                last_http=0.0,
+                now=10.0,
+            )
+        data, ok = bus.snapshot()
+        self.assertFalse(ok)
+        scene = self.kiosk.scene_from_state(data, ok)
+        self.assertFalse(scene["connected"])
+        self.assertEqual(scene["phase"], "restarting api")
+
+    def test_poll_between_gaps_does_not_revive_a_down_api(self):
+        bus = self.kiosk.StateBus()
+        bus.ingest({"gpu_mode": "llm", "busy": True, "stage": "decode"}, True)
+        bus.ingest(None, False)
+        leftover = {"busy": True, "stage": "prefill", "pid": os.getpid()}
+        with (
+            mock.patch.object(self.kiosk, "tcp_up") as tcp,
+            mock.patch.object(self.kiosk, "fetch_state") as fetch,
+            mock.patch.object(self.kiosk, "read_saver_live", return_value=leftover),
+        ):
+            bus.poll_once(
+                "http://127.0.0.1:5000/v1/ui/saver/state",
+                1.0,
+                last_http=9.95,
+                now=10.0,
+            )
+        self.assertFalse(bus.snapshot()[1])
+        tcp.assert_not_called()
+        fetch.assert_not_called()
+        scene = self.kiosk.scene_from_state(*bus.snapshot())
+        self.assertEqual(scene["phase"], "restarting api")
+
+    def test_poll_timeout_with_open_port_keeps_last_generate(self):
+        bus = self.kiosk.StateBus()
+        bus.ingest(
+            {"gpu_mode": "llm", "busy": True, "kind": "chat", "stage": "decode"},
+            True,
+        )
+        with (
+            mock.patch.object(self.kiosk, "tcp_up", return_value=True),
+            mock.patch.object(self.kiosk, "fetch_state", return_value=None),
+            mock.patch.object(self.kiosk, "read_saver_live", return_value=None),
+        ):
+            bus.poll_once(
+                "http://127.0.0.1:5000/v1/ui/saver/state",
+                1.0,
+                last_http=0.0,
+                now=10.0,
+            )
+        data, ok = bus.snapshot()
+        self.assertTrue(ok)
+        self.assertEqual(data["stage"], "decode")
+        scene = self.kiosk.scene_from_state(data, ok)
+        self.assertTrue(scene["connected"])
+        self.assertEqual(scene["phase"], "thinking")
+
+    def test_leftover_busy_cache_is_not_treated_as_connected(self):
+        scene = self.kiosk.scene_from_state(
+            {"gpu_mode": "llm", "busy": True, "stage": "decode", "profile": "qwen"},
+            False,
+            unit_state="active",
+        )
+        self.assertFalse(scene["connected"])
+        self.assertEqual(scene["phase"], "restarting api")
+        self.assertEqual(scene["palette"], "down")
+        self.assertNotIn("service is up", scene["note"])
 
     def test_idle_http_poll_is_slow_busy_is_fast(self):
         busy = self.kiosk.http_poll_gap(busy=True, idle_s=1.0)
@@ -1615,10 +1749,11 @@ class SaverKioskSceneTests(unittest.TestCase):
         text = " ".join(str(item) for item in screen.blits)
         self.assertIn("Restarting API", text)
         self.assertIn("0:08", text)
-        self.assertIn("API Down", text)
-        self.assertIn("Stopped", text)
+        self.assertIn("API down", text)
+        self.assertIn("stopped", text)
         self.assertIn("Status", text)
         self.assertIn("qwen", text)
+        self.assertNotIn("Is Stopped", text)
 
     def test_hud_shows_waiters_and_toks(self):
         scene = self.kiosk.scene_from_state(
@@ -1639,7 +1774,7 @@ class SaverKioskSceneTests(unittest.TestCase):
         text = " ".join(str(item) for item in screen.blits)
         self.assertIn("1842 tok", text)
         self.assertIn("12/s", text)
-        self.assertIn("2 Waiting", text)
+        self.assertIn("2 waiting", text)
 
     def test_tok_line_shows_run_total_and_step(self):
         self.assertEqual(self.kiosk.tok_hud_line(1842, 1842, 12.0), "1842 tok   12/s")
@@ -1670,7 +1805,7 @@ class SaverKioskSceneTests(unittest.TestCase):
         text = " ".join(str(item) for item in screen.blits)
         self.assertIn("Loading LLM", text)
         self.assertIn("0:42", text)
-        self.assertIn("~1:06 Typical", text)
+        self.assertIn("~1:06 typical", text)
 
     def test_idle_times_follow_live_switch_times_file(self):
         import json
