@@ -43,6 +43,7 @@ The API starts at boot, even before login.
 ```bash
 curl -sS http://127.0.0.1:5000/health
 systemctl --user status tabbyapi
+tsctl status
 ```
 
 Open `http://127.0.0.1:5000/v1/ui` on the GPU host (or `/v1/ui` under a public URL you configured). Sign in with the Linux account that installed the stack.
@@ -51,15 +52,15 @@ That first account is the administrator. **Users** creates extra Tabby-only acco
 
 ## Browser UI
 
-**Chat** is the same Chat Completions pipeline as an editor, without file tools. **Code** is a project folder on this host (Monaco, file tools, preview, container terminal). **Agent** can write; **Ask** and **Plan** only inspect.
+**Chat** is the same Chat Completions pipeline as an editor, without file tools. **Code** is a project folder on this host (Monaco, file tools, preview, container terminal). **Agent** can write; **Ask** and **Plan** only inspect. A page-plus-images job streams the file writes, then collapses that transcript and shows live image generation.
 
 | Page | What it is for |
 |---|---|
-| **Status** | Profile, GPU mode, queue, health, restart, updates |
+| **Status** | Profile, GPU mode, queue, health, restart, updates, stack backup |
 | **Gallery** | Generated images (administrators see every account) |
 | **Logs** | TabbyAPI and ComfyUI output |
 | **Users** | Administrator: create, reset, or delete Tabby accounts |
-| **Settings** | Administrator: `config.yml`, `tabby.env`, screensaver, GPU. Shell: `tsctl` |
+| **Settings** | Administrator: `config.yml`, `tabby.env`, screensaver, GPU. Shell: `tsctl` (`start|stop|restart|status`) |
 
 <img width="1919" height="1122" alt="Chat" src="https://github.com/user-attachments/assets/03456b83-b6a5-46e9-a96f-9d752ed34fdb" />
 
@@ -116,14 +117,14 @@ Only installed profiles appear in `list models`. On an RTX 4070 Ti 12 GB, a warm
 generate an image of a neon diner on a rainy street at night
 ```
 
-The GPU moves to ComfyUI, the image URL comes from this same server, then the previous language model reloads. For several images in a row: `switch to comfy`, send prompts, then `switch to qwen`.
+The GPU moves to ComfyUI, the image URL comes from this same server (including any reverse-proxy prefix such as `/openai/v1`), then the previous language model reloads. For several images in a row: `switch to comfy`, send prompts, then `switch to qwen`.
 
 - Flux Schnell is the default for photos and drafts.
 - Prefix `qwen-image:` for logos, posters, or readable text.
 - Attach a photo in the same message for Flux img2img.
 - Files also appear in **Gallery**.
 
-`POST /v1/images/generations` returns `b64_json` and a URL. Editor agents that mix pages and images: [AGENTS.md](AGENTS.md).
+`POST /v1/images/generations` returns `b64_json` and a URL (including any reverse-proxy prefix). Editor agents that mix pages and images: [AGENTS.md](AGENTS.md).
 
 ## Update
 

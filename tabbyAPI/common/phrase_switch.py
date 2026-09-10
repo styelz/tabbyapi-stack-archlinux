@@ -579,12 +579,15 @@ def help_text(api_base: Optional[str] = None, request=None) -> str:
         "model commands, and image generation.",
         "- **Browser Code:** a self-contained IDE on this host. Same Chat Completions "
         "pipeline; the browser runs the tool loop against a jailed workspace "
-        "(Grep, Glob, Read, Write, Shell, …), plus Monaco, preview, and a container terminal.",
-        "- **Status:** model switching, GPU occupancy, restart, updates, health, and resource graphs.",
+        "(Grep, Glob, Read, Write, Shell, …), plus Monaco, preview, and a container terminal. "
+        "Nested chats under a workspace share the same files. **Agent** can write; "
+        "**Ask** and **Plan** are read-only. File writes stream into the chat.",
+        "- **Status:** model switching, GPU occupancy, restart, updates, health, "
+        "resource graphs, and administrator-only stack backup/restore.",
         "- **Gallery:** generated output images only.",
         "- **Logs:** live and historical server output.",
         "- **Users:** administrator-only Tabby accounts (not Linux users).",
-        "- **Settings:** administrator-only Tabby `config.yml`, system `tabby.env`, screensaver, auto-update, and GPU fan/power (`tsctl`).",
+        "- **Settings:** administrator-only Tabby `config.yml`, system `tabby.env`, screensaver, auto-update, and GPU fan/power (`tsctl`; also start/stop/restart/status).",
         "- **Account menu:** Download backup / Restore backup for this account's chats, Code files, prefs, and gallery. Other accounts are not in the zip.",
         "",
         "## Connection",
@@ -694,10 +697,13 @@ def help_text(api_base: Optional[str] = None, request=None) -> str:
             "## Build code with images",
             "",
             "- **Browser Code:** ask for the files and named PNGs together. The browser "
-            "writes the project with workspace tools; the API then holds for images and "
-            "copies them into the Files pane.",
+            "writes the project with workspace tools (those writes stream into the chat). "
+            "When Comfy starts, the coding transcript auto-collapses and the live reply "
+            "shows image generation. The API then holds for images and copies them into "
+            "the Files pane. Do not treat the page write as the end of the job.",
             "- **Editor:** ask for the page and named image paths together. Apply the editor's "
-            "file tools; the API waits for the image batch and returns one download command.",
+            "file tools; the API waits for the image batch and returns one download command "
+            "(the image URL keeps any reverse-proxy prefix such as `/openai/v1`).",
             "",
             "## Image API",
             "",
@@ -707,13 +713,14 @@ def help_text(api_base: Optional[str] = None, request=None) -> str:
             '{"prompt": "qwen-image: a logo that says Cafe"}',
             "```",
             "",
-            "The response includes `b64_json` and a URL on this server.",
+            "The response includes `b64_json` and a URL on this server "
+            "(including any reverse-proxy prefix).",
             "",
             "## Recommended workflow",
             "",
             "Use **qwen** for everyday coding. Switch to **qwen35** or **qwen36** "
-            "before a long, difficult agent task. Send `list models` to see what is "
-            "installed on this server.",
+            "before a long, difficult agent task. **glm** is thinking chat only "
+            "(no coding tools). Send `list models` to see what is installed on this server.",
         ]
     )
     return "\n".join(lines)
