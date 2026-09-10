@@ -85,7 +85,15 @@ class FakeApi:
 
     def list_models(self, **kwargs):
         self.list_calls.append(kwargs)
-        return list(self.models)
+        models = list(self.models)
+        fmt = kwargs.get("filter")
+        if fmt:
+            models = [
+                model
+                for model in models
+                if matches_format(model.id, model.tags, str(fmt))
+            ]
+        return models
 
     def model_info(self, repo_id, revision=None, files_metadata=False):
         if files_metadata:
@@ -154,6 +162,8 @@ class ParseAndFilterTests(unittest.TestCase):
         ids = [row["id"] for row in payload["results"]]
         self.assertEqual(ids, ["org/keep-exl3"])
         self.assertTrue(payload["results"][0]["compatible"])
+        self.assertEqual(api.list_calls[0].get("filter"), "exl3")
+        self.assertNotIn("direction", api.list_calls[0])
 
     def test_search_exact_repo_even_if_gguf(self):
         api = FakeApi([FakeModel("someone/llama-gguf", ["gguf"])])
@@ -199,8 +209,11 @@ class LibraryAndDeleteTests(unittest.TestCase):
             self.assertTrue(data["llms"][0]["loaded"])
             qwen = next(row for row in data["catalog"] if row["id"] == "qwen")
             self.assertTrue(qwen["installed"])
+            embed = next(row for row in data["catalog"] if row["id"] == "embed")
+            self.assertEqual(embed["kind"], "embed")
             flux = next(row for row in data["catalog"] if row["id"] == "flux")
             self.assertFalse(flux["installed"])
+            self.assertEqual(flux["kind"], "image")
             self.assertIn("free_bytes", data["disk"])
 
     def test_delete_refuses_loaded_and_removes_hf_profile(self):

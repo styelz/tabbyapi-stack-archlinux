@@ -22,7 +22,7 @@ function mountModels(root) {
             <span class="spacer"></span>
             <button type="button" class="btn" id="models-refresh">Refresh</button>
           </div>
-          <p class="muted" id="models-lib-empty" hidden>No models on disk yet.</p>
+          <p class="muted" id="models-lib-empty" hidden>No models in the catalog yet.</p>
           <table class="models-table">
             <thead>
               <tr>
@@ -40,7 +40,6 @@ function mountModels(root) {
             <h2>Discover</h2>
             <span class="muted" id="models-token-hint"></span>
           </div>
-          <div class="models-catalog" id="models-catalog"></div>
           <form class="models-search" id="models-search-form">
             <input id="models-q" type="search" placeholder="Search Hugging Face or paste org/repo" autocomplete="off" />
             <div class="range-bar models-format" role="group" aria-label="Format">
@@ -68,7 +67,6 @@ function mountModels(root) {
   const tokenHint = root.querySelector("#models-token-hint");
   const libBody = root.querySelector("#models-lib-body");
   const libEmpty = root.querySelector("#models-lib-empty");
-  const catalogEl = root.querySelector("#models-catalog");
   const resultsEl = root.querySelector("#models-results");
   const repoEl = root.querySelector("#models-repo");
   const searchForm = root.querySelector("#models-search-form");
@@ -125,10 +123,47 @@ function mountModels(root) {
   }
 
   function libraryRows(data) {
+    const llms = data.llms || [];
+    const catalog = data.catalog || [];
+    const seen = new Set();
     const rows = [];
-    (data.llms || []).forEach((row) => rows.push(row));
-    (data.images || []).forEach((row) => rows.push(row));
+
+    catalog.forEach((pick) => {
+      const llm = llms.find((row) => row.catalog_id === pick.id);
+      if (llm) seen.add(llm.folder || llm.id);
+      const installed = Boolean(pick.installed || llm);
+      const kind = pick.kind || (pick.id === "embed" ? "embed" : "llm");
+      rows.push({
+        id: kind === "image" ? pick.id : llm ? llm.id : pick.id,
+        catalog_id: pick.id,
+        kind,
+        pretty: pick.label || (llm && llm.pretty) || pick.id,
+        profile: llm && llm.profile,
+        loaded: Boolean(llm && llm.loaded),
+        size_bytes: Number((llm && llm.size_bytes) || pick.size_bytes || 0),
+        disk_gib: pick.disk_gib,
+        min_vram_mib: pick.min_vram_mib,
+        installed,
+        partial: Boolean(pick.partial && !pick.installed),
+      });
+    });
+
+    llms.forEach((llm) => {
+      const key = llm.folder || llm.id;
+      if (llm.catalog_id || seen.has(key)) return;
+      rows.push(Object.assign({}, llm, { installed: true, catalog_id: null }));
+    });
+
+    rows.sort((a, b) => {
+      if (Boolean(a.loaded) !== Boolean(b.loaded)) return a.loaded ? -1 : 1;
+      if (Boolean(a.installed) !== Boolean(b.installed)) return a.installed ? -1 : 1;
+      return String(a.pretty || a.id).localeCompare(String(b.pretty || b.id));
+    });
     return rows;
+  }
+
+  function actionSlot(html) {
+    return html || '<span class="models-action-gap" aria-hidden="true"></span>';
   }
 
   function paintLibrary(data) {
@@ -147,50 +182,39 @@ function mountModels(root) {
       .map((row) => {
         const name = TabbyUI.escapeHtml(row.pretty || row.label || row.id);
         const id = TabbyUI.escapeHtml(row.id);
+        const catalogId = TabbyUI.escapeHtml(row.catalog_id || "");
         const kind = TabbyUI.escapeHtml(kindLabel(row.kind));
-        const size = TabbyUI.formatBytes(row.size_bytes || 0);
+        const size = row.installed || row.partial
+          ? TabbyUI.formatBytes(row.size_bytes || 0)
+          : row.disk_gib
+            ? `~${row.disk_gib} GiB`
+            : "—";
         const badges = [];
         if (row.loaded) badges.push('<span class="models-badge is-on">Loaded</span>');
-        if (row.profile) badges.push(`<span class="muted">${TabbyUI.escapeHtml(row.profile)}</span>`);
+        else if (row.installed) badges.push('<span class="models-badge is-on">Installed</span>');
         if (row.partial) badges.push('<span class="models-badge">Incomplete</span>');
-        const load =
-          row.kind === "llm" && row.profile
-            ? `<button type="button" class="btn" data-load="${TabbyUI.escapeHtml(row.profile)}" ${row.loaded ? "disabled" : ""}>Load</button>`
-            : "";
-        return `<tr data-id="${id}" data-kind="${TabbyUI.escapeHtml(row.kind)}">
-          <td><strong>${name}</strong><div class="muted models-sub">${id}${badges.length ? " · " : ""}${badges.join(" ")}</div></td>
+        if (row.profile) badges.push(`<span class="muted">${TabbyUI.escapeHtml(row.profile)}</span>`);
+        if (!row.installed && row.min_vram_mib) {
+          badges.push(`${Math.round(row.min_vram_mib / 1024)} GB VRAM`);
+        }
+        const sub = badges.join(" ") || "Not installed";
+        const canLoad = row.kind === "llm" && row.profile && row.installed && !row.partial;
+        const load = canLoad
+          ? `<button type="button" class="btn" data-load="${TabbyUI.escapeHtml(row.profile)}" ${row.loaded ? "disabled" : ""}>Load</button>`
+          : "";
+        const download = (!row.installed || row.partial) && row.catalog_id
+          ? `<button type="button" class="btn primary" data-catalog="${catalogId}">Download</button>`
+          : "";
+        const primary = download || load;
+        const del = row.installed || row.partial
+          ? `<button type="button" class="btn danger" data-del="${id}">Delete</button>`
+          : "";
+        return `<tr data-id="${id}" data-kind="${TabbyUI.escapeHtml(row.kind)}" data-catalog="${catalogId}">
+          <td><strong>${name}</strong><div class="muted models-sub">${sub}</div></td>
           <td class="muted">${kind}</td>
           <td class="num">${TabbyUI.escapeHtml(size)}</td>
-          <td class="models-actions">${load}<button type="button" class="btn danger" data-del="${id}">Delete</button></td>
+          <td class="models-actions">${actionSlot(primary)}${actionSlot(del)}</td>
         </tr>`;
-      })
-      .join("");
-  }
-
-  function paintCatalog(data) {
-    const picks = data.catalog || [];
-    catalogEl.innerHTML = picks
-      .map((pick) => {
-        const id = TabbyUI.escapeHtml(pick.id);
-        const label = TabbyUI.escapeHtml(pick.label);
-        const meta = [];
-        if (pick.disk_gib) meta.push(`~${pick.disk_gib} GiB`);
-        if (pick.min_vram_mib) meta.push(`${Math.round(pick.min_vram_mib / 1024)} GB VRAM`);
-        const status = pick.installed
-          ? '<span class="models-badge is-on">Installed</span>'
-          : pick.partial
-            ? '<span class="models-badge">Incomplete</span>'
-            : "";
-        const action = pick.installed
-          ? ""
-          : `<button type="button" class="btn primary" data-catalog="${id}">Download</button>`;
-        return `<div class="models-pick" data-id="${id}">
-          <div>
-            <strong>${label}</strong>
-            <div class="muted models-sub">${TabbyUI.escapeHtml(meta.join(" · "))}</div>
-          </div>
-          <div class="models-actions">${status}${action}</div>
-        </div>`;
       })
       .join("");
   }
@@ -261,7 +285,6 @@ function mountModels(root) {
   async function loadLibrary() {
     const data = await TabbyUI.api("models");
     paintLibrary(data);
-    paintCatalog(data);
     paintJob(data.job);
     if (data.job && data.job.status === "error") showError(data.job.error || data.job.message);
     if (data.job && data.job.status === "done" && data.job.id && data.job.id !== lastJobId) {
@@ -317,6 +340,7 @@ function mountModels(root) {
   libBody.addEventListener("click", async (event) => {
     const del = event.target.closest("[data-del]");
     const load = event.target.closest("[data-load]");
+    const catalog = event.target.closest("button[data-catalog]");
     try {
       if (load) {
         load.disabled = true;
@@ -324,6 +348,10 @@ function mountModels(root) {
         await TabbyUI.api("gpu", { method: "POST", body: { mode: load.getAttribute("data-load") } });
         await loadLibrary();
         showOk("Loaded.");
+        return;
+      }
+      if (catalog) {
+        await beginDownload({ kind: "catalog", pick_id: catalog.getAttribute("data-catalog") });
         return;
       }
       if (del) {
@@ -341,16 +369,6 @@ function mountModels(root) {
         await loadLibrary();
         showOk(`Deleted ${id}`);
       }
-    } catch (exc) {
-      showError(exc.message || String(exc));
-    }
-  });
-
-  catalogEl.addEventListener("click", async (event) => {
-    const btn = event.target.closest("[data-catalog]");
-    if (!btn) return;
-    try {
-      await beginDownload({ kind: "catalog", pick_id: btn.getAttribute("data-catalog") });
     } catch (exc) {
       showError(exc.message || String(exc));
     }

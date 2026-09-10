@@ -302,6 +302,25 @@ def _hf_api(token: str | None = None):
     return HfApi(token=token if token is not None else hf_token())
 
 
+def _list_models(api, query: str, fmt: str, limit: int) -> tuple[Any, bool]:
+    """Search the Hub for EXL2/EXL3 repos. `direction` is gone in recent huggingface_hub."""
+    kwargs: dict[str, Any] = {
+        "search": query,
+        "sort": "downloads",
+        "limit": limit,
+        "filter": fmt,
+    }
+    try:
+        return api.list_models(**kwargs), True
+    except TypeError:
+        kwargs.pop("filter", None)
+        try:
+            return api.list_models(**kwargs), False
+        except TypeError:
+            kwargs.pop("limit", None)
+            return api.list_models(**kwargs), False
+
+
 def search_models(query: str, fmt: str = "exl3", hf_api=None, limit: int = SEARCH_LIMIT) -> dict:
     fmt = normalize_format(fmt)
     q = str(query or "").strip()
@@ -316,11 +335,7 @@ def search_models(query: str, fmt: str = "exl3", hf_api=None, limit: int = SEARC
             raise ModelsError(message, status) from exc
         repo_id = str(getattr(info, "id", None) or exact)
         tags = list(getattr(info, "tags", None) or [])
-        compatible = is_exllama_compatible(repo_id, tags) and (
-            matches_format(repo_id, tags, fmt) or is_exllama_compatible(repo_id, tags)
-        )
-        if is_gguf_only(repo_id, tags):
-            compatible = False
+        compatible = is_exllama_compatible(repo_id, tags) and not is_gguf_only(repo_id, tags)
         results.append(_model_card(info, repo_id, tags, compatible))
         return {
             "ok": True,
@@ -334,21 +349,19 @@ def search_models(query: str, fmt: str = "exl3", hf_api=None, limit: int = SEARC
         return {"ok": True, "query": q, "format": fmt, "results": [], "has_token": bool(hf_token())}
 
     try:
-        listing = api.list_models(search=q, sort="downloads", direction=-1, limit=limit)
-    except TypeError:
-        listing = api.list_models(search=q, sort="downloads", direction=-1)
+        listing, used_filter = _list_models(api, q, fmt, limit)
     except Exception as exc:
         message, status, _gated = _hf_http_error_message(exc)
         raise ModelsError(message, status) from exc
 
     for info in listing:
-        repo_id = str(getattr(info, "id", None) or "")
+        repo_id = str(getattr(info, "id", None) or getattr(info, "modelId", None) or "")
         if not repo_id:
             continue
         tags = list(getattr(info, "tags", None) or [])
         if is_gguf_only(repo_id, tags):
             continue
-        if not matches_format(repo_id, tags, fmt):
+        if not used_filter and not matches_format(repo_id, tags, fmt):
             continue
         results.append(_model_card(info, repo_id, tags, True))
         if len(results) >= 24:
@@ -495,7 +508,7 @@ def catalog_pick_rows(paths: ModelPaths | None = None) -> list[dict]:
                     "kind": item.get("kind") or "snapshot",
                 }
             )
-        kind = "image" if pick_id in ("flux", "qwen-image") else "llm"
+        kind = "image" if pick_id in ("flux", "qwen-image") else ("embed" if pick_id == "embed" else "llm")
         rows.append(
             {
                 "id": pick_id,
