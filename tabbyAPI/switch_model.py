@@ -36,6 +36,7 @@ from select_model import (
     apply_profile,
     ask_profile,
     available_profiles,
+    disable_profile_vision,
     last_profile,
     load_yaml,
     profile_aliases,
@@ -245,6 +246,18 @@ def load_fallback(base: str, failed: str) -> dict:
 
 def recover_after_vram(base: str, name: str, model_name: str, model_cfg: dict, preset: str | None) -> dict:
     """Retry leftovers, bounce once, then fall back to qwen. Never loops."""
+    if model_cfg.get("vision"):
+        print("  vision disabled after VRAM failure; retrying text-only")
+        try:
+            updated = disable_profile_vision(name)
+            fresh = dict(updated.get("model") or {})
+            fresh.pop("model_name", None)
+            model_cfg.clear()
+            model_cfg.update(fresh)
+        except SystemExit as exc:
+            print(f"  could not persist vision off: {exc}")
+        model_cfg["vision"] = False
+
     print("  freeing leftover VRAM and retrying once")
     try:
         unload_tabby(base)

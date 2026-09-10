@@ -995,9 +995,24 @@ def profile_alias_for_folder(folder: str, paths: ModelPaths | None = None) -> st
     return entry.get("alias") if entry else None
 
 
-def profile_defaults_from_config(folder: Path, pretty: str | None = None) -> dict:
+def profile_defaults_from_config(
+    folder: Path,
+    pretty: str | None = None,
+    *,
+    vram_mib: int | None = None,
+    gpu: dict | None = None,
+) -> dict:
+    from common.switch_times import detect_gpu
+    from common.vision_defaults import (
+        decide_vision,
+        gpu_size_label,
+        parse_param_billions,
+        pretty_with_vision_note,
+        weight_mib,
+    )
+
     max_seq = MAX_SEQ_CAP
-    vision = False
+    capable = False
     cfg_path = folder / "config.json"
     if cfg_path.is_file():
         try:
@@ -1018,19 +1033,37 @@ def profile_defaults_from_config(folder: Path, pretty: str | None = None) -> dic
                 max_seq = min(parsed, MAX_SEQ_CAP)
             model_type = str(data.get("model_type") or "").lower()
             if data.get("vision_config") or "vision" in model_type or "vl" in model_type:
-                vision = True
+                capable = True
+    resolved_gpu = gpu
+    if vram_mib is None:
+        resolved_gpu = detect_gpu()
+        vram_mib = int(resolved_gpu.get("vram_mib") or 0)
+    choice = decide_vision(
+        capable=capable,
+        vram_mib=int(vram_mib or 0),
+        params_b=parse_param_billions(folder.name),
+        weight_mib=weight_mib(folder),
+    )
+    pretty_name = pretty or folder.name
+    if capable and not choice["vision"]:
+        pretty_name = pretty_with_vision_note(
+            pretty_name, False, gpu_size_label(int(vram_mib or 0), resolved_gpu)
+        )
+    model = {
+        "model_name": folder.name,
+        "max_seq_len": max_seq,
+        "cache_size": max_seq,
+        "cache_mode": "Q4",
+        "chunk_size": 4096,
+        "max_batch_size": 1,
+        "autosplit_reserve": [384],
+        "vision": choice["vision"],
+    }
+    if choice["vision_offload"]:
+        model["vision_offload"] = True
     return {
-        "pretty": pretty or folder.name,
-        "model": {
-            "model_name": folder.name,
-            "max_seq_len": max_seq,
-            "cache_size": max_seq,
-            "cache_mode": "Q4",
-            "chunk_size": 4096,
-            "max_batch_size": 1,
-            "autosplit_reserve": [384],
-            "vision": vision,
-        },
+        "pretty": pretty_name,
+        "model": model,
         "sampling": {"override_preset": "safe_defaults"},
     }
 

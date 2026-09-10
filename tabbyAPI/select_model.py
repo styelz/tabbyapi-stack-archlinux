@@ -346,6 +346,32 @@ def apply_profile(name: str):
     return profile
 
 
+def disable_profile_vision(name: str, *, apply: bool = True) -> dict:
+    """Turn vision off on a profile and optionally re-apply it (overlay + config.yml)."""
+    profile_path = PROFILES_DIR / f"{name}.yml"
+    if not profile_path.is_file():
+        raise SystemExit(f"Missing profile: {profile_path}")
+
+    yaml, data = load_yaml(profile_path)
+    if not isinstance(data, dict):
+        raise SystemExit(f"Profile {name} is empty")
+    model_cfg = data.get("model")
+    if not isinstance(model_cfg, dict):
+        model_cfg = {}
+        data["model"] = model_cfg
+    model_cfg["vision"] = False
+    pretty = str(data.get("pretty") or name)
+    if "vision off" not in pretty.lower():
+        from common.switch_times import gpu_label
+        from common.vision_defaults import pretty_with_vision_note
+
+        data["pretty"] = pretty_with_vision_note(pretty, False, gpu_label())
+    save_yaml(yaml, data, profile_path)
+    if apply:
+        return apply_profile(name)
+    return data
+
+
 def timed_input(prompt: str, timeout: float, default: str) -> str:
     """Read a line. If nothing is typed before timeout, return default."""
     print(prompt, end="", flush=True)

@@ -23,6 +23,54 @@ from common.tabby_config import config
 from common.vram_recover import FALLBACK_PROFILE, is_vram_error, mark_fallback
 
 
+async def _unload_startup_leftovers(model) -> None:
+    if not getattr(model, "container", None):
+        return
+    try:
+        await model.unload_model(skip_wait=True)
+    except Exception as unload_exc:
+        logger.warning(f"Could not unload leftover model after startup failure: {unload_exc}")
+
+
+async def _retry_startup_without_vision(model, model_name: str) -> bool:
+    """Persist vision off and retry the same model. True if it loaded."""
+    if not getattr(config.model, "vision", False):
+        return False
+    from select_model import disable_profile_vision, last_profile
+
+    profile_name = last_profile()
+    if not profile_name:
+        return False
+    logger.warning(
+        f"Vision disabled after VRAM failure; retrying text-only ({profile_name})"
+    )
+    try:
+        profile = disable_profile_vision(profile_name)
+    except SystemExit as persist_exc:
+        logger.warning(f"Could not persist vision off: {persist_exc}")
+        return False
+    config.load()
+    model_cfg = dict(profile.get("model") or {})
+    retry_name = model_cfg.pop("model_name", model_name)
+    retry_path = pathlib.Path(config.model.model_dir) / retry_name
+    try:
+        await model.load_model(
+            retry_path.resolve(),
+            **model_cfg,
+            draft_model=profile.get("draft_model") or {},
+        )
+        if config.lora.loras:
+            lora_dir = pathlib.Path(config.lora.lora_dir)
+            await model.container.load_loras(lora_dir.resolve(), **config.lora.model_dump())
+        return True
+    except Exception as retry_exc:
+        logger.error(f"Text-only retry failed ({retry_name}): {retry_exc}")
+        await _unload_startup_leftovers(model)
+        if not is_vram_error(retry_exc):
+            raise
+        return False
+
+
 async def _load_startup_model(model, model_name: str) -> None:
     """Load the configured LLM. On VRAM failure, fall back to qwen and stay up."""
     model_path = pathlib.Path(config.model.model_dir) / model_name
@@ -38,15 +86,12 @@ async def _load_startup_model(model, model_name: str) -> None:
         return
     except Exception as exc:
         logger.error(f"Startup model load failed ({model_name}): {exc}")
-        if model.container:
-            try:
-                await model.unload_model(skip_wait=True)
-            except Exception as unload_exc:
-                logger.warning(
-                    f"Could not unload leftover model after startup failure: {unload_exc}"
-                )
+        await _unload_startup_leftovers(model)
         if not is_vram_error(exc):
             raise
+
+    if await _retry_startup_without_vision(model, model_name):
+        return
 
     from select_model import PROFILES_DIR, apply_profile, available_profiles, load_yaml
 
