@@ -5108,21 +5108,66 @@ figure.shot .open { display: block; }
 .models-hit {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 0.125rem;
+  align-items: stretch;
+  gap: 0.1875rem;
   width: 100%;
   text-align: left;
   background: none;
-  border: 0;
+  border: 1px solid var(--line);
   border-radius: 0.5rem;
-  padding: 0.5rem 0.375rem;
+  padding: 0.625rem 0.75rem;
   color: inherit;
   cursor: pointer;
 }
 .models-hit:hover, .models-hit:focus-visible {
   background: var(--hover-fill);
+  border-color: var(--accent);
   outline: none;
 }
+.models-hit-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.models-hit-top strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.models-hit-badges {
+  display: inline-flex;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+.models-hit-meta { font-size: 0.75rem; }
+.models-hit-cta { font-size: 0.75rem; color: var(--accent); }
+.models-hit:not(:hover):not(:focus-visible) .models-hit-cta { opacity: 0.65; }
+.models-badge.is-warn {
+  background: rgba(var(--warn-rgb), 0.16);
+  color: var(--warn);
+}
+tr.models-group td {
+  border-bottom: 0;
+  padding-top: 0.875rem;
+  padding-bottom: 0.25rem;
+}
+.models-group-label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.models-repo-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+/* Reserve room for the repo Download button so it stays in its own column
+   instead of overflowing left over the Size cell. */
+.models-repo-table td.models-actions { width: 8rem; }
 .models-repo {
   display: flex;
   flex-direction: column;

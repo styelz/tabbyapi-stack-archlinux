@@ -95,6 +95,17 @@ function mountModels(root) {
     return "LLM";
   }
 
+  function timeAgo(iso) {
+    if (!iso) return "";
+    const t = Date.parse(iso);
+    if (!Number.isFinite(t)) return "";
+    const days = Math.floor((Date.now() - t) / 86400000);
+    if (days <= 0) return "today";
+    if (days < 30) return `${days}d ago`;
+    if (days < 365) return `${Math.floor(days / 30)}mo ago`;
+    return `${Math.floor(days / 365)}y ago`;
+  }
+
   function jobBusy(job) {
     const status = job && job.status;
     return status === "queued" || status === "running" || status === "cancelling";
@@ -178,8 +189,7 @@ function mountModels(root) {
       : "Set a Hugging Face token in Settings for gated repos.";
     const rows = libraryRows(data);
     libEmpty.hidden = rows.length > 0;
-    libBody.innerHTML = rows
-      .map((row) => {
+    const rowHtml = (row) => {
         const name = TabbyUI.escapeHtml(row.pretty || row.label || row.id);
         const id = TabbyUI.escapeHtml(row.id);
         const catalogId = TabbyUI.escapeHtml(row.catalog_id || "");
@@ -215,8 +225,19 @@ function mountModels(root) {
           <td class="num">${TabbyUI.escapeHtml(size)}</td>
           <td class="models-actions">${actionSlot(primary)}${actionSlot(del)}</td>
         </tr>`;
-      })
-      .join("");
+    };
+    const groupHeader = (label) =>
+      `<tr class="models-group"><td colspan="4"><span class="models-group-label">${label}</span></td></tr>`;
+    const installed = rows.filter((row) => row.installed || row.partial);
+    const available = rows.filter((row) => !row.installed && !row.partial);
+    const chunks = [];
+    if (installed.length) {
+      chunks.push(groupHeader("Installed"), ...installed.map(rowHtml));
+    }
+    if (available.length) {
+      chunks.push(groupHeader("Available to download"), ...available.map(rowHtml));
+    }
+    libBody.innerHTML = chunks.join("");
   }
 
   function paintResults(payload) {
@@ -227,16 +248,29 @@ function mountModels(root) {
         : "";
       return;
     }
+    const fmtLabel = payload.format === "exl2" ? "EXL2" : "EXL3";
     resultsEl.innerHTML = rows
       .map((row) => {
         const id = TabbyUI.escapeHtml(row.id);
-        const extra = [];
-        if (row.downloads) extra.push(`${Number(row.downloads).toLocaleString()} downloads`);
-        if (row.gated) extra.push("gated");
-        if (!row.compatible) extra.push("not EXL2/EXL3");
+        const badges = [];
+        badges.push(
+          row.compatible
+            ? `<span class="models-badge is-on">${fmtLabel}</span>`
+            : '<span class="models-badge is-warn">not EXL2/EXL3</span>'
+        );
+        if (row.gated) badges.push('<span class="models-badge is-warn">gated</span>');
+        const meta = [];
+        if (row.downloads) meta.push(`${Number(row.downloads).toLocaleString()} downloads`);
+        if (row.likes) meta.push(`${Number(row.likes).toLocaleString()} likes`);
+        const updated = timeAgo(row.last_modified);
+        if (updated) meta.push(`updated ${updated}`);
         return `<button type="button" class="models-hit" data-repo="${id}">
-          <strong>${id}</strong>
-          <span class="muted">${TabbyUI.escapeHtml(extra.join(" · "))}</span>
+          <span class="models-hit-top">
+            <strong>${id}</strong>
+            <span class="models-hit-badges">${badges.join("")}</span>
+          </span>
+          <span class="muted models-hit-meta">${TabbyUI.escapeHtml(meta.join(" · "))}</span>
+          <span class="models-hit-cta">View files &amp; sizes →</span>
         </button>`;
       })
       .join("");
@@ -255,13 +289,17 @@ function mountModels(root) {
       : data.compatible
         ? ""
         : '<p class="muted">This may not be an EXL2/EXL3 snapshot. Download only if you know it will load.</p>';
+    const headBadges = [];
+    if (data.compatible) headBadges.push('<span class="models-badge is-on">Compatible</span>');
+    if (data.gated) headBadges.push('<span class="models-badge is-warn">gated</span>');
     const revs = (data.revisions || [])
       .map((rev) => {
         const name = TabbyUI.escapeHtml(rev.name);
         const size = rev.size_bytes != null ? TabbyUI.formatBytes(rev.size_bytes) : "size unknown";
+        const files = rev.files ? `${rev.files} files` : "";
         const disabled = data.gguf_only ? "disabled" : "";
         return `<tr>
-          <td><code>${name}</code></td>
+          <td><code>${name}</code>${files ? `<div class="muted models-sub">${files}</div>` : ""}</td>
           <td class="num">${TabbyUI.escapeHtml(size)}</td>
           <td class="models-actions">
             <button type="button" class="btn primary" data-hf="${id}" data-rev="${name}" data-size="${rev.size_bytes || ""}" ${disabled}>Download</button>
@@ -271,11 +309,14 @@ function mountModels(root) {
       .join("");
     repoEl.innerHTML = `
       <div class="models-repo-head">
-        <strong>${id}</strong>
+        <div class="models-repo-title">
+          <strong>${id}</strong>
+          <span class="models-hit-badges">${headBadges.join("")}</span>
+        </div>
         <button type="button" class="btn" id="models-repo-close">Close</button>
       </div>
       ${note}
-      <table class="models-table">
+      <table class="models-table models-repo-table">
         <thead><tr><th>Revision</th><th class="num">Size</th><th></th></tr></thead>
         <tbody>${revs || '<tr><td colspan="3" class="muted">No branches listed.</td></tr>'}</tbody>
       </table>
