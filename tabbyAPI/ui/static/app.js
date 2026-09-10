@@ -3,6 +3,7 @@
     logs: { el: document.getElementById("page-logs"), mount: window.mountLogs, title: "Logs" },
     chat: { el: document.getElementById("page-chat"), mount: window.mountChat, title: "Chat" },
     status: { el: document.getElementById("page-status"), mount: window.mountStatus, title: "Status" },
+    models: { el: document.getElementById("page-models"), mount: window.mountModels, title: "Models" },
     gallery: { el: document.getElementById("page-gallery"), mount: window.mountGallery, title: "Gallery" },
     users: { el: document.getElementById("page-users"), mount: window.mountUsers, title: "Users" },
     settings: { el: document.getElementById("page-settings"), mount: window.mountSettings, title: "Settings" },
@@ -12,7 +13,7 @@
 
   function currentName() {
     const hash = (location.hash || "#chat").replace("#", "");
-    if ((hash === "users" || hash === "settings" || hash === "logs") && !isAdmin) return "chat";
+    if ((hash === "users" || hash === "settings" || hash === "logs" || hash === "models") && !isAdmin) return "chat";
     return pages[hash] ? hash : "chat";
   }
 
@@ -804,14 +805,16 @@
       const logsTab = document.getElementById("tab-logs");
       const usersTab = document.getElementById("tab-users");
       const settingsTab = document.getElementById("tab-settings");
+      const modelsTab = document.getElementById("tab-models");
       if (logsTab) logsTab.hidden = !isAdmin;
       if (usersTab) usersTab.hidden = !isAdmin;
       if (settingsTab) settingsTab.hidden = !isAdmin;
+      if (modelsTab) modelsTab.hidden = !isAdmin;
       if (settingsBtn) settingsBtn.hidden = !isAdmin;
       if (settingsItem) settingsItem.hidden = !isAdmin;
       if (restartItem) restartItem.hidden = !isAdmin;
       const hash = (location.hash || "").replace("#", "");
-      if (!isAdmin && (hash === "users" || hash === "settings" || hash === "logs")) {
+      if (!isAdmin && (hash === "users" || hash === "settings" || hash === "logs" || hash === "models")) {
         location.hash = "#chat";
       }
       show(currentName());

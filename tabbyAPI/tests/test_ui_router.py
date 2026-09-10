@@ -21,6 +21,13 @@ class UiRoutePrefixTests(unittest.TestCase):
         self.assertIn("/v1/ui/saver/state", paths)
         self.assertIn("/v1/ui/users", paths)
         self.assertIn("/v1/ui/settings", paths)
+        self.assertIn("/v1/ui/models", paths)
+        self.assertIn("/v1/ui/models/search", paths)
+        self.assertIn("/v1/ui/models/repo", paths)
+        self.assertIn("/v1/ui/models/download", paths)
+        self.assertIn("/v1/ui/models/job", paths)
+        self.assertIn("/v1/ui/models/job/cancel", paths)
+        self.assertIn("/v1/ui/models/delete", paths)
         self.assertIn("/v1/ui/chats", paths)
         self.assertIn("/v1/ui/prefs", paths)
         self.assertIn("/v1/ui/backup", paths)
@@ -74,6 +81,13 @@ class UiRoutePrefixTests(unittest.TestCase):
         self.assertIn("require_ui_admin", self._dep_names("/v1/ui/stack-backup/plan"))
         self.assertIn("require_ui_admin", self._dep_names("/v1/ui/stack-backup"))
         self.assertIn("require_ui_admin", self._dep_names("/v1/ui/stack-backup/restore"))
+        self.assertIn("require_ui_admin", self._dep_names("/v1/ui/models"))
+        self.assertIn("require_ui_admin", self._dep_names("/v1/ui/models/search"))
+        self.assertIn("require_ui_admin", self._dep_names("/v1/ui/models/repo"))
+        self.assertIn("require_ui_admin", self._dep_names("/v1/ui/models/download"))
+        self.assertIn("require_ui_admin", self._dep_names("/v1/ui/models/job"))
+        self.assertIn("require_ui_admin", self._dep_names("/v1/ui/models/job/cancel"))
+        self.assertIn("require_ui_admin", self._dep_names("/v1/ui/models/delete"))
 
     def test_logs_tab_is_admin_only(self):
         html = Path(__file__).resolve().parents[1] / "ui" / "static" / "index.html"
@@ -83,6 +97,16 @@ class UiRoutePrefixTests(unittest.TestCase):
         self.assertIn('id="tab-logs"', html_src)
         self.assertIn("logsTab.hidden = !isAdmin", app_src)
         self.assertIn('hash === "logs"', app_src)
+
+    def test_models_tab_is_admin_only(self):
+        html = Path(__file__).resolve().parents[1] / "ui" / "static" / "index.html"
+        app = Path(__file__).resolve().parents[1] / "ui" / "static" / "app.js"
+        html_src = html.read_text(encoding="utf-8")
+        app_src = app.read_text(encoding="utf-8")
+        self.assertIn('id="tab-models"', html_src)
+        self.assertIn("models.js", html_src)
+        self.assertIn("modelsTab.hidden = !isAdmin", app_src)
+        self.assertIn('hash === "models"', app_src)
 
     def test_saver_state_is_not_session_gated(self):
         deps = self._dep_names("/v1/ui/saver/state")

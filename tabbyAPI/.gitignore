@@ -191,6 +191,8 @@ model_profiles/last.json
 model_profiles/gpu_mode.json
 model_profiles/vram_recover.json
 model_profiles/switch_times.local.json
+model_profiles/download_job.json
+model_profiles/hf-*.yml
 deploy/arch/tabby.env
 HOW-TO-ARCH.txt
 

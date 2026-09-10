@@ -9,7 +9,16 @@ import json
 from typing import Any
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import (
     FileResponse,
     HTMLResponse,
@@ -372,6 +381,96 @@ async def ui_gpu(request: Request, _user: str = Depends(require_ui_user)):
         return await apply_gpu_mode(token)
     finally:
         await gate.release()
+
+
+def _models_http(exc):
+    from ui.models import ModelsError
+
+    if isinstance(exc, ModelsError):
+        raise HTTPException(exc.status, str(exc)) from exc
+    raise exc
+
+
+@router.get("/models", include_in_schema=False)
+async def ui_models(_admin: str = Depends(require_ui_admin)):
+    from ui.models import library_state
+
+    return await asyncio.to_thread(library_state)
+
+
+@router.get("/models/search", include_in_schema=False)
+async def ui_models_search(
+    q: str = "",
+    fmt: str = Query("exl3", alias="format"),
+    _admin: str = Depends(require_ui_admin),
+):
+    from ui.models import ModelsError, search_models
+
+    try:
+        return await asyncio.to_thread(search_models, q, fmt)
+    except ModelsError as exc:
+        _models_http(exc)
+
+
+@router.get("/models/repo", include_in_schema=False)
+async def ui_models_repo(
+    repo: str = Query("", alias="id"),
+    repo_id: str = "",
+    revision: str | None = None,
+    _admin: str = Depends(require_ui_admin),
+):
+    from ui.models import ModelsError, inspect_repo
+
+    target = (repo or repo_id or "").strip()
+    try:
+        return await asyncio.to_thread(inspect_repo, target, revision)
+    except ModelsError as exc:
+        _models_http(exc)
+
+
+@router.post("/models/download", include_in_schema=False)
+async def ui_models_download(request: Request, _admin: str = Depends(require_ui_admin)):
+    from ui.models import ModelsError, start_download
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    try:
+        return await asyncio.to_thread(start_download, body)
+    except ModelsError as exc:
+        _models_http(exc)
+
+
+@router.get("/models/job", include_in_schema=False)
+async def ui_models_job(_admin: str = Depends(require_ui_admin)):
+    from ui.models import job_state
+
+    return await asyncio.to_thread(job_state)
+
+
+@router.post("/models/job/cancel", include_in_schema=False)
+async def ui_models_job_cancel(_admin: str = Depends(require_ui_admin)):
+    from ui.models import ModelsError, cancel_download
+
+    try:
+        return await asyncio.to_thread(cancel_download)
+    except ModelsError as exc:
+        _models_http(exc)
+
+
+@router.post("/models/delete", include_in_schema=False)
+async def ui_models_delete(request: Request, _admin: str = Depends(require_ui_admin)):
+    from ui.models import ModelsError, delete_model
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    try:
+        return await asyncio.to_thread(delete_model, body)
+    except ModelsError as exc:
+        _models_http(exc)
 
 
 @router.post("/chat", include_in_schema=False)

@@ -643,7 +643,7 @@ def copy_from_cache(src: Path, dest: Path, kind: str) -> None:
     verify_tree(src, dest)
 
 
-def download_item(item: dict, dest: Path) -> None:
+def download_item(item: dict, dest: Path, tqdm_class=None) -> None:
     try:
         from huggingface_hub import hf_hub_download, snapshot_download
     except ImportError as exc:
@@ -665,7 +665,7 @@ def download_item(item: dict, dest: Path) -> None:
     except Exception:
         pass
     download_label = str(item.get("remote") or repo)
-    tqdm_class = installer_tqdm_class(download_label)
+    progress_cls = tqdm_class or installer_tqdm_class(download_label)
     try:
         if item.get("kind") == "file":
             tmp = dest.parent / f".hf-{dest.name}"
@@ -677,7 +677,7 @@ def download_item(item: dict, dest: Path) -> None:
                     revision=revision,
                     local_dir=str(tmp),
                     token=token,
-                    tqdm_class=tqdm_class,
+                    tqdm_class=progress_cls,
                 )
                 shutil.move(path, dest)
             finally:
@@ -690,9 +690,11 @@ def download_item(item: dict, dest: Path) -> None:
             revision=revision,
             local_dir=str(dest),
             token=token,
-            tqdm_class=tqdm_class,
+            tqdm_class=progress_cls,
         )
     except Exception as exc:
+        if exc.__class__.__name__ == "DownloadCancelled":
+            raise
         hint = ""
         text = str(exc)
         if "401" in text or "403" in text or "gated" in text.lower():
@@ -700,7 +702,14 @@ def download_item(item: dict, dest: Path) -> None:
         raise SystemExit(f"download failed for {repo}: {exc}{hint}") from exc
 
 
-def ensure_item(name: str, item: dict, tabby: Path, comfy: Path, cache_root: Path | None) -> str:
+def ensure_item(
+    name: str,
+    item: dict,
+    tabby: Path,
+    comfy: Path,
+    cache_root: Path | None,
+    tqdm_class=None,
+) -> str:
     dest = dest_path(item, tabby, comfy)
     if is_ready(dest, item):
         note(f"    have {name} ({dest})")
@@ -717,7 +726,7 @@ def ensure_item(name: str, item: dict, tabby: Path, comfy: Path, cache_root: Pat
         raise SystemExit(f"{name} is local-only and was not found in the cache")
     note(f"    download {name} from {repo}")
     note(f"      dest {dest}")
-    download_item(item, dest)
+    download_item(item, dest, tqdm_class=tqdm_class)
     if not is_ready(dest, item):
         raise SystemExit(f"{name} finished but marker files are missing in {dest}")
     return "download"

@@ -75,7 +75,7 @@ SYSTEM_FIELDS = (
     {
         "name": "HF_TOKEN",
         "label": "Hugging Face token",
-        "description": "Used by the installer and fetch_models.py for gated repos.",
+        "description": "Used by the Models tab, the installer, and fetch_models.py for gated repos.",
         "secret": True,
     },
     {

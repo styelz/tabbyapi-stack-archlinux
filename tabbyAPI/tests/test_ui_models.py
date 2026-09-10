@@ -1,0 +1,389 @@
+import json
+import tempfile
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
+
+from ui import models as ui_models
+from ui.models import (
+    ModelPaths,
+    ModelsError,
+    cancel_download,
+    delete_model,
+    hf_folder_name,
+    inspect_repo,
+    is_gguf_only,
+    library_state,
+    matches_format,
+    maybe_write_hf_profile,
+    parse_repo_id,
+    profile_slug,
+    recover_stale_job,
+    sanitize_folder_name,
+    search_models,
+    start_download,
+    write_job,
+)
+
+
+DISK_OK = {
+    "free_bytes": 80 * 1024**3,
+    "total_bytes": 100 * 1024**3,
+    "used_bytes": 20 * 1024**3,
+}
+
+
+def _paths(root: Path) -> ModelPaths:
+    models_dir = root / "models"
+    profiles = root / "model_profiles"
+    comfy = root / "ComfyUI"
+    models_dir.mkdir()
+    profiles.mkdir()
+    (comfy / "models" / "checkpoints").mkdir(parents=True)
+    return ModelPaths(
+        root=root,
+        models_dir=models_dir,
+        profiles_dir=profiles,
+        catalog_path=Path(__file__).resolve().parents[1] / "deploy" / "arch" / "models.json",
+        job_path=profiles / "download_job.json",
+        comfy_dir=comfy,
+    )
+
+
+def _llm_folder(models_dir: Path, name: str, *, seq: int = 8192) -> Path:
+    folder = models_dir / name
+    folder.mkdir()
+    (folder / "config.json").write_text(
+        json.dumps({"max_position_embeddings": seq, "model_type": "qwen2"}),
+        encoding="utf-8",
+    )
+    (folder / "model.safetensors").write_bytes(b"weights")
+    return folder
+
+
+class FakeModel:
+    def __init__(self, repo_id, tags=None, downloads=0, likes=0, gated=False):
+        self.id = repo_id
+        self.tags = tags or []
+        self.downloads = downloads
+        self.likes = likes
+        self.gated = gated
+        self.private = False
+        self.pipeline_tag = "text-generation"
+        self.last_modified = None
+        self.siblings = []
+
+
+class FakeApi:
+    def __init__(self, models=None, refs=None, info=None, sizes=None):
+        self.models = models or []
+        self.refs = refs
+        self.info = info
+        self.sizes = sizes or {}
+        self.list_calls = []
+
+    def list_models(self, **kwargs):
+        self.list_calls.append(kwargs)
+        return list(self.models)
+
+    def model_info(self, repo_id, revision=None, files_metadata=False):
+        if files_metadata:
+            size, files = self.sizes.get((repo_id, revision or "main"), (100, 1))
+            siblings = [
+                SimpleNamespace(rfilename=f"file-{i}.safetensors", size=size // max(files, 1))
+                for i in range(files)
+            ]
+            return SimpleNamespace(
+                id=repo_id,
+                siblings=siblings,
+                tags=["exl3"],
+                gated=False,
+                private=False,
+            )
+        if self.info is not None:
+            return self.info
+        for model in self.models:
+            if model.id == repo_id:
+                return model
+        return FakeModel(repo_id, tags=["exl3"])
+
+    def list_repo_refs(self, repo_id):
+        names = self.refs or ["main", "4.00bpw", "3.00bpw"]
+        return SimpleNamespace(branches=[SimpleNamespace(name=name) for name in names])
+
+
+class ParseAndFilterTests(unittest.TestCase):
+    def test_parse_repo_id_from_url_and_slug(self):
+        self.assertEqual(parse_repo_id("turboderp/Qwen3.5-9B-exl3"), "turboderp/Qwen3.5-9B-exl3")
+        self.assertEqual(
+            parse_repo_id("https://huggingface.co/turboderp/Qwen3.5-9B-exl3"),
+            "turboderp/Qwen3.5-9B-exl3",
+        )
+        self.assertIsNone(parse_repo_id("just words"))
+        self.assertIsNone(parse_repo_id("org/repo/extra"))
+
+    def test_sanitize_rejects_traversal(self):
+        for bad in ("..", "../x", "a/b", "a\\b", "x\0y"):
+            with self.subTest(bad=bad):
+                with self.assertRaises(ModelsError):
+                    sanitize_folder_name(bad)
+
+    def test_hf_folder_name_appends_revision(self):
+        self.assertEqual(
+            hf_folder_name("turboderp/Qwen3.5-9B-exl3", "4.00bpw"),
+            "Qwen3.5-9B-exl3-4.00bpw",
+        )
+        self.assertEqual(hf_folder_name("org/MyModel", "main"), "MyModel")
+
+    def test_search_filter_keeps_exl3_drops_gguf(self):
+        self.assertTrue(matches_format("org/foo-exl3", ["text-generation"], "exl3"))
+        self.assertFalse(matches_format("org/foo-exl2", ["exl2"], "exl3"))
+        self.assertTrue(is_gguf_only("org/foo-gguf", ["gguf"]))
+        self.assertFalse(is_gguf_only("org/foo-exl3", ["exl3", "gguf"]))
+
+    def test_search_models_filters_and_caps(self):
+        api = FakeApi(
+            [
+                FakeModel("org/keep-exl3", ["exl3"], downloads=9),
+                FakeModel("org/skip-gguf", ["gguf"], downloads=99),
+                FakeModel("org/skip-exl2", ["exl2"], downloads=8),
+            ]
+        )
+        payload = search_models("qwen", "exl3", hf_api=api)
+        ids = [row["id"] for row in payload["results"]]
+        self.assertEqual(ids, ["org/keep-exl3"])
+        self.assertTrue(payload["results"][0]["compatible"])
+
+    def test_search_exact_repo_even_if_gguf(self):
+        api = FakeApi([FakeModel("someone/llama-gguf", ["gguf"])])
+        payload = search_models("someone/llama-gguf", "exl3", hf_api=api)
+        self.assertEqual(len(payload["results"]), 1)
+        self.assertFalse(payload["results"][0]["compatible"])
+
+    def test_inspect_repo_lists_quant_revisions(self):
+        api = FakeApi(
+            info=FakeModel("turboderp/Qwen3.5-9B-exl3", ["exl3"]),
+            refs=["main", "4.00bpw", "docs"],
+            sizes={
+                ("turboderp/Qwen3.5-9B-exl3", "main"): (10, 1),
+                ("turboderp/Qwen3.5-9B-exl3", "4.00bpw"): (20, 2),
+            },
+        )
+        payload = inspect_repo("turboderp/Qwen3.5-9B-exl3", hf_api=api)
+        names = [row["name"] for row in payload["revisions"]]
+        self.assertIn("4.00bpw", names)
+        self.assertIn("main", names)
+        self.assertNotIn("docs", names)
+        self.assertTrue(payload["compatible"])
+
+
+class LibraryAndDeleteTests(unittest.TestCase):
+    def setUp(self):
+        ui_models._CANCEL.clear()
+        ui_models._THREAD = None
+        ui_models._ACTIVE_PATHS = None
+
+    def test_library_lists_llm_and_catalog_status(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            paths = _paths(root)
+            _llm_folder(paths.models_dir, "Qwen3.5-9B-exl3-4.00bpw")
+            (paths.profiles_dir / "qwen.yml").write_text(
+                "pretty: Qwen 9B\nmodel:\n  model_name: Qwen3.5-9B-exl3-4.00bpw\n",
+                encoding="utf-8",
+            )
+            data = library_state(paths, loaded="Qwen3.5-9B-exl3-4.00bpw")
+            self.assertEqual(len(data["llms"]), 1)
+            self.assertEqual(data["llms"][0]["profile"], "qwen")
+            self.assertTrue(data["llms"][0]["loaded"])
+            qwen = next(row for row in data["catalog"] if row["id"] == "qwen")
+            self.assertTrue(qwen["installed"])
+            flux = next(row for row in data["catalog"] if row["id"] == "flux")
+            self.assertFalse(flux["installed"])
+            self.assertIn("free_bytes", data["disk"])
+
+    def test_delete_refuses_loaded_and_removes_hf_profile(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            paths = _paths(root)
+            _llm_folder(paths.models_dir, "Custom-exl3-4.00bpw")
+            alias = maybe_write_hf_profile(
+                "Custom-exl3-4.00bpw",
+                repo_id="org/Custom-exl3",
+                revision="4.00bpw",
+                paths=paths,
+            )
+            self.assertTrue((paths.profiles_dir / f"{alias}.yml").is_file())
+            with self.assertRaises(ModelsError) as caught:
+                delete_model(
+                    {"kind": "llm", "id": "Custom-exl3-4.00bpw"},
+                    paths=paths,
+                    loaded="Custom-exl3-4.00bpw",
+                )
+            self.assertEqual(caught.exception.status, 409)
+            delete_model(
+                {"kind": "llm", "id": "Custom-exl3-4.00bpw"},
+                paths=paths,
+                loaded="other",
+            )
+            self.assertFalse((paths.models_dir / "Custom-exl3-4.00bpw").exists())
+            self.assertFalse((paths.profiles_dir / f"{alias}.yml").exists())
+
+    def test_delete_does_not_remove_shipped_profile(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            paths = _paths(root)
+            _llm_folder(paths.models_dir, "Qwen3.5-9B-exl3-4.00bpw")
+            shipped = paths.profiles_dir / "qwen.yml"
+            shipped.write_text(
+                "pretty: Qwen\nmodel:\n  model_name: Qwen3.5-9B-exl3-4.00bpw\n",
+                encoding="utf-8",
+            )
+            delete_model(
+                {"kind": "llm", "id": "Qwen3.5-9B-exl3-4.00bpw"},
+                paths=paths,
+                loaded="",
+            )
+            self.assertTrue(shipped.is_file())
+
+    def test_delete_image_unlinks_catalog_file(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            paths = _paths(root)
+            dest = paths.comfy_dir / "models" / "checkpoints" / "flux1-schnell-fp8.safetensors"
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"flux")
+            result = delete_model({"kind": "image", "id": "flux"}, paths=paths, loaded="")
+            self.assertTrue(result["ok"])
+            self.assertFalse(dest.exists())
+
+    def test_profile_slug_collision_increments(self):
+        self.assertEqual(profile_slug("Qwen3.5-9B-exl3-4.00bpw"), "qwen3-5-9b-exl3-4-00bpw")
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            paths = _paths(root)
+            _llm_folder(paths.models_dir, "Foo-exl3")
+            (paths.profiles_dir / "hf-foo-exl3.yml").write_text(
+                "pretty: other\nmodel:\n  model_name: Other\n",
+                encoding="utf-8",
+            )
+            alias = maybe_write_hf_profile("Foo-exl3", paths=paths)
+            self.assertEqual(alias, "hf-foo-exl3-2")
+
+
+class JobStateTests(unittest.TestCase):
+    def setUp(self):
+        ui_models._CANCEL.clear()
+        ui_models._THREAD = None
+        ui_models._ACTIVE_PATHS = None
+
+    def test_busy_job_returns_409(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            paths = _paths(root)
+            write_job({"id": "1", "status": "running", "dests": []}, paths)
+            alive = mock.Mock()
+            alive.is_alive.return_value = True
+            with mock.patch.object(ui_models, "_THREAD", alive):
+                with self.assertRaises(ModelsError) as caught:
+                    start_download({"kind": "catalog", "pick_id": "flux"}, paths=paths, spawn=False)
+            self.assertEqual(caught.exception.status, 409)
+
+    def test_catalog_already_installed_409(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            paths = _paths(root)
+            dest = paths.comfy_dir / "models" / "checkpoints" / "flux1-schnell-fp8.safetensors"
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"flux")
+            with self.assertRaises(ModelsError) as caught:
+                start_download({"kind": "catalog", "pick_id": "flux"}, paths=paths, spawn=False)
+            self.assertEqual(caught.exception.status, 409)
+
+    def test_start_hf_job_without_spawn(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            paths = _paths(root)
+            api = FakeApi(sizes={("org/My-exl3", "4.00bpw"): (50, 1)})
+            with mock.patch.object(ui_models, "disk_usage_for", return_value=DISK_OK):
+                payload = start_download(
+                    {
+                        "kind": "hf",
+                        "repo_id": "org/My-exl3",
+                        "revision": "4.00bpw",
+                        "size_bytes": 50,
+                    },
+                    paths=paths,
+                    spawn=False,
+                    hf_api=api,
+                )
+            job = payload["job"]
+            self.assertEqual(job["status"], "queued")
+            self.assertEqual(job["folder"], "My-exl3-4.00bpw")
+            self.assertTrue(job["dests"][0].endswith("My-exl3-4.00bpw"))
+
+    def test_run_hf_job_writes_profile(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            paths = _paths(root)
+            with mock.patch.object(ui_models, "disk_usage_for", return_value=DISK_OK):
+                payload = start_download(
+                    {
+                        "kind": "hf",
+                        "repo_id": "org/My-exl3",
+                        "revision": "main",
+                        "size_bytes": 10,
+                    },
+                    paths=paths,
+                    spawn=False,
+                )
+            job = payload["job"]
+
+            def fake_download(item, dest, tqdm_class=None):
+                dest.mkdir(parents=True, exist_ok=True)
+                (dest / "config.json").write_text("{}", encoding="utf-8")
+                (dest / "model.safetensors").write_bytes(b"w")
+
+            fm = ui_models.fetch_models_mod()
+            ui_models._ACTIVE_PATHS = paths
+            with mock.patch.object(fm, "download_item", side_effect=fake_download):
+                ui_models._run_job(job["id"])
+            finished = ui_models.read_job(paths)
+            self.assertEqual(finished["status"], "done")
+            self.assertTrue((paths.models_dir / "My-exl3" / "config.json").is_file())
+            self.assertTrue((paths.profiles_dir / "hf-my-exl3.yml").is_file())
+
+    def test_cancel_sets_event(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            paths = _paths(root)
+            write_job({"id": "1", "status": "running"}, paths)
+            cancel_download(paths)
+            self.assertTrue(ui_models._CANCEL.is_set())
+            self.assertEqual(ui_models.read_job(paths)["status"], "cancelling")
+
+    def test_recover_stale_running_job(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            paths = _paths(root)
+            write_job({"id": "1", "status": "running"}, paths)
+            job = recover_stale_job(paths)
+            self.assertEqual(job["status"], "error")
+
+    def test_delete_refuses_active_download_dest(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            paths = _paths(root)
+            folder = _llm_folder(paths.models_dir, "Downloading")
+            write_job({"id": "1", "status": "running", "dests": [str(folder)]}, paths)
+            alive = mock.Mock()
+            alive.is_alive.return_value = True
+            with mock.patch.object(ui_models, "_THREAD", alive):
+                with self.assertRaises(ModelsError) as caught:
+                    delete_model({"kind": "llm", "id": "Downloading"}, paths=paths, loaded="")
+            self.assertEqual(caught.exception.status, 409)
+
+
+if __name__ == "__main__":
+    unittest.main()

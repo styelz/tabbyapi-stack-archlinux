@@ -32,7 +32,7 @@ Re-run is safe: existing weights are skipped. USB caches, unattended install, an
 - An OpenAI-compatible API for local chat, tool use, vision, and embeddings
 - Switchable language-model profiles tuned for a 12 GB NVIDIA card
 - Flux Schnell and Qwen-Image through ComfyUI
-- A browser UI with Chat, Code, Status, Gallery, Logs, and user accounts
+- A browser UI with Chat, Code, Status, Models, Gallery, Logs, and user accounts
 
 The language model and ComfyUI share one GPU. The stack unloads one before starting the other. The CPU embedding model can stay loaded.
 
@@ -57,6 +57,7 @@ That first account is the administrator. **Users** creates extra Tabby-only acco
 | Page | What it is for |
 |---|---|
 | **Status** | Profile, GPU mode, queue, health, restart, updates, stack backup |
+| **Models** | Administrator: search Hugging Face for EXL2/EXL3, download catalog LLMs and Flux/Qwen-Image, delete unused weights |
 | **Gallery** | Generated images (administrators see every account) |
 | **Logs** | TabbyAPI and ComfyUI output |
 | **Users** | Administrator: create, reset, or delete Tabby accounts |

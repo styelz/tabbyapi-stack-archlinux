@@ -137,6 +137,7 @@
     <nav class="tabs" aria-label="Main">
       <a href="#chat" data-page="chat" class="tab is-active">Chat</a>
       <a href="#status" data-page="status" class="tab">Status</a>
+      <a href="#models" data-page="models" class="tab" id="tab-models" hidden>Models</a>
       <a href="#gallery" data-page="gallery" class="tab">Gallery</a>
       <a href="#logs" data-page="logs" class="tab" id="tab-logs" hidden>Logs</a>
       <a href="#users" data-page="users" class="tab" id="tab-users" hidden>Users</a>
@@ -219,6 +220,7 @@
   <main class="app-main">
     <section id="page-chat" class="page is-active" data-page="chat"></section>
     <section id="page-status" class="page" data-page="status" hidden></section>
+    <section id="page-models" class="page" data-page="models" hidden></section>
     <section id="page-gallery" class="page" data-page="gallery" hidden></section>
     <section id="page-logs" class="page" data-page="logs" hidden></section>
     <section id="page-users" class="page" data-page="users" hidden></section>
@@ -226,7 +228,7 @@
   </main>
 
   <script>
-    ["highlight.js", "utils.js", "xterm.js", "xterm-addon-fit.js", "monaco.js", "lsp.js", "palette.js", "logs.js", "chat.js", "status.js", "gallery.js", "users.js", "settings.js", "app.js"].forEach(function (name) {
+    ["highlight.js", "utils.js", "xterm.js", "xterm-addon-fit.js", "monaco.js", "lsp.js", "palette.js", "logs.js", "chat.js", "status.js", "models.js", "gallery.js", "users.js", "settings.js", "app.js"].forEach(function (name) {
       document.write('<script src="' + TABBY_UI_BASE + "/assets/" + name + "?v=" + TABBY_UI_ASSET_V + '"><\/script>');
     });
   </script>
