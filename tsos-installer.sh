@@ -71,6 +71,7 @@ CONFIG_PROVIDED=0
 RESUME_TABBY=0
 TSOS_SKIP_SELF_UPDATE="${TSOS_SKIP_SELF_UPDATE:-0}"
 INSTALL_MODE="${INSTALL_MODE:-}" # simple | advanced | restore | empty (ask)
+INSTALL_MODE_FROM_CLI=""
 ENCRYPT_FROM_CLI=""
 OMARCHY_FROM_CLI=""
 HOST_FROM_CLI=""
@@ -1075,14 +1076,28 @@ Full log:
 }
 
 ui_cancel() {
-  die "Installer cancelled."
+  if [[ "${TSOS_UDEV_PAUSED:-0}" == 1 ]]; then
+    udevadm control --start-exec-queue 2>/dev/null || true
+    TSOS_UDEV_PAUSED=0
+  fi
+  if declare -F gauge_stop >/dev/null; then
+    gauge_stop || true
+  fi
+  printf '==> Installer cancelled.\n' >>"${TSOS_LOG:-/dev/null}" || true
+  printf 'Installer cancelled.\n' >&2
+  exit 0
 }
 
 # Widgets abort the installer on Esc unless a review-hub editor set this.
+# $(ui_menu) / $(ui_input) run in a subshell and cannot exit the installer;
+# those callers handle a non-zero status (go back or ui_cancel).
 UI_ALLOW_BACK=0
 
 _ui_fail() {
   if [[ "${UI_ALLOW_BACK:-0}" == 1 ]]; then
+    return 1
+  fi
+  if ((BASH_SUBSHELL > 0)); then
     return 1
   fi
   ui_cancel
@@ -2091,7 +2106,7 @@ prompt_settings_restore() {
     case "$rc" in
       0) ;;
       2) continue ;;
-      *) ui_cancel ;;
+      *) return 1 ;;
     esac
     show_restore_summary
     if [[ -n "${DISK:-}" ]]; then
@@ -2100,6 +2115,8 @@ prompt_settings_restore() {
     if ask_install_disk "Target disk"; then
       break
     fi
+    # Esc on the disk picker with a CLI backup would otherwise loop forever.
+    [[ -n "${BACKUP_FROM_CLI:-}" ]] && return 1
   done
 }
 
@@ -2472,6 +2489,7 @@ Choose Restore from backup or use this path as the weights source." || true
 pick_install_mode() {
   if [[ -n "${INSTALL_MODE:-}" ]]; then
     valid_install_mode "$INSTALL_MODE" || die "invalid INSTALL_MODE: $INSTALL_MODE (simple, advanced, or restore)"
+    INSTALL_MODE_FROM_CLI=1
     return 0
   fi
   local choice
@@ -2490,11 +2508,14 @@ Restore from backup reuses a Status / tsctl stack backup
 asks which disk to wipe.
 
 Mount makes another USB drive or filesystem available before setup.
-Omarchy is not installed in Simple or Restore." \
+Omarchy is not installed in Simple or Restore.
+
+Esc on this page leaves the installer. Esc inside Simple,
+Advanced, or Restore returns here." \
         simple "Simple — disk, hostname, user, timezone, weights, this PC vs LAN" \
         advanced "Advanced — every setting" \
         restore "Restore from backup — models, config, and saved extras" \
-        mount "Mount a drive or device — backups or model weights")
+        mount "Mount a drive or device — backups or model weights") || ui_cancel
     else
       printf '\n' >/dev/tty
       printf '%s\n' "Simple (recommended): disk, hostname, user, timezone, weights, this PC vs LAN." >/dev/tty
@@ -2520,29 +2541,42 @@ Omarchy is not installed in Simple or Restore." \
 }
 
 prompt_settings() {
-  pick_install_mode
-  if [[ "$INSTALL_MODE" == restore ]]; then
-    apply_simple_defaults
-    INSTALL_MODE=restore
-    maybe_detect_timezone
-    prompt_settings_restore
-    return 0
-  fi
-  if [[ "$INSTALL_MODE" == simple ]]; then
-    apply_simple_defaults
-  fi
-  maybe_detect_timezone
-  if [[ "$INSTALL_MODE" == simple ]]; then
-    if ((USE_TUI)); then
-      prompt_settings_simple_tui
+  while true; do
+    pick_install_mode
+    if [[ "$INSTALL_MODE" == restore ]]; then
+      apply_simple_defaults
+      INSTALL_MODE=restore
+      maybe_detect_timezone
+      if prompt_settings_restore; then
+        return 0
+      fi
+    elif [[ "$INSTALL_MODE" == simple ]]; then
+      apply_simple_defaults
+      maybe_detect_timezone
+      if ((USE_TUI)); then
+        if prompt_settings_simple_tui; then
+          return 0
+        fi
+      else
+        prompt_settings_simple_text
+        return 0
+      fi
     else
-      prompt_settings_simple_text
+      maybe_detect_timezone
+      if ((USE_TUI)); then
+        if prompt_settings_tui; then
+          return 0
+        fi
+      else
+        prompt_settings_text
+        return 0
+      fi
     fi
-  elif ((USE_TUI)); then
-    prompt_settings_tui
-  else
-    prompt_settings_text
-  fi
+    if [[ -n "${INSTALL_MODE_FROM_CLI:-}" ]]; then
+      ui_cancel
+    fi
+    INSTALL_MODE=""
+  done
 }
 
 prompt_settings_simple_text() {
@@ -2940,7 +2974,7 @@ hub_edit_access() {
 }
 
 # Review menu: every setting is a row. Esc on a row returns here.
-# Esc on this menu aborts. Start install leaves the loop.
+# Esc on this menu returns to Setup type. Start install leaves the loop.
 prompt_review_hub() {
   local kind=$1 choice v weight_gib model_desc
   TABBY_NETWORK_HOST="${TABBY_NETWORK_HOST:-0.0.0.0}"
@@ -2980,10 +3014,10 @@ prompt_review_hub() {
 "Open a row to change it. Choose Start install when the plan
 looks right.
 
-Esc aborts. Next you type the disk path to confirm the wipe.
-After that, the install screen stays up: steps, a progress
-bar, and the live log." \
-      "${items[@]}") || ui_cancel
+Esc goes back to Setup type. Next you type the disk path to
+confirm the wipe. After that, the install screen stays up:
+steps, a progress bar, and the live log." \
+      "${items[@]}") || return 1
     UI_ALLOW_BACK=1
     case "$choice" in
       disk) ask_install_disk "Target disk" || true ;;
@@ -3025,6 +3059,8 @@ bar, and the live log." \
 }
 
 prompt_settings_simple_tui() {
+  local old_allow=${UI_ALLOW_BACK:-0}
+  UI_ALLOW_BACK=1
   ui_msg "Simple setup" \
 "This installs Arch and tabbyapi-stack on the disk you pick.
 
@@ -3044,7 +3080,9 @@ tunnels are under Advanced.
 After the wipe confirm, the install screen stays up with
 the step list, a progress bar, and the live log.
 
-Esc on the review menu cancels. Esc on a setting goes back."
+Esc on the review menu goes back to Setup type. Esc on a
+setting returns to the review menu." || { UI_ALLOW_BACK=$old_allow; return 1; }
+  UI_ALLOW_BACK=$old_allow
 
   prompt_timezone || true
   if [[ -z "${TABBY_CACHE:-}" && "${TABBY_MODELS:-core}" == core ]]; then
@@ -3131,6 +3169,8 @@ on TabbyAPI here at 127.0.0.1:${TABBY_NETWORK_PORT}."
 }
 
 prompt_settings_tui() {
+  local old_allow=${UI_ALLOW_BACK:-0}
+  UI_ALLOW_BACK=1
   ui_msg "What this installer does" \
 "Install Arch Linux from this live ISO, then tabbyapi-stack (Python,
 venvs, model weights) before you reboot.
@@ -3149,7 +3189,9 @@ wipe. After that, the install screen stays up: steps, a
 progress bar, elapsed time, and the live log. install.sh
 does not open a second dialog.
 
-Esc on the review menu cancels. Esc on a setting goes back."
+Esc on the review menu goes back to Setup type. Esc on a
+setting returns to the review menu." || { UI_ALLOW_BACK=$old_allow; return 1; }
+  UI_ALLOW_BACK=$old_allow
 
   prompt_review_hub advanced
 }
@@ -3693,6 +3735,12 @@ self_test() {
     printf 'FAIL install mode should accept restore\n' >&2
     failed=1
   fi
+  if ( UI_ALLOW_BACK=0; _ui_fail ); then
+    printf 'FAIL _ui_fail should return 1 in a subshell\n' >&2
+    failed=1
+  else
+    printf 'ok   _ui_fail returns in a subshell (no cancel)\n'
+  fi
   if valid_mount_target /run/media/tsos/backup &&
      ! valid_mount_target /mnt/backup &&
      ! valid_mount_target /run/media/tsos/../backup; then
@@ -4192,7 +4240,7 @@ pick_disk_if_needed() {
     done
     DISK=$(ui_menu "Target disk" \
 "This disk will be wiped. The live ISO device is hidden." \
-      "${args[@]}")
+      "${args[@]}") || ui_cancel
     return 0
   fi
   printf 'Available disks (the live ISO device is hidden):\n' >/dev/tty
@@ -4247,7 +4295,7 @@ ${disk_tree}
 $(print_plan)
 
 Anything else aborts." \
-      "")
+      "") || ui_cancel
   else
     printf '\n' >/dev/tty
     printf '%s\n' "Settings are done. The installer is waiting for a wipe confirmation." >/dev/tty

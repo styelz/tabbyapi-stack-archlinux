@@ -41,6 +41,7 @@ USE_TUI=0
 INTERACTIVE=1
 UPDATE_MODE=0
 INSTALL_MODE="${INSTALL_MODE:-}" # simple | advanced | restore | empty (ask)
+INSTALL_MODE_FROM_CLI=""
 TABBY_BACKUP="${TABBY_BACKUP:-}"
 
 usage_install() {
@@ -108,12 +109,18 @@ ui_cancel() {
   exit 1
 }
 
+# Widgets abort the installer on Esc unless a review-hub editor set this.
+# $(ui_menu) / $(ui_input) run in a subshell and cannot exit the installer;
+# those callers handle a non-zero status (go back or ui_cancel).
 UI_ALLOW_BACK=0
 UI_ROWS=24
 UI_COLS=80
 
 _ui_fail() {
   if [[ "${UI_ALLOW_BACK:-0}" == 1 ]]; then
+    return 1
+  fi
+  if ((BASH_SUBSHELL > 0)); then
     return 1
   fi
   ui_cancel
@@ -2222,6 +2229,7 @@ pick_install_mode() {
       echo "invalid INSTALL_MODE: $INSTALL_MODE (simple, advanced, or restore)" >&2
       exit 1
     }
+    INSTALL_MODE_FROM_CLI=1
     return 0
   fi
   local choice
@@ -2238,10 +2246,13 @@ Restore from backup reuses a Status / tsctl stack backup
 (models plus any saved config, users, and chats) and skips
 the other questions.
 
-You can re-run later and pick Advanced to change those." \
+You can re-run later and pick Advanced to change those.
+
+Esc on this page leaves the installer. Esc inside Simple,
+Advanced, or Restore returns here." \
     simple "Simple — this PC vs LAN, minimal models + extras" \
     advanced "Advanced — every setting" \
-    restore "Restore from backup — models, config, and saved extras")"
+    restore "Restore from backup — models, config, and saved extras")" || ui_cancel
   INSTALL_MODE="${choice:-simple}"
   valid_install_mode "$INSTALL_MODE" || INSTALL_MODE=simple
 }
@@ -2256,7 +2267,7 @@ prompt_restore_install() {
     case "$rc" in
       0) ;;
       2) continue ;;
-      *) ui_cancel ;;
+      *) return 1 ;;
     esac
     apply_choices
     apply_network_defaults
@@ -2276,6 +2287,8 @@ the models. Only this summary is shown — no other questions." || true
 }
 
 prompt_simple_install() {
+  local old_allow=${UI_ALLOW_BACK:-0}
+  UI_ALLOW_BACK=1
   ui_msg "Simple setup" \
 "tabbyapi-stack: local OpenAI-compatible API for coding and agents,
 plus ComfyUI image generation on Arch.
@@ -2292,7 +2305,9 @@ Needed
   • Arch Linux, your user (not root), internet
   • NVIDIA GPU (docs assume 12 GB)
 
-Esc on the review menu cancels. Esc on a setting goes back."
+Esc on the review menu goes back to Setup type. Esc on a
+setting returns to the review menu." || { UI_ALLOW_BACK=$old_allow; return 1; }
+  UI_ALLOW_BACK=$old_allow
 
   DEST="${TABBY_INSTALL_ROOT:-$DEFAULT_DEST}"
   DEST="${DEST:-$DEFAULT_DEST}"
@@ -2343,10 +2358,10 @@ Esc on the review menu cancels. Esc on a setting goes back."
   Models:   ${MODEL_SET}
   Screensaver: ${SAVER_CONFIRM}
 
-Esc aborts." \
+Esc goes back to Setup type." \
       access "$(printf '%s' "$access" | cut -c1-48)" \
       models "$(printf '%s' "$model_desc" | cut -c1-48)" \
-      go "Start install") || ui_cancel
+      go "Start install") || return 1
     case "$choice" in
       access)
         UI_ALLOW_BACK=1
@@ -3067,6 +3082,8 @@ Default 7. Allowed range is 1–365." \
 }
 
 prompt_advanced_install() {
+  local old_allow=${UI_ALLOW_BACK:-0}
+  UI_ALLOW_BACK=1
   if [[ "${TABBY_ISO_CHROOT:-}" == 1 ]]; then
     ui_msg "tabbyapi-stack" \
 "Arch is on the disk. Dest is already
@@ -3074,7 +3091,10 @@ prompt_advanced_install() {
 The weights cache was set before the wipe (or Hugging Face).
 
 A review menu lists models, listen address, optional public
-URL / SSH, screensaver, and auto-update. Open a row to change it."
+URL / SSH, screensaver, and auto-update. Open a row to change it.
+
+Esc on the review menu goes back. Esc on a setting returns
+to the review menu." || { UI_ALLOW_BACK=$old_allow; return 1; }
     DEST="${TABBY_INSTALL_ROOT:-$DEFAULT_DEST}"
     DEST="${DEST:-$DEFAULT_DEST}"
     WIN_ROOT="${TABBY_CACHE:-}"
@@ -3101,10 +3121,12 @@ then Start install.
 Source: ${TABBY_SRC}
 More detail: ${SCRIPT_DIR}/README.md
 
-Esc on the review menu cancels. Esc on a setting goes back."
+Esc on the review menu goes back to Setup type. Esc on a
+setting returns to the review menu." || { UI_ALLOW_BACK=$old_allow; return 1; }
     DEST="${TABBY_INSTALL_ROOT:-$DEFAULT_DEST}"
     WIN_ROOT="${TABBY_CACHE:-}"
   fi
+  UI_ALLOW_BACK=$old_allow
   MODEL_SET="${TABBY_MODELS:-core}"
   apply_network_defaults
   apply_saver_defaults
@@ -3143,8 +3165,9 @@ Esc on the review menu cancels. Esc on a setting goes back."
 "Open a row to change it. Choose Start install when the plan
 looks right.
 
-Esc aborts. The next screen is a progress bar and the live log." \
-      "${items[@]}") || ui_cancel
+Esc goes back to Setup type. The next screen is a progress
+bar and the live log." \
+      "${items[@]}") || return 1
     UI_ALLOW_BACK=1
     case "$choice" in
       dest) inst_edit_dest ;;
@@ -3256,14 +3279,20 @@ if [[ "$INTERACTIVE" -eq 0 ]]; then
     exit 1
   fi
 else
-  pick_install_mode
-  if [[ "$INSTALL_MODE" == restore ]]; then
-    prompt_restore_install
-  elif [[ "$INSTALL_MODE" == simple ]]; then
-    prompt_simple_install
-  else
-    prompt_advanced_install
-  fi
+  while true; do
+    pick_install_mode
+    if [[ "$INSTALL_MODE" == restore ]]; then
+      prompt_restore_install && break
+    elif [[ "$INSTALL_MODE" == simple ]]; then
+      prompt_simple_install && break
+    else
+      prompt_advanced_install && break
+    fi
+    if [[ -n "${INSTALL_MODE_FROM_CLI:-}" ]]; then
+      ui_cancel
+    fi
+    INSTALL_MODE=""
+  done
 fi
 
 
