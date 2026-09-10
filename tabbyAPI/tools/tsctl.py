@@ -258,6 +258,10 @@ def api_unit(action: str) -> int:
         return 1
     done = {"start": "Started", "stop": "Stopped", "restart": "Restarted"}[action]
     print(f"{done} tabbyapi.")
+    if action == "restart":
+        from restart_stack import maybe_restart_screensaver
+
+        maybe_restart_screensaver()
     return 0
 
 

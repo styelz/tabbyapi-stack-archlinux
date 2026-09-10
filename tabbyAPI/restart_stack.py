@@ -1,12 +1,14 @@
 """Bounce TabbyAPI (and Comfy if needed) after a chat ``restart``.
 
 Spawned detached so the chat reply can flush before this process is killed.
+Also refreshes the TTY screensaver when its files are newer than the process.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -14,6 +16,12 @@ from pathlib import Path
 
 JOBS_PERSIST = Path(__file__).resolve().parent / "pasted-images" / "mcp_jobs.json"
 RESTART_ABANDON_REASON = "TabbyAPI restarted before this job finished."
+_TABBY = Path(__file__).resolve().parent
+SAVER_SOURCES = (
+    _TABBY / "deploy/arch/tabby-saver.py",
+    _TABBY / "deploy/arch/tabby-saver.service",
+    Path("/etc/systemd/system/tabby-saver.service"),
+)
 
 
 def abandon_persisted_jobs(
@@ -56,6 +64,103 @@ def abandon_persisted_jobs(
     return changed
 
 
+def _unit_main_pid(unit: str = "tabby-saver") -> int:
+    try:
+        proc = subprocess.run(
+            ["systemctl", "show", "-p", "MainPID", "--value", unit],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return 0
+    try:
+        return int((proc.stdout or "").strip() or "0")
+    except ValueError:
+        return 0
+
+
+def _unit_enabled(unit: str = "tabby-saver") -> bool:
+    try:
+        proc = subprocess.run(
+            ["systemctl", "is-enabled", "--quiet", unit],
+            capture_output=True,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return proc.returncode == 0
+
+
+def _newest_saver_mtime(paths: tuple[Path, ...] | None = None) -> float:
+    newest = 0.0
+    for path in paths or SAVER_SOURCES:
+        try:
+            newest = max(newest, path.stat().st_mtime)
+        except OSError:
+            pass
+    return newest
+
+
+def screensaver_needs_restart(
+    *,
+    force: bool = False,
+    pid: int | None = None,
+    started: float | None = None,
+    newest: float | None = None,
+) -> bool:
+    """True when the kiosk is running files older than the tree, or force."""
+    if force:
+        return True
+    if pid is None:
+        pid = _unit_main_pid()
+    if pid <= 0:
+        return False
+    if started is None:
+        try:
+            started = os.stat(f"/proc/{pid}").st_ctime
+        except OSError:
+            return False
+    if newest is None:
+        newest = _newest_saver_mtime()
+    return newest > started + 0.25
+
+
+def maybe_restart_screensaver(*, force: bool | None = None) -> bool:
+    """Restart system tabby-saver when this pull changed it or the process is stale.
+
+    force defaults to TABBY_SAVER_CHANGED=1 from update.sh. A Status / chat
+    API restart leaves force off and still bounces a kiosk older than the files.
+    """
+    if force is None:
+        force = str(os.environ.get("TABBY_SAVER_CHANGED") or "").strip() == "1"
+    pid = _unit_main_pid()
+    if not screensaver_needs_restart(force=force, pid=pid):
+        return False
+    if pid <= 0 and not _unit_enabled():
+        return False
+    action = "restart" if pid > 0 else "start"
+    try:
+        proc = subprocess.run(
+            ["sudo", "-n", "systemctl", action, "tabby-saver"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        print(f"WARNING: could not {action} tabby-saver: {exc}", file=sys.stderr)
+        return False
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "").strip() or f"exit {proc.returncode}"
+        print(f"WARNING: could not {action} tabby-saver: {err}", file=sys.stderr)
+        return False
+    print(f"{action.capitalize()}ed tabby-saver (screensaver files updated).", flush=True)
+    return True
+
+
 def restart_units(mode: str = "llm") -> int:
     """Stop or restart user units. mode is llm or comfy."""
     from common.gpu_mode import user_systemd_env
@@ -75,7 +180,9 @@ def restart_units(mode: str = "llm") -> int:
     else:
         subprocess.run(["systemctl", "--user", "stop", "comfyui"], check=False, env=env)
     subprocess.run(["systemctl", "--user", "reset-failed", "tabbyapi"], check=False, env=env)
-    return subprocess.run(["systemctl", "--user", "restart", "tabbyapi"], env=env).returncode
+    rc = subprocess.run(["systemctl", "--user", "restart", "tabbyapi"], env=env).returncode
+    maybe_restart_screensaver()
+    return rc
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -83,7 +190,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--delay", type=float, default=1.5)
     parser.add_argument("--mode", default="llm", choices=("llm", "comfy"))
     parser.add_argument("--lock", type=Path, default=None)
+    parser.add_argument(
+        "--saver-if-updated",
+        action="store_true",
+        help="Only bounce tabby-saver when its files are newer (or TABBY_SAVER_CHANGED=1)",
+    )
     args = parser.parse_args(argv)
+    if args.saver_if_updated:
+        maybe_restart_screensaver()
+        return 0
     if args.delay > 0:
         time.sleep(args.delay)
     if args.lock is not None:

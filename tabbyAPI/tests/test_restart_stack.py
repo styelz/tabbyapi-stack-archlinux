@@ -11,7 +11,10 @@ from endpoints.OAI.types.chat_completion import ChatCompletionMessage, ChatCompl
 
 class RestartStackTests(unittest.TestCase):
     def test_restart_units_llm_stops_comfy(self):
-        with mock.patch("restart_stack.subprocess.run") as run:
+        with (
+            mock.patch("restart_stack.subprocess.run") as run,
+            mock.patch("restart_stack.maybe_restart_screensaver", return_value=False),
+        ):
             run.return_value = mock.Mock(returncode=0)
             self.assertEqual(restart_stack.restart_units("llm"), 0)
         cmds = [call.args[0] for call in run.call_args_list]
@@ -19,13 +22,70 @@ class RestartStackTests(unittest.TestCase):
         self.assertEqual(cmds[-1], ["systemctl", "--user", "restart", "tabbyapi"])
 
     def test_restart_units_comfy_restarts_both(self):
-        with mock.patch("restart_stack.subprocess.run") as run:
+        with (
+            mock.patch("restart_stack.subprocess.run") as run,
+            mock.patch("restart_stack.maybe_restart_screensaver", return_value=False),
+        ):
             run.return_value = mock.Mock(returncode=0)
             restart_stack.restart_units("comfy")
         cmds = [call.args[0] for call in run.call_args_list]
         self.assertEqual(cmds[0], ["systemctl", "--user", "reset-failed", "comfyui"])
         self.assertEqual(cmds[1], ["systemctl", "--user", "restart", "comfyui"])
         self.assertEqual(cmds[-1], ["systemctl", "--user", "restart", "tabbyapi"])
+
+    def test_restart_units_refreshes_stale_screensaver(self):
+        with (
+            mock.patch("restart_stack.subprocess.run") as run,
+            mock.patch("restart_stack.maybe_restart_screensaver") as saver,
+        ):
+            run.return_value = mock.Mock(returncode=0)
+            restart_stack.restart_units("llm")
+        saver.assert_called_once_with()
+
+    def test_screensaver_needs_restart_when_files_are_newer(self):
+        self.assertTrue(
+            restart_stack.screensaver_needs_restart(force=True, pid=0)
+        )
+        self.assertFalse(
+            restart_stack.screensaver_needs_restart(force=False, pid=0)
+        )
+        self.assertTrue(
+            restart_stack.screensaver_needs_restart(
+                force=False, pid=9, started=100.0, newest=200.0
+            )
+        )
+        self.assertFalse(
+            restart_stack.screensaver_needs_restart(
+                force=False, pid=9, started=200.0, newest=100.0
+            )
+        )
+
+    def test_maybe_restart_screensaver_restarts_stale_unit(self):
+        with (
+            mock.patch("restart_stack._unit_main_pid", return_value=42),
+            mock.patch("restart_stack.screensaver_needs_restart", return_value=True),
+            mock.patch("restart_stack.subprocess.run") as run,
+        ):
+            run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
+            self.assertTrue(restart_stack.maybe_restart_screensaver(force=False))
+        self.assertEqual(
+            run.call_args.args[0],
+            ["sudo", "-n", "systemctl", "restart", "tabby-saver"],
+        )
+
+    def test_maybe_restart_screensaver_skips_current_process(self):
+        with (
+            mock.patch("restart_stack._unit_main_pid", return_value=42),
+            mock.patch("restart_stack.screensaver_needs_restart", return_value=False),
+            mock.patch("restart_stack.subprocess.run") as run,
+        ):
+            self.assertFalse(restart_stack.maybe_restart_screensaver(force=False))
+        run.assert_not_called()
+
+    def test_saver_if_updated_flag_skips_api_restart(self):
+        with mock.patch("restart_stack.maybe_restart_screensaver") as saver:
+            self.assertEqual(restart_stack.main(["--saver-if-updated"]), 0)
+        saver.assert_called_once_with()
 
     def test_main_unlinks_lock_after_delay(self):
         with tempfile.TemporaryDirectory() as raw:

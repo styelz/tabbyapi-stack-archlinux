@@ -42,6 +42,8 @@ class UpdateShRestartOptionTests(unittest.TestCase):
         self.assertIn("install_tabby_saver", src)
         self.assertIn("export_saver_changed", src)
         self.assertIn("TABBY_SAVER_CHANGED", src)
+        self.assertIn("restart_stack.py", src)
+        self.assertIn("--saver-if-updated", src)
         self.assertIn("systemctl restart tabby-saver", src)
         self.assertIn("saver_files=", src)
         self.assertIn("fetch --progress origin", src)

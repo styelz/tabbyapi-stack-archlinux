@@ -30,7 +30,9 @@ Options
                 Docker rebuild. A TTY asks before restarting tabbyapi
                 (default Skip unless API Python changed). Status Update git
                 does the same in the UI. tabby-saver restarts on its own
-                when the screensaver files in that pull changed.
+                when the screensaver files in that pull changed. A later
+                API restart does the same if those files are newer than
+                the running kiosk.
   --all         Pull, then apply code, Python deps, and reload tabbyapi.
   --comfy       Also git pull ComfyUI and ComfyUI-GGUF. Update all then
                 reinstalls their Python requirements; git-only only pulls.
@@ -715,40 +717,49 @@ install_tabby_saver() {
   [[ -f "$src" ]] || return 0
   if [[ ! -f "$DEST/tabbyAPI/deploy/arch/tabby.env" ]]; then
     printf '%s\n' "==> No tabby.env; skipping tabby-saver unit refresh" >> "$UPDATE_LOG"
-    return 0
-  fi
-  load_saver_unit_vars
-  saver_tty="${TABBY_SAVER_TTY:-tty8}"
-  user_tty="${TABBY_SAVER_USER_TTY:-tty1}"
-  if [[ "$saver_tty" == "$user_tty" ]]; then
-    saver_tty=tty8
-  fi
-  tmp="$(mktemp)"
-  sed \
-    -e "s|__TABBY_DIR__|$tabby|g" \
-    -e "s|__SAVER_USER__|$USER|g" \
-    -e "s|__SAVER_HOME__|$HOME|g" \
-    -e "s|__SAVER_TTY__|$saver_tty|g" \
-    -e "s|__USER_TTY__|$user_tty|g" \
-    -e "s|__SAVER_URL__|http://127.0.0.1:${TABBY_NETWORK_PORT}|g" \
-    "$src" > "$tmp"
-  if sudo -n install -m 644 "$tmp" /etc/systemd/system/tabby-saver.service 2>/dev/null; then
-    sudo -n systemctl daemon-reload 2>/dev/null || true
-    printf '%s\n' "==> Wrote /etc/systemd/system/tabby-saver.service" >> "$UPDATE_LOG"
   else
-    printf '%s\n' "WARNING: could not write tabby-saver.service" >> "$UPDATE_LOG"
+    load_saver_unit_vars
+    saver_tty="${TABBY_SAVER_TTY:-tty8}"
+    user_tty="${TABBY_SAVER_USER_TTY:-tty1}"
+    if [[ "$saver_tty" == "$user_tty" ]]; then
+      saver_tty=tty8
+    fi
+    tmp="$(mktemp)"
+    sed \
+      -e "s|__TABBY_DIR__|$tabby|g" \
+      -e "s|__SAVER_USER__|$USER|g" \
+      -e "s|__SAVER_HOME__|$HOME|g" \
+      -e "s|__SAVER_TTY__|$saver_tty|g" \
+      -e "s|__USER_TTY__|$user_tty|g" \
+      -e "s|__SAVER_URL__|http://127.0.0.1:${TABBY_NETWORK_PORT}|g" \
+      "$src" > "$tmp"
+    if sudo -n install -m 644 "$tmp" /etc/systemd/system/tabby-saver.service 2>/dev/null; then
+      sudo -n systemctl daemon-reload 2>/dev/null || true
+      printf '%s\n' "==> Wrote /etc/systemd/system/tabby-saver.service" >> "$UPDATE_LOG"
+    else
+      printf '%s\n' "WARNING: could not write tabby-saver.service" >> "$UPDATE_LOG"
+    fi
+    rm -f "$tmp"
   fi
-  rm -f "$tmp"
-  if ((${#SAVER_FILES[@]} == 0)); then
+  local py=""
+  py="$(command -v python3 || true)"
+  [[ -x "$py" ]] || py=/usr/bin/python3
+  if [[ ! -x "$py" || ! -f "$DEST/tabbyAPI/restart_stack.py" ]]; then
+    if ((${#SAVER_FILES[@]} == 0)); then
+      return 0
+    fi
+    if ! systemctl is-active --quiet tabby-saver 2>/dev/null; then
+      printf '%s\n' "==> tabby-saver is not active; not restarting" >> "$UPDATE_LOG"
+      return 0
+    fi
+    printf '%s\n' "==> Restarting tabby-saver" >> "$UPDATE_LOG"
+    sudo -n systemctl restart tabby-saver >>"$UPDATE_LOG" 2>&1 || \
+      printf '%s\n' "WARNING: could not restart tabby-saver" >> "$UPDATE_LOG"
     return 0
   fi
-  if ! systemctl is-active --quiet tabby-saver 2>/dev/null; then
-    printf '%s\n' "==> tabby-saver is not active; not restarting" >> "$UPDATE_LOG"
-    return 0
-  fi
-  printf '%s\n' "==> Restarting tabby-saver" >> "$UPDATE_LOG"
-  sudo -n systemctl restart tabby-saver >>"$UPDATE_LOG" 2>&1 || \
-    printf '%s\n' "WARNING: could not restart tabby-saver" >> "$UPDATE_LOG"
+  printf '%s\n' "==> Refreshing tabby-saver if its files updated" >> "$UPDATE_LOG"
+  "$py" "$DEST/tabbyAPI/restart_stack.py" --saver-if-updated >>"$UPDATE_LOG" 2>&1 || \
+    printf '%s\n' "WARNING: could not refresh tabby-saver" >> "$UPDATE_LOG"
 }
 
 git_should_auto_restart() {

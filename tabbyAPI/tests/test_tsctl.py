@@ -159,3 +159,13 @@ class TsctlTests(unittest.TestCase):
             [call.args[0] for call in run.call_args_list],
             ["start", "stop", "restart", "status"],
         )
+
+    def test_api_restart_refreshes_screensaver(self):
+        with (
+            mock.patch("common.gpu_mode.systemctl_user") as user,
+            mock.patch("restart_stack.maybe_restart_screensaver") as saver,
+        ):
+            user.return_value = mock.Mock(returncode=0, stdout="", stderr="")
+            self.assertEqual(self.tsctl.api_unit("restart"), 0)
+        saver.assert_called_once_with()
+        user.assert_called()
