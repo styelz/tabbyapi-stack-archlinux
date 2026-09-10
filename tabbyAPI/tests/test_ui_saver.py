@@ -1537,9 +1537,11 @@ class SaverKioskSceneTests(unittest.TestCase):
         self.assertGreaterEqual(info, 20)
         self.assertGreater(large, small)
         self.assertGreater(small, info)
-        halo = self.kiosk.hud_halo_offsets(3)
+        halo = self.kiosk.hud_halo_offsets()
         self.assertGreaterEqual(len(halo), 8)
         self.assertNotIn((0, 0), halo)
+        self.assertEqual(self.kiosk.HUD_HALO_RADIUS, 1)
+        self.assertTrue(all(max(abs(dx), abs(dy)) <= 1 for dx, dy in halo))
         hot = self.kiosk.scene_from_state(
             {"gpu_mode": "llm", "kind": "chat", "busy": True, "profile": "qwen"},
             True,

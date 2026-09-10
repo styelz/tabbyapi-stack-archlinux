@@ -66,6 +66,8 @@ HUD_IDLE_HOLD_S = 300.0
 HUD_IDLE_FADE_S = 12.0
 HUD_IDLE_HIDE_ALPHA = 0.02
 HUD_IDLE_PEEK_GRACE_S = 1.0
+# 1px dark ring around HUD glyphs so they stay readable on bloom.
+HUD_HALO_RADIUS = 1
 IDLE_FIELD_HUE_HOLD_S = 300.0
 IDLE_FIELD_HUE_BLEND_S = 40.0
 # Idle only breathes (~0.25 Hz) and drifts a few px/s. Each 4K present is a
@@ -2575,7 +2577,7 @@ def _hud_fade_layer(fg: Any, shadow_img: Any, halo: list[tuple[int, int]], radiu
     return layer
 
 
-def hud_halo_offsets(radius: int = 3) -> list[tuple[int, int]]:
+def hud_halo_offsets(radius: int = HUD_HALO_RADIUS) -> list[tuple[int, int]]:
     """Dark ring around glyphs so they stay readable on amber/white bloom."""
     r = max(1, int(radius))
     out: list[tuple[int, int]] = []
@@ -2590,8 +2592,8 @@ def hud_halo_offsets(radius: int = 3) -> list[tuple[int, int]]:
 
 
 # Composed halo+fill per (font, text, colour). HUD text changes about once a
-# second (the clock), so this turns ~38 blits and two renders per label per
-# frame into one blit. Cleared with the display: Surfaces die on pygame.quit().
+# second (the clock), so this turns the halo blits and two renders per label
+# per frame into one blit. Cleared with the display: Surfaces die on pygame.quit().
 _HUD_LAYER_CACHE: dict[tuple[Any, ...], Any] = {}
 _HUD_LAYER_CACHE_MAX = 96
 
@@ -2671,7 +2673,8 @@ def draw_hud(
     if not clock:
         clock, date = wall_clock_parts()
     shadow = (0, 0, 0)
-    halo = hud_halo_offsets(3)
+    halo_r = HUD_HALO_RADIUS
+    halo = hud_halo_offsets(halo_r)
     pad = max(32, int(round(h * 32 / 1080)))
     main_h = font.size("Ag")[1]
     small_h = small.size("Ag")[1]
@@ -2689,10 +2692,10 @@ def draw_hud(
     ) -> None:
         used = face or (small if use_small else font)
         x, y = pos
-        layer = _hud_layer(used, text, color, shadow, halo, 3)
+        layer = _hud_layer(used, text, color, shadow, halo, halo_r)
         if layer is not None:
             _hud_apply_alpha(layer, fade_amt)
-            screen.blit(layer, (x - 3, y - 3))
+            screen.blit(layer, (x - halo_r, y - halo_r))
             return
         # No pygame Surface (tests): halo by repeated shadow blits.
         img = used.render(text, True, shadow)
