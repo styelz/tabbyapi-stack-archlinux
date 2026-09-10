@@ -60,6 +60,30 @@ function tabbyStatusLabelPriority(text) {
   return 2;
 }
 
+function tabbyImageRenderLabel(text) {
+  return /^(Starting Comfy|Rendering image |Rendering in Comfy|Working on the picture|Reloading the coding model)/i.test(
+    String(text || "").trim()
+  );
+}
+
+function tabbyImageProgressNote(label) {
+  const text = String(label || "").trim();
+  if (/^Starting Comfy/i.test(text)) {
+    return "Unloading the coding model so Comfy can use the GPU.";
+  }
+  if (/^Rendering image /i.test(text) || /^Rendering in Comfy/i.test(text)) {
+    return "Comfy is rendering the picture on the GPU.";
+  }
+  if (/^Reloading the coding model/i.test(text)) {
+    return "The picture is ready. Reloading the coding model onto the GPU.";
+  }
+  if (/^Working on the picture/i.test(text)) return "Preparing the GPU.";
+  if (/^Queued$/i.test(text)) {
+    return "Waiting to start. Next: unload the coding model and hand the GPU to Comfy.";
+  }
+  return "The GPU is generating images for this page.";
+}
+
 function tabbyLooksLikeChatNotImage(raw) {
   const text = String(raw || "").trim();
   if (!text) return false;
@@ -10043,13 +10067,25 @@ function mountChat(root) {
     let processing = Boolean(activity && activity.processing);
     const started = Date.now();
     let ticker = null;
-    const kind = (activity && activity.kind) || "";
+    let kind = (activity && activity.kind) || "";
     const target = (activity && activity.target) || "";
     const storedLabel = tabbyCleanStatusLabel(status_label);
     const keptLabel = !live && SETTLED_LABEL.test(storedLabel) ? storedLabel : "";
     let wasStopped = storedLabel === "Stopped";
+    let imageHoldActive = false;
 
-    turn.append(head, thought);
+    const imageProgress = document.createElement("div");
+    imageProgress.className = "think-image-progress";
+    imageProgress.hidden = true;
+    const imageProgressLabel = document.createElement("div");
+    imageProgressLabel.className = "think-image-progress-label";
+    const imageProgressNote = document.createElement("div");
+    imageProgressNote.className = "think-image-progress-note";
+    const imageProgressDests = document.createElement("ul");
+    imageProgressDests.className = "think-image-progress-dests";
+    imageProgress.append(imageProgressLabel, imageProgressNote, imageProgressDests);
+
+    turn.append(head, thought, imageProgress);
     if (visibleAnswerText(content)) {
       showAnswer(displayAnswer(content), content);
     } else if (!live && wasStopped) {
@@ -10065,6 +10101,105 @@ function mountChat(root) {
     function setProcessing(on) {
       processing = Boolean(on);
       icon.classList.toggle("is-processing", processing);
+    }
+
+    function syncTraceChrome() {
+      const canExpand = hasTrace();
+      chevron.hidden = !canExpand;
+      head.classList.toggle("is-clickable", canExpand);
+      head.classList.toggle("is-open", expanded && canExpand);
+      if (canExpand) {
+        if (head.tagName !== "BUTTON") head.setAttribute("role", "button");
+        head.tabIndex = 0;
+        head.setAttribute("aria-expanded", expanded ? "true" : "false");
+      } else {
+        if (head.tagName !== "BUTTON") head.removeAttribute("role");
+        head.tabIndex = -1;
+        head.removeAttribute("aria-expanded");
+      }
+    }
+
+    function rasterDestsFromTrace() {
+      const blob = [
+        answerText,
+        reasoningText,
+        ...steps.map((step) => [step.content, toolStepPath(step), step.result].filter(Boolean).join("\n")),
+      ].join("\n");
+      const found = [];
+      const seen = new Set();
+      const re = /\b(images\/[\w.-]+\.(?:png|jpe?g|webp|gif))\b/gi;
+      let match;
+      while ((match = re.exec(blob))) {
+        const path = String(match[1] || "").replace(/\\/g, "/");
+        const lower = path.toLowerCase();
+        if (!lower || seen.has(lower)) continue;
+        seen.add(lower);
+        found.push(path);
+      }
+      return found;
+    }
+
+    function hideImageProgress() {
+      imageProgress.hidden = true;
+      imageProgressLabel.textContent = "";
+      imageProgressNote.textContent = "";
+      imageProgressDests.replaceChildren();
+    }
+
+    function paintImageProgress(status, note) {
+      if (finished || !imageHoldActive) {
+        hideImageProgress();
+        return;
+      }
+      const title = tabbyCleanStatusLabel(status) || activityLabel || "Generating images";
+      const detail = String(note || "").trim() || tabbyImageProgressNote(title);
+      imageProgressLabel.textContent = title;
+      imageProgressNote.textContent = detail && detail !== title ? detail : tabbyImageProgressNote(title);
+      const dests = rasterDestsFromTrace();
+      const render = /Rendering image (\d+) of (\d+)/i.exec(title);
+      const current = render ? Math.max(0, Number(render[1]) - 1) : 0;
+      imageProgressDests.replaceChildren();
+      dests.forEach((path, index) => {
+        const row = document.createElement("li");
+        if (render && index === current) row.className = "is-current";
+        else if (render && index < current) row.className = "is-done";
+        row.textContent = path;
+        imageProgressDests.appendChild(row);
+      });
+      imageProgressDests.hidden = dests.length === 0;
+      imageProgress.hidden = false;
+    }
+
+    function beginImageHold(status, note) {
+      if (finished) return;
+      const next = tabbyCleanStatusLabel(status);
+      if (!imageHoldActive) {
+        imageHoldActive = true;
+        kind = "image";
+        expanded = false;
+        if (visibleAnswerText(answerText) && !looksLikeImageReply(answerText)) {
+          steps.push({ type: "said", content: String(answerText) });
+          answerText = "";
+          if (bubbleMounted) {
+            bubble.innerHTML = "";
+            bubble.hidden = true;
+            turn.classList.remove("has-answer");
+          }
+        }
+      }
+      if (next && (tabbyImageRenderLabel(next) || imageHoldActive)) {
+        activityLabel = next;
+        label.textContent = next;
+      } else if (!tabbyImageRenderLabel(activityLabel)) {
+        activityLabel = "Starting Comfy";
+        label.textContent = activityLabel;
+      }
+      head.hidden = false;
+      setProcessing(true);
+      paintThought();
+      paintImageProgress(activityLabel, note);
+      syncTraceChrome();
+      stickLog();
     }
 
     // Every finished reply keeps the same static icon, whatever it was doing.
@@ -10143,7 +10278,9 @@ function mountChat(root) {
 
     function paintStepCount() {
       const n = visibleStepCount();
-      stepsEl.textContent = finished && n > 0 ? (n === 1 ? "1 step" : `${n} steps`) : "";
+      stepsEl.textContent = (finished || imageHoldActive) && n > 0
+        ? (n === 1 ? "1 step" : `${n} steps`)
+        : "";
       stepsEl.hidden = !stepsEl.textContent;
     }
 
@@ -10167,23 +10304,23 @@ function mountChat(root) {
 
     function stickThought(force) {
       if (force) followThought = true;
-      if (finished || thought.hidden || !followThought) return;
+      if (finished || imageHoldActive || thought.hidden || !followThought) return;
       pinThoughtNow();
       if (pinThoughtRaf) cancelAnimationFrame(pinThoughtRaf);
       pinThoughtRaf = requestAnimationFrame(() => {
         pinThoughtRaf = requestAnimationFrame(() => {
           pinThoughtRaf = 0;
-          if (!finished && !thought.hidden && followThought) pinThoughtNow();
+          if (!finished && !imageHoldActive && !thought.hidden && followThought) pinThoughtNow();
         });
       });
     }
 
     thought.addEventListener("scroll", () => {
-      if (pinningThought || finished) return;
+      if (pinningThought || finished || imageHoldActive) return;
       followThought = thoughtNearBottom();
     }, { passive: true });
     thought.addEventListener("load", (event) => {
-      if (event.target && event.target.tagName === "IMG" && followThought && !finished) {
+      if (event.target && event.target.tagName === "IMG" && followThought && !finished && !imageHoldActive) {
         stickThought();
       }
     }, true);
@@ -10208,10 +10345,11 @@ function mountChat(root) {
         const row = renderAgentStep(step);
         if (row) thought.appendChild(row);
       });
-      thought.hidden = finished ? !expanded : false;
-      if (finished) {
+      thought.hidden = (finished || imageHoldActive) ? !expanded : false;
+      if (finished || imageHoldActive) {
         thought.scrollTop = keepScroll;
         pinningThought = false;
+        syncTraceChrome();
         return;
       }
       pinningThought = false;
@@ -10224,6 +10362,11 @@ function mountChat(root) {
       lastNote = line;
       if (!statusNotes.includes(line)) statusNotes.push(line);
       if (finished) return;
+      if (imageHoldActive) {
+        paintImageProgress(activityLabel, line);
+        stickLog();
+        return;
+      }
       if (!reasoningFromModel && !steps.length) {
         reasoningText = line;
         paintThought();
@@ -10263,31 +10406,21 @@ function mountChat(root) {
 
     function settleThought(seconds) {
       stopWorking();
+      hideImageProgress();
+      imageHoldActive = false;
       if (ticker) {
         clearInterval(ticker);
         ticker = null;
       }
       if (seconds != null) elapsedSec = seconds;
       head.hidden = false;
-      const canExpand = hasTrace();
-      chevron.hidden = !canExpand;
-      head.classList.toggle("is-clickable", canExpand);
-      if (canExpand) {
-        if (head.tagName !== "BUTTON") head.setAttribute("role", "button");
-        head.tabIndex = 0;
-        head.setAttribute("aria-expanded", "false");
-      } else {
-        if (head.tagName !== "BUTTON") head.removeAttribute("role");
-        head.tabIndex = -1;
-        head.removeAttribute("aria-expanded");
-      }
+      expanded = false;
       markSettledIcon();
       label.textContent = headLabel();
       timeEl.textContent = seconds != null ? TabbyUI.formatDuration(seconds) : "";
       paintStepCount();
       thought.hidden = true;
-      expanded = false;
-      head.classList.remove("is-open");
+      syncTraceChrome();
     }
 
     if (live) {
@@ -10303,11 +10436,11 @@ function mountChat(root) {
     }
 
     function toggleThought() {
-      if (!finished || !hasTrace()) return;
+      if (!hasTrace()) return;
+      if (!finished && !imageHoldActive) return;
       expanded = !expanded;
       thought.hidden = !expanded;
-      head.classList.toggle("is-open", expanded);
-      head.setAttribute("aria-expanded", expanded ? "true" : "false");
+      syncTraceChrome();
     }
     head.addEventListener("click", toggleThought);
     head.addEventListener("keydown", (event) => {
@@ -10341,8 +10474,11 @@ function mountChat(root) {
         head.hidden = false;
         if (opts && opts.processing != null) setProcessing(opts.processing);
         if (opts && opts.note) addStatusNote(opts.note);
+        if (tabbyImageRenderLabel(next)) beginImageHold(next, opts && opts.note);
+        else if (imageHoldActive) paintImageProgress(next, opts && opts.note);
       },
       addStatusNote,
+      beginImageHold,
       addStep(step, origin) {
         if (!step || typeof step !== "object") return;
         if (!reasoningFromModel && reasoningText && statusNotes.includes(reasoningText)) {
@@ -10362,7 +10498,7 @@ function mountChat(root) {
             turn.classList.remove("has-answer");
           }
           paintThought();
-          if (hasTrace()) thought.hidden = false;
+          if (hasTrace() && !imageHoldActive) thought.hidden = false;
           stickLog();
           return;
         }
@@ -10378,14 +10514,14 @@ function mountChat(root) {
           steps.push(row);
         }
         paintThought();
-        thought.hidden = false;
+        if (!imageHoldActive) thought.hidden = false;
         stickLog();
       },
       setReasoning(text) {
         if (!text) return;
         reasoningFromModel = true;
         reasoningText = text;
-        if (!finished && tabbyStatusLabelPriority(activityLabel) < 3) {
+        if (!finished && !imageHoldActive && tabbyStatusLabelPriority(activityLabel) < 3) {
           activityLabel = "Thinking";
           label.textContent = "Thinking";
           head.hidden = false;
@@ -10397,14 +10533,17 @@ function mountChat(root) {
       setAnswer(text) {
         const value = visibleAnswerText(text);
         if (!value) return;
+        const imageReply = looksLikeImageReply(String(text || ""));
+        if (imageHoldActive && !imageReply) return;
         showAnswer(displayAnswer(text), text);
-        if (kind === "image" && looksLikeImageReply(String(text || ""))) {
+        if (imageReply && (kind === "image" || imageHoldActive)) {
+          hideImageProgress();
           const seconds = Math.max(1, Math.round((Date.now() - started) / 1000));
           foldNotesIntoThought();
           finished = true;
           settleThought(seconds);
           paintThought();
-        } else if (!finished && hasTrace()) {
+        } else if (!finished && hasTrace() && !imageHoldActive) {
           thought.hidden = false;
         } else if (reasoningText || statusNotes.length || steps.length) {
           thought.hidden = true;
@@ -11422,7 +11561,7 @@ function mountChat(root) {
         if (queue && queue.queued && !queue.mine) {
           return;
         }
-        if (kind === "image") {
+        if (kind === "image" || (working && working.heldJobId)) {
           const job = data && data.job;
           const next = labelForJob(job);
           const note = detailForJob(job);
@@ -11431,7 +11570,7 @@ function mountChat(root) {
           const wait = job && String(job.wait_text || "").trim();
           if (wait) working.addStatusNote(wait);
           const prompt = job && String(job.prompt || "").trim();
-          if (prompt) working.addStatusNote(`Prompt: ${prompt}`);
+          if (prompt && kind === "image") working.addStatusNote(`Prompt: ${prompt}`);
           return;
         }
         if (kind === "switch" || kind === "restart") {
@@ -12435,7 +12574,10 @@ function mountChat(root) {
             buf = consumeSseBuffer(buf, (event) => {
               if (event.comment) {
                 const held = String(event.comment).match(/tabby-image-job:\s*([0-9a-fA-F-]{8,})/);
-                if (held) working.heldJobId = held[1];
+                if (held) {
+                  working.heldJobId = held[1];
+                  if (working.beginImageHold) working.beginImageHold();
+                }
               }
               if (event.usage) applyUsage(event.usage, chatId);
               if (event.comment && event.comment.includes("tabby-context-usage:")) {

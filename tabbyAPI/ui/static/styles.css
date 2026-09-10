@@ -3321,6 +3321,64 @@ button.chip {
   max-height: 22rem;
   overflow: auto;
 }
+.think-image-progress {
+  margin: 0.1rem 0 0.15rem 1.5rem;
+  padding: 0.7rem 0.9rem;
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 0.55rem;
+  background: var(--bg-elev);
+  color: var(--text);
+}
+.think-image-progress[hidden] {
+  display: none !important;
+}
+.think-image-progress-label {
+  font-weight: 600;
+  font-size: 0.875rem;
+}
+.think-image-progress-note {
+  margin-top: 0.3rem;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  line-height: 1.4;
+}
+.think-image-progress-dests {
+  margin: 0.45rem 0 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.think-image-progress-dests li {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.15rem 0;
+}
+.think-image-progress-dests li::before {
+  content: "";
+  width: 0.4rem;
+  height: 0.4rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--line);
+}
+.think-image-progress-dests li.is-current {
+  color: var(--text);
+}
+.think-image-progress-dests li.is-current::before {
+  background: var(--accent);
+  box-shadow: 0 0 0.35rem rgba(var(--accent-rgb), 0.55);
+}
+.think-image-progress-dests li.is-done {
+  color: var(--ok);
+}
+.think-image-progress-dests li.is-done::before {
+  background: var(--ok);
+}
 .think-body p { margin: 0 0 0.4em; }
 .think-body p:last-child { margin-bottom: 0; }
 .think-body ul,

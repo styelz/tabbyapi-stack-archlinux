@@ -361,12 +361,19 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
         self.assertIn("chat-mode-hint-pill", self.src)
         self.assertIn("btn.dataset.modeHint = target", self.src)
         self.assertIn('note: "Preparing the GPU."', self.src)
+        self.assertIn("function tabbyImageRenderLabel(text)", self.src)
+        self.assertIn("function beginImageHold(", self.src)
+        self.assertIn("think-image-progress", self.src)
+        self.assertIn("imageHoldActive", self.src)
+        self.assertIn("if (working.beginImageHold) working.beginImageHold()", self.src)
         self.assertIn("Agent edits files, Ask answers without changing them", self.src)
         css = CHAT_CSS.read_text(encoding="utf-8")
         self.assertIn(".chat-agent-hint", css)
         self.assertIn(".chat-mode-hint", css)
         self.assertIn(".chat-mode-hint-now", css)
         self.assertIn(".chat-mode-hint-pill", css)
+        self.assertIn(".think-image-progress", css)
+        self.assertIn(".think-image-progress-dests", css)
 
     def test_code_agent_steps_stay_compact(self):
         utils = Path(__file__).resolve().parents[1] / "ui" / "static" / "utils.js"
