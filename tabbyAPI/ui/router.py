@@ -476,7 +476,7 @@ async def ui_users_delete(name: str, _admin: str = Depends(require_ui_admin)):
 async def ui_prefs_get(_user: str = Depends(require_ui_user)):
     from ui.prefs import load_prefs
 
-    return _private_json(load_prefs(_user))
+    return _private_json(await asyncio.to_thread(load_prefs, _user))
 
 
 @router.put("/prefs", include_in_schema=False)
@@ -487,7 +487,7 @@ async def ui_prefs_put(request: Request, _user: str = Depends(require_ui_user)):
         body = await request.json()
     except Exception as exc:
         raise HTTPException(400, "JSON body required") from exc
-    return _private_json(save_prefs(_user, body))
+    return _private_json(await asyncio.to_thread(save_prefs, _user, body))
 
 
 @router.get("/backup", include_in_schema=False)
@@ -773,7 +773,7 @@ async def ui_chats_get(_user: str = Depends(require_ui_user)):
     from ui.chats import load_store
     from ui.epoch import load_epoch
 
-    payload = dict(load_store(_user))
+    payload = dict(await asyncio.to_thread(load_store, _user))
     payload["epoch"] = load_epoch()
     return _private_json(payload)
 
@@ -786,7 +786,7 @@ async def ui_chats_put(request: Request, _user: str = Depends(require_ui_user)):
         body = await request.json()
     except Exception as exc:
         raise HTTPException(400, "JSON body required") from exc
-    return _private_json(save_store(_user, body))
+    return _private_json(await asyncio.to_thread(save_store, _user, body))
 
 
 @router.get("/workspaces", include_in_schema=False)
@@ -795,12 +795,15 @@ async def ui_workspaces(_user: str = Depends(require_ui_user)):
     from ui.chats import load_store
     from ui.workspace import chats_with_files
 
-    ids = [
-        str(chat.get("id") or "")
-        for chat in load_store(_user).get("chats") or []
-        if isinstance(chat, dict) and not str(chat.get("parentId") or "").strip()
-    ]
-    return {"code": chats_with_files(_user, ids)}
+    def collect() -> dict[str, Any]:
+        ids = [
+            str(chat.get("id") or "")
+            for chat in load_store(_user).get("chats") or []
+            if isinstance(chat, dict) and not str(chat.get("parentId") or "").strip()
+        ]
+        return {"code": chats_with_files(_user, ids)}
+
+    return await asyncio.to_thread(collect)
 
 
 def _workspace_chat_id(chat_id: str, username: str, *, adopt: bool = True) -> str:

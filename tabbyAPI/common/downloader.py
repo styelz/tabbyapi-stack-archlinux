@@ -96,7 +96,11 @@ def _get_download_folder(repo_id: str, repo_type: str, folder_name: Optional[str
     else:
         download_path = pathlib.Path(config.model.model_dir)
 
-    download_path = download_path / (folder_name or repo_id.split("/")[-1])
+    name = str(folder_name or repo_id.split("/")[-1]).strip()
+    if not name or name in (".", "..") or any(ch in name for ch in "/\\\0"):
+        raise ValueError(f"Invalid download folder name: {name!r}")
+
+    download_path = download_path / name
     return download_path
 
 

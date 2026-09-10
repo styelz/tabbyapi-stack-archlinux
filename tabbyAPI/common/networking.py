@@ -165,12 +165,14 @@ class DisconnectHandler:
         least once before returning a non-canceled response.
 
         With a background watcher this does not suspend the caller. Otherwise
-        (nested generate() or the console-flight stand-in) it polls
-        is_disconnected() at most 20 times per second and honors abort_event.
+        (nested generate() or the console-flight stand-in) abort_event is
+        checked on every call and is_disconnected() at most 20 times per second.
         """
 
         if self._watcher is not None:
             triggered = self.disconnected or self.abort_event.is_set()
+        elif self.abort_event.is_set():
+            triggered = True
         else:
             now = time.time()
             if now < self.last_poll + 0.05:
@@ -183,7 +185,7 @@ class DisconnectHandler:
             ):
                 http_gone = await self.request.is_disconnected()
 
-            triggered = http_gone or self.abort_event.is_set()
+            triggered = http_gone
 
         if not triggered:
             return

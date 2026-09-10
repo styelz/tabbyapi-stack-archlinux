@@ -252,6 +252,7 @@ class DisconnectHandlerTests(unittest.IsolatedAsyncioTestCase):
         await handler.poll()  # connected -> no raise
 
         state["gone"] = True
+        handler.last_poll = 0  # is_disconnected() is throttled to 20/s
         with self.assertRaises(asyncio.CancelledError):
             await handler.poll()
 

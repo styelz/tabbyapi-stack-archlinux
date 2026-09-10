@@ -50,7 +50,7 @@ async def publish_console_status(line: str) -> None:
     text = str(line or "").strip()
     if flight is None or not text:
         return
-    await flight.publish(ServerSentEvent(comment=f"tabby-image-status: {text}"))
+    await flight.publish(ServerSentEvent(comment=f"tabby-image-status: {text}", sep="\n"))
 
 
 def get_flight(username: str, chat_id: str = "") -> Optional["ConsoleFlight"]:
@@ -144,7 +144,8 @@ class ConsoleFlight:
         self.streamed_live = False
 
     def ingest(self, raw: bytes) -> None:
-        self._parse_buf += raw.decode("utf-8", errors="replace")
+        # sse-starlette defaults to CRLF; block splitting below expects LF.
+        self._parse_buf += raw.decode("utf-8", errors="replace").replace("\r\n", "\n")
         while "\n\n" in self._parse_buf:
             block, self._parse_buf = self._parse_buf.split("\n\n", 1)
             self._ingest_block(block)

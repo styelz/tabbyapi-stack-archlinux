@@ -1531,6 +1531,7 @@ class SaverKioskSceneTests(unittest.TestCase):
         scene = self.kiosk.scene_from_state(
             {"gpu_mode": "llm", "profile": "qwen", "busy": True},
             False,
+            unit_state="inactive",
         )
         scene["runtime"] = "0:08"
         screen = _FakeScreen()

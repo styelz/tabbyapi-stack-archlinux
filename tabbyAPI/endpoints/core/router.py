@@ -620,8 +620,6 @@ async def get_gpu_mode() -> GpuModeResponse:
     tabby_model = _loaded_tabby_name()
     status = read_mode()
     mode = "llm" if tabby_model else status.get("mode") or "llm"
-    if tabby_model:
-        mode = "llm"
     return GpuModeResponse(
         mode=mode,
         tabby_model=tabby_model,

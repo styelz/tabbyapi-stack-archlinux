@@ -24,7 +24,9 @@ class ConsoleImageChatTests(unittest.TestCase):
     def test_console_generate_skips_file_tools(self):
         async def go():
             data = ChatCompletionRequest(
-                messages=[ChatCompletionMessage(role="user", content="draw a red cube")]
+                messages=[
+                    ChatCompletionMessage(role="user", content="draw a picture of a red cube")
+                ]
             )
             plan = mock.Mock(
                 action="generate",
@@ -411,10 +413,14 @@ class ConsoleChatNotReadyTests(unittest.IsolatedAsyncioTestCase):
     def test_source_uses_loading_helper_not_status_error(self):
         from pathlib import Path
         import ui.chat as ui_chat
+        import endpoints.OAI.utils.pipeline as pipeline
 
-        src = Path(ui_chat.__file__).read_text(encoding="utf-8")
-        self.assertIn("llm_not_ready_response", src)
-        self.assertNotIn("The coding model is not loaded", src)
+        chat_src = Path(ui_chat.__file__).read_text(encoding="utf-8")
+        pipe_src = Path(pipeline.__file__).read_text(encoding="utf-8")
+        self.assertIn("run_chat_completion_turn", chat_src)
+        self.assertIn("llm_not_ready_response", pipe_src)
+        self.assertNotIn("The coding model is not loaded", chat_src)
+        self.assertNotIn("The coding model is not loaded", pipe_src)
 
     async def test_chat_while_loading_says_still_loading(self):
         from fastapi import HTTPException
@@ -425,9 +431,14 @@ class ConsoleChatNotReadyTests(unittest.IsolatedAsyncioTestCase):
         request = mock.Mock()
         with (
             mock.patch("ui.chat.model") as mdl,
+            mock.patch("endpoints.OAI.utils.pipeline.model") as pipe_mdl,
             mock.patch("ui.chat.handle_if_requested", return_value=None),
-            mock.patch("ui.chat.handle_image_chat", new=mock.AsyncMock(return_value=None)),
+            mock.patch(
+                "endpoints.OAI.utils.pipeline.handle_image_chat",
+                new=mock.AsyncMock(return_value=None),
+            ),
             mock.patch("ui.chat.gpu_is_comfy", return_value=False),
+            mock.patch("endpoints.OAI.utils.pipeline.gpu_is_comfy", return_value=False),
             mock.patch("ui.chat.public_api_base", return_value="http://x"),
             mock.patch("ui.chat.DisconnectHandler", return_value=handler),
             mock.patch("common.phrase_switch.switch_in_progress", return_value=True),
@@ -437,6 +448,7 @@ class ConsoleChatNotReadyTests(unittest.IsolatedAsyncioTestCase):
             ),
         ):
             mdl.container = None
+            pipe_mdl.container = None
             result = await run_console_chat(request, self._body())
         self.assertNotIsInstance(result, HTTPException)
         text = result.choices[0].message.content
@@ -452,15 +464,21 @@ class ConsoleChatNotReadyTests(unittest.IsolatedAsyncioTestCase):
         request = mock.Mock()
         with (
             mock.patch("ui.chat.model") as mdl,
+            mock.patch("endpoints.OAI.utils.pipeline.model") as pipe_mdl,
             mock.patch("ui.chat.handle_if_requested", return_value=None),
-            mock.patch("ui.chat.handle_image_chat", new=mock.AsyncMock(return_value=None)),
+            mock.patch(
+                "endpoints.OAI.utils.pipeline.handle_image_chat",
+                new=mock.AsyncMock(return_value=None),
+            ),
             mock.patch("ui.chat.gpu_is_comfy", return_value=False),
+            mock.patch("endpoints.OAI.utils.pipeline.gpu_is_comfy", return_value=False),
             mock.patch("ui.chat.public_api_base", return_value="http://x"),
             mock.patch("ui.chat.DisconnectHandler", return_value=handler),
             mock.patch("common.phrase_switch.switch_in_progress", return_value=False),
             mock.patch("images.jobs.active_mcp_image_job", return_value=None),
         ):
             mdl.container = None
+            pipe_mdl.container = None
             result = await run_console_chat(request, self._body())
         text = result.choices[0].message.content
         self.assertIn("not loaded", text.lower())

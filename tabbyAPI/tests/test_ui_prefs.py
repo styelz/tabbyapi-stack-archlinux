@@ -120,7 +120,7 @@ class PrefsIndexInjectTests(unittest.TestCase):
         self.assertIn("tabby-ui-epoch", html)
         self.assertNotIn("localStorage.getItem(\"tabby-ui-chat", html)
         router_src = router
-        self.assertIn("_private_json(load_prefs(_user))", router_src)
+        self.assertIn("_private_json(await asyncio.to_thread(load_prefs, _user))", router_src)
         self.assertIn('payload["epoch"] = load_epoch()', router_src)
 
     def test_inject_replaces_mark(self):

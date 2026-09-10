@@ -172,7 +172,8 @@
       .replaceAll("&", "&amp;")
       .replaceAll("<", "&lt;")
       .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;");
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#39;");
   }
 
   function formatBytes(n) {
@@ -238,23 +239,15 @@
   function markdownHrefAllowed(href) {
     const value = String(href || "").trim();
     if (!value) return false;
-    const lower = value.toLowerCase();
-    if (
-      lower.startsWith("javascript:") ||
-      lower.startsWith("data:") ||
-      lower.startsWith("vbscript:") ||
-      lower.startsWith("file:")
-    ) {
+    // URL parsing normalizes tricks like "java\tscript:" that prefix checks miss.
+    let parsed;
+    try {
+      parsed = new URL(value, window.location.href);
+    } catch {
       return false;
     }
-    if (/^(https?:)?\/\//i.test(value) || lower.startsWith("http:") || lower.startsWith("https:")) {
-      try {
-        const parsed = new URL(value, window.location.href);
-        return parsed.protocol === "http:" || parsed.protocol === "https:";
-      } catch {
-        return false;
-      }
-    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+    if (/^(https?:)?\/\//i.test(value)) return true;
     if (value.startsWith("/v1/ui/") || value.startsWith("/v1/images/")) return true;
     if (value.startsWith("/")) return false;
     if (value.includes("..")) return false;

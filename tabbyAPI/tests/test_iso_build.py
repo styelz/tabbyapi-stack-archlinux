@@ -142,7 +142,7 @@ class IsoBuildSmallTests(unittest.TestCase):
         self.assertIn("nvidia-drm.modeset=1${SPLASH_CMDLINE}", chroot)
         self.assertNotIn("plymouth-quit.service", chroot)
 
-    def test_installer_installs_plymouth_on_full_arch(self):
+    def test_installer_overlay_excludes_user_state(self):
         overlay = INSTALLER.read_text(encoding="utf-8").split(
             "overlay_local_tabby_sources()"
         )[1].split("chown_target_user_tree()")[0]

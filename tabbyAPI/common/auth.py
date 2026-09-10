@@ -52,11 +52,20 @@ class AuthKeys(BaseModel):
     def verify_key(self, test_key: str, key_type: str):
         """Verify if a given key matches the stored key."""
         if key_type == "admin_key":
-            return test_key == self.admin_key
+            return _keys_equal(test_key, self.admin_key)
         if key_type == "api_key":
             # Admin keys are valid for all API calls
-            return test_key in self._api_key_set or test_key == self.admin_key
+            return any(_keys_equal(test_key, key) for key in self._api_key_set) or _keys_equal(
+                test_key, self.admin_key
+            )
         return False
+
+
+def _keys_equal(candidate: str, expected: str) -> bool:
+    # Bytes: compare_digest rejects non-ASCII str.
+    return secrets.compare_digest(
+        str(candidate or "").encode("utf-8"), str(expected or "").encode("utf-8")
+    )
 
 
 # Global auth constants

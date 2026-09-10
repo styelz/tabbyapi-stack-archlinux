@@ -42,6 +42,24 @@ class ApiPasswordAuthTests(unittest.TestCase):
         self.assertEqual(api_auth.permission_for_token("yaml-api"), "api")
         self.assertIsNone(api_auth.permission_for_token("nope"))
 
+    def test_verify_key_uses_constant_time_compare(self):
+        keys = api_auth.AuthKeys(api_key=["k\u00e9y-one", "key-two"], admin_key="adm\u00efn")
+        with mock.patch.object(
+            api_auth.secrets, "compare_digest", wraps=api_auth.secrets.compare_digest
+        ) as cmp:
+            self.assertTrue(keys.verify_key("adm\u00efn", "admin_key"))
+            self.assertTrue(keys.verify_key("adm\u00efn", "api_key"))
+            self.assertTrue(keys.verify_key("k\u00e9y-one", "api_key"))
+            self.assertTrue(keys.verify_key("key-two", "api_key"))
+            self.assertFalse(keys.verify_key("key-two", "admin_key"))
+            self.assertFalse(keys.verify_key("key-tw", "api_key"))
+            self.assertFalse(keys.verify_key("", "api_key"))
+            self.assertFalse(keys.verify_key("adm\u00efn", "other"))
+            self.assertTrue(cmp.called)
+            for call in cmp.call_args_list:
+                self.assertIsInstance(call.args[0], bytes)
+                self.assertIsInstance(call.args[1], bytes)
+
     def test_extra_user_password_is_api_key(self):
         with mock.patch.object(auth, "stack_username", return_value="tabby"):
             users.create_user("alice", "secret123")
