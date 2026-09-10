@@ -27,7 +27,7 @@ SCRIPT_NAME="${0##*/}"
 if [[ "$SCRIPT_NAME" == "bash" || "$SCRIPT_NAME" == "-bash" || "$SCRIPT_NAME" == "sh" || "$SCRIPT_NAME" == "-sh" ]]; then
   SCRIPT_NAME="tsos-installer.sh"
 fi
-SCRIPT_VERSION="1.0.61"
+SCRIPT_VERSION="1.0.62"
 
 # Generic defaults. Do not default TARGET_HOSTNAME from $HOSTNAME — the live
 # ISO sets HOSTNAME=archiso.
@@ -1088,19 +1088,32 @@ ui_cancel() {
   exit 0
 }
 
-# Widgets abort the installer on Esc unless a review-hub editor set this.
-# $(ui_menu) / $(ui_input) run in a subshell and cannot exit the installer;
-# those callers handle a non-zero status (go back or ui_cancel).
+# Navigation: Cancel/Esc never exits from a widget. Only Setup type (the
+# start page) calls ui_cancel, and that button is labeled Exit.
+# Nested pages use Back. $(ui_menu) / $(ui_input) still cannot exit the
+# installer (subshell); callers treat a non-zero status as "go back".
 UI_ALLOW_BACK=0
+UI_OK_LABEL=OK
+UI_CANCEL_LABEL=Back
 
 _ui_fail() {
-  if [[ "${UI_ALLOW_BACK:-0}" == 1 ]]; then
-    return 1
+  return 1
+}
+
+tui_ok_cancel_args() {
+  if [[ "${TUI:-}" == whiptail ]]; then
+    TUI_BTN=(--ok-button "${UI_OK_LABEL:-OK}" --cancel-button "${UI_CANCEL_LABEL:-Back}")
+  else
+    TUI_BTN=(--ok-label "${UI_OK_LABEL:-OK}" --cancel-label "${UI_CANCEL_LABEL:-Back}")
   fi
-  if ((BASH_SUBSHELL > 0)); then
-    return 1
+}
+
+tui_yesno_args() {
+  if [[ "${TUI:-}" == whiptail ]]; then
+    TUI_BTN=(--yes-button Yes --no-button No)
+  else
+    TUI_BTN=(--yes-label Yes --no-label No)
   fi
-  ui_cancel
 }
 
 # dialog draws the widget on stdout and returns the typed value on stderr.
@@ -1112,11 +1125,12 @@ dialog_read() {
   local tmp rc
   DIALOG_OUT=""
   tmp=$(mktemp "${TMPDIR:-/tmp}/tsos-dialog.XXXXXX") || return 1
+  tui_ok_cancel_args
   set +e
   if [[ -c /dev/tty ]] && { true >/dev/tty; } 2>/dev/null; then
-    dialog --backtitle "$BACKTITLE" "$@" 2> "$tmp" >/dev/tty
+    dialog --backtitle "$BACKTITLE" "${TUI_BTN[@]}" "$@" 2> "$tmp" >/dev/tty
   else
-    dialog --backtitle "$BACKTITLE" "$@" 2> "$tmp"
+    dialog --backtitle "$BACKTITLE" "${TUI_BTN[@]}" "$@" 2> "$tmp"
   fi
   rc=$?
   set -e
@@ -1161,9 +1175,9 @@ ui_msg() {
     height=$need
   fi
   if [[ "$USE_TUI" -eq 1 && "$TUI" == dialog ]]; then
-    dialog_tty --backtitle "$BACKTITLE" --title "$title" --msgbox "$text" "$height" "$width" || { _ui_fail; return 1; }
+    dialog_tty --backtitle "$BACKTITLE" --ok-label "${UI_OK_LABEL:-OK}" --title "$title" --msgbox "$text" "$height" "$width" || { _ui_fail; return 1; }
   elif [[ "$USE_TUI" -eq 1 && "$TUI" == whiptail ]]; then
-    whiptail --backtitle "$BACKTITLE" --title "$title" --msgbox "$text" "$height" "$width" || { _ui_fail; return 1; }
+    whiptail --backtitle "$BACKTITLE" --ok-button "${UI_OK_LABEL:-OK}" --title "$title" --msgbox "$text" "$height" "$width" || { _ui_fail; return 1; }
   else
     printf '\n=== %s ===\n%s\n\n' "$title" "$text" >/dev/tty
   fi
@@ -1183,7 +1197,8 @@ ui_input() {
     dialog_read --title "$title" --inputbox "$text" "$height" "$width" "$default" || { _ui_fail; return 1; }
     out=$DIALOG_OUT
   elif [[ "$USE_TUI" -eq 1 && "$TUI" == whiptail ]]; then
-    out="$(whiptail --backtitle "$BACKTITLE" --title "$title" --inputbox "$text" "$height" "$width" "$default" 3>&1 1>&2 2>&3)" || { _ui_fail; return 1; }
+    tui_ok_cancel_args
+    out="$(whiptail --backtitle "$BACKTITLE" "${TUI_BTN[@]}" --title "$title" --inputbox "$text" "$height" "$width" "$default" 3>&1 1>&2 2>&3)" || { _ui_fail; return 1; }
   else
     out=$(ask "$title" "$default")
   fi
@@ -1214,7 +1229,8 @@ ui_menu() {
     dialog_read --title "$title" --menu "$text" "$height" "$width" "$list" "$@" || { _ui_fail; return 1; }
     out=$DIALOG_OUT
   elif [[ "$USE_TUI" -eq 1 && "$TUI" == whiptail ]]; then
-    out="$(whiptail --backtitle "$BACKTITLE" --title "$title" --menu "$text" "$height" "$width" "$list" "$@" 3>&1 1>&2 2>&3)" || { _ui_fail; return 1; }
+    tui_ok_cancel_args
+    out="$(whiptail --backtitle "$BACKTITLE" "${TUI_BTN[@]}" --title "$title" --menu "$text" "$height" "$width" "$list" "$@" 3>&1 1>&2 2>&3)" || { _ui_fail; return 1; }
   else
     local i=1 tag
     local tags=()
@@ -1263,7 +1279,8 @@ ui_checklist() {
     dialog_read --title "$title" --checklist "$text" "$height" "$width" "$list" "$@" || { _ui_fail; return 1; }
     out=$DIALOG_OUT
   elif [[ "$USE_TUI" -eq 1 && "$TUI" == whiptail ]]; then
-    out="$(whiptail --backtitle "$BACKTITLE" --title "$title" --checklist "$text" "$height" "$width" "$list" "$@" 3>&1 1>&2 2>&3)" || { _ui_fail; return 1; }
+    tui_ok_cancel_args
+    out="$(whiptail --backtitle "$BACKTITLE" "${TUI_BTN[@]}" --title "$title" --checklist "$text" "$height" "$width" "$list" "$@" 3>&1 1>&2 2>&3)" || { _ui_fail; return 1; }
   else
     local i=1 tag state
     local defaults=()
@@ -1305,31 +1322,27 @@ ui_yesno() {
   if [[ "$USE_TUI" -eq 1 && "$TUI" == dialog ]]; then
     local extra=()
     [[ "$default_yes" -eq 0 ]] && extra=(--defaultno)
+    tui_yesno_args
     # Yes=0, No=1. Capture under set +e so No is not an installer crash.
     set +e
-    dialog_tty --backtitle "$BACKTITLE" --title "$title" "${extra[@]}" --yesno "$text" "$height" "$width"
+    dialog_tty --backtitle "$BACKTITLE" "${TUI_BTN[@]}" --title "$title" "${extra[@]}" --yesno "$text" "$height" "$width"
     rc=$?
     set -e
-    # dialog: Yes=0, No=1, Esc=255. Esc used to look like No.
+    # dialog: Yes=0, No=1, Esc=255. Esc is Back, not No and not Exit.
     if [[ "$rc" -eq 255 ]]; then
-      if [[ "${UI_ALLOW_BACK:-0}" == 1 ]]; then
-        return 2
-      fi
-      ui_cancel
+      return 2
     fi
     return "$rc"
   elif [[ "$USE_TUI" -eq 1 && "$TUI" == whiptail ]]; then
     local extra=()
     [[ "$default_yes" -eq 0 ]] && extra=(--defaultno)
+    tui_yesno_args
     set +e
-    whiptail --backtitle "$BACKTITLE" --title "$title" "${extra[@]}" --yesno "$text" "$height" "$width"
+    whiptail --backtitle "$BACKTITLE" "${TUI_BTN[@]}" --title "$title" "${extra[@]}" --yesno "$text" "$height" "$width"
     rc=$?
     set -e
     if [[ "$rc" -eq 255 ]]; then
-      if [[ "${UI_ALLOW_BACK:-0}" == 1 ]]; then
-        return 2
-      fi
-      ui_cancel
+      return 2
     fi
     return "$rc"
   else
@@ -1358,7 +1371,8 @@ ui_password() {
     dialog_read --title "$title" --insecure --passwordbox "$text" "$height" "$width" || { _ui_fail; return 1; }
     out=$DIALOG_OUT
   elif [[ "$USE_TUI" -eq 1 && "$TUI" == whiptail ]]; then
-    out="$(whiptail --backtitle "$BACKTITLE" --title "$title" --passwordbox "$text" "$height" "$width" 3>&1 1>&2 2>&3)" || { _ui_fail; return 1; }
+    tui_ok_cancel_args
+    out="$(whiptail --backtitle "$BACKTITLE" "${TUI_BTN[@]}" --title "$title" --passwordbox "$text" "$height" "$width" 3>&1 1>&2 2>&3)" || { _ui_fail; return 1; }
   else
     out=$(read_secret "$title: ")
   fi
@@ -1384,14 +1398,15 @@ ui_password_pair() {
   if [[ "$USE_TUI" -eq 1 && "$TUI" == dialog ]]; then
     tmp=$(mktemp "${TMPDIR:-/tmp}/tsos-dialog.XXXXXX") || return 1
     set +e
+    tui_ok_cancel_args
     if [[ -c /dev/tty ]] && { true >/dev/tty; } 2>/dev/null; then
-      dialog --backtitle "$BACKTITLE" --title "$title" --insecure \
+      dialog --backtitle "$BACKTITLE" "${TUI_BTN[@]}" --title "$title" --insecure \
         --passwordform "$text" "$height" "$width" "$form_h" \
         "Password:" 1 1 "" 1 "$lab_w" "$flen" 128 \
         "Verify password:" 2 1 "" 2 "$lab_w" "$flen" 128 \
         2> "$tmp" >/dev/tty
     else
-      dialog --backtitle "$BACKTITLE" --title "$title" --insecure \
+      dialog --backtitle "$BACKTITLE" "${TUI_BTN[@]}" --title "$title" --insecure \
         --passwordform "$text" "$height" "$width" "$form_h" \
         "Password:" 1 1 "" 1 "$lab_w" "$flen" 128 \
         "Verify password:" 2 1 "" 2 "$lab_w" "$flen" 128 \
@@ -2495,6 +2510,7 @@ pick_install_mode() {
   local choice
   while true; do
     if ((USE_TUI)); then
+      UI_CANCEL_LABEL=Exit
       choice=$(ui_menu "Setup type" \
 "Simple (recommended) opens a review menu: disk, hostname,
 username, timezone, weights source, and whether other computers
@@ -2510,12 +2526,13 @@ asks which disk to wipe.
 Mount makes another USB drive or filesystem available before setup.
 Omarchy is not installed in Simple or Restore.
 
-Esc on this page leaves the installer. Esc inside Simple,
-Advanced, or Restore returns here." \
+Exit or Esc leaves the installer. Inside Simple, Advanced, or
+Restore, Back or Esc returns here." \
         simple "Simple — disk, hostname, user, timezone, weights, this PC vs LAN" \
         advanced "Advanced — every setting" \
         restore "Restore from backup — models, config, and saved extras" \
         mount "Mount a drive or device — backups or model weights") || ui_cancel
+      UI_CANCEL_LABEL=Back
     else
       printf '\n' >/dev/tty
       printf '%s\n' "Simple (recommended): disk, hostname, user, timezone, weights, this PC vs LAN." >/dev/tty
@@ -2572,10 +2589,8 @@ prompt_settings() {
         return 0
       fi
     fi
-    if [[ -n "${INSTALL_MODE_FROM_CLI:-}" ]]; then
-      ui_cancel
-    fi
     INSTALL_MODE=""
+    INSTALL_MODE_FROM_CLI=""
   done
 }
 
@@ -2973,8 +2988,8 @@ hub_edit_access() {
   TABBY_NETWORK_HOST="${host:-0.0.0.0}"
 }
 
-# Review menu: every setting is a row. Esc on a row returns here.
-# Esc on this menu returns to Setup type. Start install leaves the loop.
+# Review menu: every setting is a row. Back on a row returns here.
+# Back on this menu returns to Setup type. Start install leaves the loop.
 prompt_review_hub() {
   local kind=$1 choice v weight_gib model_desc
   TABBY_NETWORK_HOST="${TABBY_NETWORK_HOST:-0.0.0.0}"
@@ -3014,8 +3029,8 @@ prompt_review_hub() {
 "Open a row to change it. Choose Start install when the plan
 looks right.
 
-Esc goes back to Setup type. Next you type the disk path to
-confirm the wipe. After that, the install screen stays up:
+Back or Esc returns to Setup type. Next you type the disk path
+to confirm the wipe. After that, the install screen stays up:
 steps, a progress bar, and the live log." \
       "${items[@]}") || return 1
     UI_ALLOW_BACK=1
@@ -3029,9 +3044,9 @@ steps, a progress bar, and the live log." \
       weights) prompt_weights_source "Weights source" || true ;;
       models)
         if [[ "$kind" == simple ]]; then
-          simple_edit_models
+          simple_edit_models || true
         else
-          hub_edit_models
+          hub_edit_models || true
         fi
         ;;
       network) hub_edit_network ;;
@@ -3059,8 +3074,7 @@ steps, a progress bar, and the live log." \
 }
 
 prompt_settings_simple_tui() {
-  local old_allow=${UI_ALLOW_BACK:-0}
-  UI_ALLOW_BACK=1
+  UI_OK_LABEL=Continue
   ui_msg "Simple setup" \
 "This installs Arch and tabbyapi-stack on the disk you pick.
 
@@ -3080,15 +3094,15 @@ tunnels are under Advanced.
 After the wipe confirm, the install screen stays up with
 the step list, a progress bar, and the live log.
 
-Esc on the review menu goes back to Setup type. Esc on a
-setting returns to the review menu." || { UI_ALLOW_BACK=$old_allow; return 1; }
-  UI_ALLOW_BACK=$old_allow
+Back or Esc returns to Setup type. Back on a setting returns
+to the review menu." || { UI_OK_LABEL=OK; return 1; }
+  UI_OK_LABEL=OK
 
-  prompt_timezone || true
+  prompt_timezone || return 1
   if [[ -z "${TABBY_CACHE:-}" && "${TABBY_MODELS:-core}" == core ]]; then
     TABBY_MODELS="$(simple_model_baseline "$(gpu_vram_mib)")"
   fi
-  simple_edit_models
+  simple_edit_models || return 1
   prompt_review_hub simple
 }
 
@@ -3169,8 +3183,7 @@ on TabbyAPI here at 127.0.0.1:${TABBY_NETWORK_PORT}."
 }
 
 prompt_settings_tui() {
-  local old_allow=${UI_ALLOW_BACK:-0}
-  UI_ALLOW_BACK=1
+  UI_OK_LABEL=Continue
   ui_msg "What this installer does" \
 "Install Arch Linux from this live ISO, then tabbyapi-stack (Python,
 venvs, model weights) before you reboot.
@@ -3189,9 +3202,9 @@ wipe. After that, the install screen stays up: steps, a
 progress bar, elapsed time, and the live log. install.sh
 does not open a second dialog.
 
-Esc on the review menu goes back to Setup type. Esc on a
-setting returns to the review menu." || { UI_ALLOW_BACK=$old_allow; return 1; }
-  UI_ALLOW_BACK=$old_allow
+Back or Esc returns to Setup type. Back on a setting returns
+to the review menu." || { UI_OK_LABEL=OK; return 1; }
+  UI_OK_LABEL=OK
 
   prompt_review_hub advanced
 }
@@ -3528,10 +3541,10 @@ Each row shows its estimated download size.
 Space toggles a row. Enter confirms." \
       hf "" extras "${TABBY_MODELS:-$baseline}") || rc=$?
     case "$rc" in
-      1) return 0 ;;
+      1) return 1 ;;
       2)
         TABBY_MODELS="$baseline"
-        return 0
+        return 1
         ;;
     esac
     candidate="$baseline"
@@ -3549,7 +3562,7 @@ Yes = use this selection.
 No = return to the model checklist." 1 || rc=$?
     case "$rc" in
       0) TABBY_MODELS="$candidate"; break ;;
-      2) return 0 ;;
+      2) return 1 ;;
     esac
   done
 }
@@ -3741,6 +3754,16 @@ self_test() {
   else
     printf 'ok   _ui_fail returns in a subshell (no cancel)\n'
   fi
+  if _ui_fail; then
+    printf 'FAIL _ui_fail should return 1 in this shell\n' >&2
+    failed=1
+  else
+    printf 'ok   _ui_fail returns in this shell (no cancel)\n'
+  fi
+  check "${UI_CANCEL_LABEL:-Back}" Back "default cancel label is Back"
+  UI_CANCEL_LABEL=Exit
+  check "${UI_CANCEL_LABEL:-Back}" Exit "setup type cancel label is Exit"
+  UI_CANCEL_LABEL=Back
   if valid_mount_target /run/media/tsos/backup &&
      ! valid_mount_target /mnt/backup &&
      ! valid_mount_target /run/media/tsos/../backup; then
@@ -4294,8 +4317,9 @@ ${disk_tree}
 
 $(print_plan)
 
-Anything else aborts." \
-      "") || ui_cancel
+Back or Esc returns to the review menu. Anything else other
+than this path also goes back." \
+      "") || return 1
   else
     printf '\n' >/dev/tty
     printf '%s\n' "Settings are done. The installer is waiting for a wipe confirmation." >/dev/tty
@@ -4304,7 +4328,7 @@ Anything else aborts." \
     printf '    %s\n' "$DISK" >/dev/tty
     answer=$(read_tty "Confirm wipe: ")
   fi
-  [[ "$answer" == "$DISK" ]] || die "aborted (typed '$answer', needed '$DISK')"
+  [[ "$answer" == "$DISK" ]] || return 1
 }
 
 collect_passwords() {
@@ -4331,15 +4355,15 @@ collect_passwords() {
     local first second
     if ((USE_TUI)); then
       while true; do
-        ui_password_pair "Password" "$pw_text"
+        ui_password_pair "Password" "$pw_text" || return 1
         first=$REPLY
         second=$REPLY2
         if [[ -z "$first" ]]; then
-          ui_msg "Password required" "The password cannot be empty."
+          ui_msg "Password required" "The password cannot be empty." || true
           continue
         fi
         if [[ "$first" != "$second" ]]; then
-          ui_msg "Passwords did not match" "Try again."
+          ui_msg "Passwords did not match" "Try again." || true
           continue
         fi
         break
@@ -6346,10 +6370,12 @@ EOF
 
 offer_reboot() {
   if ((USE_TUI)); then
-    if ui_yesno "Reboot" \
+    local rc=0
+    ui_yesno "Reboot" \
 "Install finished. Remove the live USB/ISO now.
 
-Reboot into the new system?" 1; then
+Reboot into the new system?" 1 || rc=$?
+    if [[ "$rc" -eq 0 ]]; then
       log "Rebooting"
       reboot || systemctl reboot || true
     else
@@ -6464,26 +6490,37 @@ main() {
     ensure_dialog
     enable_tui_if_possible
   fi
-  if ((CONFIG_PROVIDED)); then
-    pick_disk_if_needed
-  else
-    prompt_settings
-  fi
-  validate_names
-  require_disk
-  assign_partition_numbers
-  if ((USE_TUI == 0)) || ((DRY_RUN)); then
-    print_plan
-  fi
-  if ((DRY_RUN)); then
-    log "dry-run: no changes made"
-    exit 0
-  fi
-  if ((USE_TUI == 0)); then
-    confirm_missing_hf_downloads || ui_cancel
-  fi
-  confirm_wipe
-  collect_passwords
+  local settings_ready=0
+  while true; do
+    if ((CONFIG_PROVIDED)); then
+      pick_disk_if_needed
+    elif ((settings_ready)) && [[ "${INSTALL_MODE:-}" == restore ]]; then
+      prompt_settings_restore || { settings_ready=0; INSTALL_MODE=""; continue; }
+    elif ((settings_ready)) && [[ "${INSTALL_MODE:-}" == simple ]]; then
+      prompt_review_hub simple || { settings_ready=0; INSTALL_MODE=""; continue; }
+    elif ((settings_ready)) && [[ -n "${INSTALL_MODE:-}" ]]; then
+      prompt_review_hub advanced || { settings_ready=0; INSTALL_MODE=""; continue; }
+    else
+      prompt_settings
+    fi
+    settings_ready=1
+    validate_names
+    require_disk
+    assign_partition_numbers
+    if ((USE_TUI == 0)) || ((DRY_RUN)); then
+      print_plan
+    fi
+    if ((DRY_RUN)); then
+      log "dry-run: no changes made"
+      exit 0
+    fi
+    if ((USE_TUI == 0)); then
+      confirm_missing_hf_downloads || { settings_ready=0; continue; }
+    fi
+    confirm_wipe || continue
+    collect_passwords || continue
+    break
+  done
   run_with_gauge install_os_work
   final_message
   offer_reboot

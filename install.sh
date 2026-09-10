@@ -109,21 +109,33 @@ ui_cancel() {
   exit 1
 }
 
-# Widgets abort the installer on Esc unless a review-hub editor set this.
-# $(ui_menu) / $(ui_input) run in a subshell and cannot exit the installer;
-# those callers handle a non-zero status (go back or ui_cancel).
+# Navigation: Cancel/Esc never exits from a widget. Only Setup type (the
+# start page) calls ui_cancel, and that button is labeled Exit.
+# Nested pages use Back.
 UI_ALLOW_BACK=0
+UI_OK_LABEL=OK
+UI_CANCEL_LABEL=Back
 UI_ROWS=24
 UI_COLS=80
 
 _ui_fail() {
-  if [[ "${UI_ALLOW_BACK:-0}" == 1 ]]; then
-    return 1
+  return 1
+}
+
+tui_ok_cancel_args() {
+  if [[ "${TUI:-}" == whiptail ]]; then
+    TUI_BTN=(--ok-button "${UI_OK_LABEL:-OK}" --cancel-button "${UI_CANCEL_LABEL:-Back}")
+  else
+    TUI_BTN=(--ok-label "${UI_OK_LABEL:-OK}" --cancel-label "${UI_CANCEL_LABEL:-Back}")
   fi
-  if ((BASH_SUBSHELL > 0)); then
-    return 1
+}
+
+tui_yesno_args() {
+  if [[ "${TUI:-}" == whiptail ]]; then
+    TUI_BTN=(--yes-button Yes --no-button No)
+  else
+    TUI_BTN=(--yes-label Yes --no-label No)
   fi
-  ui_cancel
 }
 
 box_width() {
@@ -172,11 +184,12 @@ dialog_read() {
   local tmp rc
   DIALOG_OUT=""
   tmp=$(mktemp "${TMPDIR:-/tmp}/tabby-dialog.XXXXXX") || return 1
+  tui_ok_cancel_args
   set +e
   if tty_writable; then
-    dialog --backtitle "$BACKTITLE" "$@" 2> "$tmp" >/dev/tty
+    dialog --backtitle "$BACKTITLE" "${TUI_BTN[@]}" "$@" 2> "$tmp" >/dev/tty
   else
-    dialog --backtitle "$BACKTITLE" "$@" 2> "$tmp"
+    dialog --backtitle "$BACKTITLE" "${TUI_BTN[@]}" "$@" 2> "$tmp"
   fi
   rc=$?
   set -e
@@ -299,9 +312,9 @@ ui_msg() {
     height=$need
   fi
   if [[ "$USE_TUI" -eq 1 && "$TUI" == dialog ]]; then
-    dialog_tty --backtitle "$BACKTITLE" --title "$title" --msgbox "$text" "$height" "$width" || { _ui_fail; return 1; }
+    dialog_tty --backtitle "$BACKTITLE" --ok-label "${UI_OK_LABEL:-OK}" --title "$title" --msgbox "$text" "$height" "$width" || { _ui_fail; return 1; }
   elif [[ "$USE_TUI" -eq 1 && "$TUI" == whiptail ]]; then
-    whiptail --backtitle "$BACKTITLE" --title "$title" --msgbox "$text" "$height" "$width" || { _ui_fail; return 1; }
+    whiptail --backtitle "$BACKTITLE" --ok-button "${UI_OK_LABEL:-OK}" --title "$title" --msgbox "$text" "$height" "$width" || { _ui_fail; return 1; }
   else
     echo
     echo "=== $title ==="
@@ -323,7 +336,8 @@ ui_input() {
     dialog_read --title "$title" --inputbox "$text" "$height" "$width" "$default" || { _ui_fail; return 1; }
     out=$DIALOG_OUT
   elif [[ "$USE_TUI" -eq 1 && "$TUI" == whiptail ]]; then
-    out="$(whiptail --backtitle "$BACKTITLE" --title "$title" --inputbox "$text" "$height" "$width" "$default" 3>&1 1>&2 2>&3)" || { _ui_fail; return 1; }
+    tui_ok_cancel_args
+    out="$(whiptail --backtitle "$BACKTITLE" "${TUI_BTN[@]}" --title "$title" --inputbox "$text" "$height" "$width" "$default" 3>&1 1>&2 2>&3)" || { _ui_fail; return 1; }
   else
     {
       echo
@@ -360,7 +374,8 @@ ui_menu() {
     dialog_read --title "$title" --menu "$text" "$height" "$width" "$list" "$@" || { _ui_fail; return 1; }
     out=$DIALOG_OUT
   elif [[ "$USE_TUI" -eq 1 && "$TUI" == whiptail ]]; then
-    out="$(whiptail --backtitle "$BACKTITLE" --title "$title" --menu "$text" "$height" "$width" "$list" "$@" 3>&1 1>&2 2>&3)" || { _ui_fail; return 1; }
+    tui_ok_cancel_args
+    out="$(whiptail --backtitle "$BACKTITLE" "${TUI_BTN[@]}" --title "$title" --menu "$text" "$height" "$width" "$list" "$@" 3>&1 1>&2 2>&3)" || { _ui_fail; return 1; }
   else
     {
       echo
@@ -412,7 +427,8 @@ ui_checklist() {
     dialog_read --title "$title" --checklist "$text" "$height" "$width" "$list" "$@" || { _ui_fail; return 1; }
     out=$DIALOG_OUT
   elif [[ "$USE_TUI" -eq 1 && "$TUI" == whiptail ]]; then
-    out="$(whiptail --backtitle "$BACKTITLE" --title "$title" --checklist "$text" "$height" "$width" "$list" "$@" 3>&1 1>&2 2>&3)" || { _ui_fail; return 1; }
+    tui_ok_cancel_args
+    out="$(whiptail --backtitle "$BACKTITLE" "${TUI_BTN[@]}" --title "$title" --checklist "$text" "$height" "$width" "$list" "$@" 3>&1 1>&2 2>&3)" || { _ui_fail; return 1; }
   else
     {
       echo
@@ -459,30 +475,26 @@ ui_yesno() {
   if [[ "$USE_TUI" -eq 1 && "$TUI" == dialog ]]; then
     local extra=()
     [[ "$default_yes" -eq 0 ]] && extra=(--defaultno)
+    tui_yesno_args
     # Yes=0, No=1. Capture under set +e so No is not an installer crash.
     set +e
-    dialog_tty --backtitle "$BACKTITLE" --title "$title" "${extra[@]}" --yesno "$text" "$height" "$width"
+    dialog_tty --backtitle "$BACKTITLE" "${TUI_BTN[@]}" --title "$title" "${extra[@]}" --yesno "$text" "$height" "$width"
     rc=$?
     set -e
     if [[ "$rc" -eq 255 ]]; then
-      if [[ "${UI_ALLOW_BACK:-0}" == 1 ]]; then
-        return 2
-      fi
-      ui_cancel
+      return 2
     fi
     return "$rc"
   elif [[ "$USE_TUI" -eq 1 && "$TUI" == whiptail ]]; then
     local extra=()
     [[ "$default_yes" -eq 0 ]] && extra=(--defaultno)
+    tui_yesno_args
     set +e
-    whiptail --backtitle "$BACKTITLE" --title "$title" "${extra[@]}" --yesno "$text" "$height" "$width"
+    whiptail --backtitle "$BACKTITLE" "${TUI_BTN[@]}" --title "$title" "${extra[@]}" --yesno "$text" "$height" "$width"
     rc=$?
     set -e
     if [[ "$rc" -eq 255 ]]; then
-      if [[ "${UI_ALLOW_BACK:-0}" == 1 ]]; then
-        return 2
-      fi
-      ui_cancel
+      return 2
     fi
     return "$rc"
   else
@@ -2233,6 +2245,7 @@ pick_install_mode() {
     return 0
   fi
   local choice
+  UI_CANCEL_LABEL=Exit
   choice="$(ui_menu "Setup type" \
 "Simple (recommended) opens a review menu: this PC vs LAN,
 minimal coding/image models and optional GPU extras from
@@ -2248,11 +2261,12 @@ the other questions.
 
 You can re-run later and pick Advanced to change those.
 
-Esc on this page leaves the installer. Esc inside Simple,
-Advanced, or Restore returns here." \
+Exit or Esc leaves the installer. Inside Simple, Advanced, or
+Restore, Back or Esc returns here." \
     simple "Simple — this PC vs LAN, minimal models + extras" \
     advanced "Advanced — every setting" \
     restore "Restore from backup — models, config, and saved extras")" || ui_cancel
+  UI_CANCEL_LABEL=Back
   INSTALL_MODE="${choice:-simple}"
   valid_install_mode "$INSTALL_MODE" || INSTALL_MODE=simple
 }
@@ -2287,8 +2301,7 @@ the models. Only this summary is shown — no other questions." || true
 }
 
 prompt_simple_install() {
-  local old_allow=${UI_ALLOW_BACK:-0}
-  UI_ALLOW_BACK=1
+  UI_OK_LABEL=Continue
   ui_msg "Simple setup" \
 "tabbyapi-stack: local OpenAI-compatible API for coding and agents,
 plus ComfyUI image generation on Arch.
@@ -2305,9 +2318,9 @@ Needed
   • Arch Linux, your user (not root), internet
   • NVIDIA GPU (docs assume 12 GB)
 
-Esc on the review menu goes back to Setup type. Esc on a
-setting returns to the review menu." || { UI_ALLOW_BACK=$old_allow; return 1; }
-  UI_ALLOW_BACK=$old_allow
+Back or Esc returns to Setup type. Back on a setting returns
+to the review menu." || { UI_OK_LABEL=OK; return 1; }
+  UI_OK_LABEL=OK
 
   DEST="${TABBY_INSTALL_ROOT:-$DEFAULT_DEST}"
   DEST="${DEST:-$DEFAULT_DEST}"
@@ -2327,7 +2340,7 @@ setting returns to the review menu." || { UI_ALLOW_BACK=$old_allow; return 1; }
   if [[ "$MODEL_SET" == core ]]; then
     MODEL_SET="$(simple_model_baseline "$vram")"
   fi
-  simple_edit_models
+  simple_edit_models || return 1
   while true; do
     apply_choices
     apply_network_defaults
@@ -2358,7 +2371,7 @@ setting returns to the review menu." || { UI_ALLOW_BACK=$old_allow; return 1; }
   Models:   ${MODEL_SET}
   Screensaver: ${SAVER_CONFIRM}
 
-Esc goes back to Setup type." \
+Back or Esc returns to Setup type." \
       access "$(printf '%s' "$access" | cut -c1-48)" \
       models "$(printf '%s' "$model_desc" | cut -c1-48)" \
       go "Start install") || return 1
@@ -2370,7 +2383,7 @@ Esc goes back to Setup type." \
         ;;
       models)
         UI_ALLOW_BACK=1
-        simple_edit_models
+        simple_edit_models || true
         UI_ALLOW_BACK=0
         ;;
       go)
@@ -2708,10 +2721,10 @@ Each row shows its estimated download size.
 Space toggles a row. Enter confirms." \
       hf "" extras "${MODEL_SET:-$baseline}") || rc=$?
     case "$rc" in
-      1) return 0 ;;
+      1) return 1 ;;
       2)
         MODEL_SET="$baseline"
-        return 0
+        return 1
         ;;
     esac
     candidate="$baseline"
@@ -2729,7 +2742,7 @@ Yes = use this selection.
 No = return to the model checklist." 1 || rc=$?
     case "$rc" in
       0) MODEL_SET="$candidate"; break ;;
-      2) return 0 ;;
+      2) return 1 ;;
     esac
   done
 }
@@ -3082,8 +3095,7 @@ Default 7. Allowed range is 1–365." \
 }
 
 prompt_advanced_install() {
-  local old_allow=${UI_ALLOW_BACK:-0}
-  UI_ALLOW_BACK=1
+  UI_OK_LABEL=Continue
   if [[ "${TABBY_ISO_CHROOT:-}" == 1 ]]; then
     ui_msg "tabbyapi-stack" \
 "Arch is on the disk. Dest is already
@@ -3093,8 +3105,8 @@ The weights cache was set before the wipe (or Hugging Face).
 A review menu lists models, listen address, optional public
 URL / SSH, screensaver, and auto-update. Open a row to change it.
 
-Esc on the review menu goes back. Esc on a setting returns
-to the review menu." || { UI_ALLOW_BACK=$old_allow; return 1; }
+Back or Esc returns to Setup type. Back on a setting returns
+to the review menu." || { UI_OK_LABEL=OK; return 1; }
     DEST="${TABBY_INSTALL_ROOT:-$DEFAULT_DEST}"
     DEST="${DEST:-$DEFAULT_DEST}"
     WIN_ROOT="${TABBY_CACHE:-}"
@@ -3121,12 +3133,12 @@ then Start install.
 Source: ${TABBY_SRC}
 More detail: ${SCRIPT_DIR}/README.md
 
-Esc on the review menu goes back to Setup type. Esc on a
-setting returns to the review menu." || { UI_ALLOW_BACK=$old_allow; return 1; }
+Back or Esc returns to Setup type. Back on a setting returns
+to the review menu." || { UI_OK_LABEL=OK; return 1; }
     DEST="${TABBY_INSTALL_ROOT:-$DEFAULT_DEST}"
     WIN_ROOT="${TABBY_CACHE:-}"
   fi
-  UI_ALLOW_BACK=$old_allow
+  UI_OK_LABEL=OK
   MODEL_SET="${TABBY_MODELS:-core}"
   apply_network_defaults
   apply_saver_defaults
@@ -3165,8 +3177,8 @@ setting returns to the review menu." || { UI_ALLOW_BACK=$old_allow; return 1; }
 "Open a row to change it. Choose Start install when the plan
 looks right.
 
-Esc goes back to Setup type. The next screen is a progress
-bar and the live log." \
+Back or Esc returns to Setup type. The next screen is a
+progress bar and the live log." \
       "${items[@]}") || return 1
     UI_ALLOW_BACK=1
     case "$choice" in
@@ -3288,10 +3300,8 @@ else
     else
       prompt_advanced_install && break
     fi
-    if [[ -n "${INSTALL_MODE_FROM_CLI:-}" ]]; then
-      ui_cancel
-    fi
     INSTALL_MODE=""
+    INSTALL_MODE_FROM_CLI=""
   done
 fi
 
