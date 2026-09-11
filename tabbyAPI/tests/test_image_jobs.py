@@ -295,6 +295,119 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIsNone(active_mcp_image_job())
                 await reset_mcp_image_jobs_for_tests()
 
+    async def test_foreign_coding_job_is_abandoned_for_a_new_chat(self):
+        from endpoints.core.image_jobs import (
+            CODING_ABANDON_REASON,
+            McpImageItem,
+            McpImageJob,
+            abandon_foreign_coding_job,
+            active_mcp_image_job,
+            reset_mcp_image_jobs_for_tests,
+            start_mcp_image_job,
+        )
+
+        with tempfile.TemporaryDirectory() as raw:
+            with mock.patch("common.gpu_mode.GENERATED_DIR", Path(raw)):
+                await reset_mcp_image_jobs_for_tests()
+                leftover = McpImageJob(
+                    id="844cd0b4-0704-45bf-8b07-9d18d18fa950",
+                    items=[
+                        McpImageItem(
+                            prompt="logo",
+                            output_path="images/logo.png",
+                        )
+                    ],
+                    restore=True,
+                    api_base="https://gpu.example/v1",
+                    wait_text="",
+                    wait_s=0,
+                    status="coding",
+                    phase="writing_code",
+                    code_turns=1,
+                )
+                from endpoints.core.image_jobs import _MCP_JOBS, _MCP_ORDER
+
+                _MCP_JOBS[leftover.id] = leftover
+                _MCP_ORDER.append(leftover.id)
+                self.assertTrue(
+                    abandon_foreign_coding_job(
+                        leftover, owner="pbp", chat_id="ws-fresh"
+                    )
+                )
+                self.assertEqual(leftover.status, "error")
+                self.assertIn("another chat", leftover.error)
+                self.assertIsNone(active_mcp_image_job())
+                self.assertFalse(
+                    abandon_foreign_coding_job(
+                        leftover, owner="pbp", chat_id="ws-fresh"
+                    )
+                )
+
+                same = McpImageJob(
+                    id="same-ws",
+                    items=[
+                        McpImageItem(
+                            prompt="header",
+                            output_path="images/header.png",
+                        )
+                    ],
+                    restore=True,
+                    api_base="https://gpu.example/v1",
+                    wait_text="",
+                    wait_s=0,
+                    status="coding",
+                    phase="writing_code",
+                    owner="pbp",
+                    chat_id="ws-fresh",
+                )
+                self.assertFalse(
+                    abandon_foreign_coding_job(
+                        same, owner="pbp", chat_id="ws-fresh"
+                    )
+                )
+                self.assertEqual(same.status, "coding")
+
+                ghost = McpImageJob(
+                    id="ghost-coding",
+                    items=[
+                        McpImageItem(
+                            prompt="logo",
+                            output_path="images/logo.png",
+                        )
+                    ],
+                    restore=True,
+                    api_base="https://gpu.example/v1",
+                    wait_text="",
+                    wait_s=0,
+                    status="coding",
+                    phase="writing_code",
+                )
+                _MCP_JOBS[ghost.id] = ghost
+                _MCP_ORDER.append(ghost.id)
+                with (
+                    mock.patch(
+                        "images.jobs.launch_mcp_image_job", new=mock.AsyncMock()
+                    ) as launch,
+                    mock.patch(
+                        "images.jobs.restore_llm_profile", return_value="qwen"
+                    ),
+                    mock.patch("images.jobs.refresh_job_wait"),
+                ):
+                    job, kind = await start_mcp_image_job(
+                        seed=None,
+                        restore=True,
+                        api_base="https://gpu.example/v1",
+                        items=[{"prompt": "logo", "output_path": "images/logo.png"}],
+                        owner="pbp",
+                        chat_id="ws-fresh",
+                    )
+                self.assertEqual(kind, "started")
+                self.assertNotEqual(job.id, ghost.id)
+                self.assertEqual(ghost.status, "error")
+                self.assertEqual(ghost.error, CODING_ABANDON_REASON)
+                launch.assert_awaited()
+                await reset_mcp_image_jobs_for_tests()
+
     async def test_persisted_error_job_clears_unfinished_items(self):
         from endpoints.core.image_jobs import (
             McpImageItem,

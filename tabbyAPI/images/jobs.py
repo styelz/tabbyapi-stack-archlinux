@@ -51,6 +51,9 @@ _GENERATE_LOCK: Optional[asyncio.Lock] = None
 _GENERATE_LOCK_LOOP: Optional[asyncio.AbstractEventLoop] = None
 _PERSIST_LOADED = False
 RESTART_ABANDON_REASON = "TabbyAPI restarted before this job finished."
+CODING_ABANDON_REASON = (
+    "Left unused while another chat started writing."
+)
 
 
 @dataclass
@@ -554,6 +557,40 @@ def _mark_job_abandoned(job: McpImageJob, reason: str) -> None:
                 item.error = reason
 
 
+def abandon_foreign_coding_job(
+    job: Optional[McpImageJob],
+    *,
+    owner: str = "",
+    chat_id: str = "",
+    job_id: str = "",
+) -> bool:
+    """Drop a leftover coding job this conversation cannot resume.
+
+    Resume is ``tabby-image-job`` in history, or the same owner+chat
+    workspace. A ghost coding job must not block a new landing-page turn.
+    """
+    if job is None or str(getattr(job, "status", "") or "") != "coding":
+        return False
+    if job_id and str(getattr(job, "id", "") or "") == job_id:
+        return False
+    job_owner = str(getattr(job, "owner", "") or "").strip()
+    job_chat = str(getattr(job, "chat_id", "") or "").strip()
+    owner_name = str(owner or "").strip()
+    chat_name = str(chat_id or "").strip()
+    if (
+        job_owner
+        and job_chat
+        and owner_name
+        and chat_name
+        and job_owner == owner_name
+        and job_chat == chat_name
+    ):
+        return False
+    _mark_job_abandoned(job, CODING_ABANDON_REASON)
+    _persist_jobs()
+    return True
+
+
 def _is_restart_abandon(job: McpImageJob) -> bool:
     return (job.error or "").startswith(RESTART_ABANDON_REASON)
 
@@ -1018,6 +1055,10 @@ async def start_mcp_image_job(
     owner_name = str(owner or "").strip()
     chat_name = str(chat_id or "").strip()
     busy = active_mcp_image_job()
+    if busy and abandon_foreign_coding_job(
+        busy, owner=owner_name, chat_id=chat_name
+    ):
+        busy = None
     if busy:
         busy_owner = str(busy.owner or "").strip()
         busy_chat = str(busy.chat_id or "").strip()

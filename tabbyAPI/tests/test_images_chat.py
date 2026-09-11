@@ -909,6 +909,85 @@ class ChatHoldTests(unittest.IsolatedAsyncioTestCase):
         start.assert_not_called()
         self.assertIn("already generating", response.choices[0].message.content)
 
+    async def test_leftover_coding_job_does_not_block_a_fresh_chat(self):
+        leftover = _job(id="844cd0b4-0704-45bf-8b07-9d18d18fa950", status="coding")
+        leftover.owner = ""
+        leftover.chat_id = ""
+        leftover.items = [
+            SimpleNamespace(
+                prompt="logo",
+                output_path="images/logo.png",
+                urls=[],
+                status="queued",
+                error="",
+            )
+        ]
+        data = _user("Create a simple landing page with a logo and a header photo")
+        new_job = _job(id="new-job", status="queued")
+
+        async def finish(j):
+            j.status = "done"
+            j.items = [
+                SimpleNamespace(
+                    prompt="logo",
+                    output_path="images/logo.png",
+                    urls=["https://gpu.example/v1/images/generated-new.png"],
+                    status="done",
+                )
+            ]
+            return j
+
+        with (
+            mock.patch(
+                "images.chat.classify_image_turn",
+                new=mock.AsyncMock(
+                    return_value=ImageTurnPlan(
+                        action="generate",
+                        items=[{"prompt": "logo", "output_path": "images/logo.png"}],
+                    )
+                ),
+            ),
+            mock.patch("images.chat.active_mcp_image_job", return_value=leftover),
+            mock.patch("images.chat.get_mcp_image_job", return_value=None),
+            mock.patch("images.chat._profile_writes_files", return_value=True),
+            mock.patch(
+                "images.chat._write_site_code",
+                new=mock.AsyncMock(
+                    return_value=ChatCompletionResponse(
+                        model="gpt-4o",
+                        choices=[
+                            ChatCompletionRespChoice(
+                                finish_reason="stop",
+                                message=ChatCompletionMessage(
+                                    role="assistant", content="writing the page"
+                                ),
+                            )
+                        ],
+                    )
+                ),
+            ),
+            mock.patch(
+                "images.chat.start_mcp_image_job",
+                new=mock.AsyncMock(return_value=(new_job, "started")),
+            ) as start,
+            mock.patch("images.chat.wait_mcp_job_progress", side_effect=_progress_finish(finish)),
+            mock.patch("images.paths.gpu_generated_file_missing", return_value=False),
+            mock.patch("images.chat._persist_jobs", create=True),
+            mock.patch("images.jobs._persist_jobs"),
+        ):
+            response = await handle(
+                data,
+                "https://gpu.example/v1",
+                code=True,
+                owner="pbp",
+                chat_id="ws-fresh",
+            )
+        start.assert_awaited()
+        content = response.choices[0].message.content
+        self.assertNotIn("already writing", content)
+        self.assertIn("tabby-image-job:", content)
+        self.assertEqual(leftover.status, "error")
+
     async def test_mixed_ask_while_llm_loading_does_not_start_comfy(self):
         data = _user("Create a website with a logo and photos")
         classify = mock.AsyncMock(

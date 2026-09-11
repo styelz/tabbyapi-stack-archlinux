@@ -17,6 +17,7 @@ from endpoints.OAI.types.chat_completion import ChatCompletionRequest
 from sse_starlette import EventSourceResponse, ServerSentEvent
 
 from images.jobs import (
+    abandon_foreign_coding_job,
     active_mcp_image_job,
     copy_job_to_workspace,
     get_mcp_image_job,
@@ -1616,7 +1617,8 @@ async def handle(
     turn explicitly asks for new rasters. Existing workspace or job dests
     are reuse. Always wins over the 9B while this conversation's job is
     still running. Resume only via ``tabby-image-job: <uuid>`` in this
-    conversation — never by attaching a global coding job.
+    conversation — never by attaching a global coding job. A leftover
+    coding job from another chat is abandoned so a new turn can start.
 
     console=True (management UI) still generates images but never emits
     a download curl. code=True plus a workspace copies finished PNGs into
@@ -1791,16 +1793,20 @@ async def handle(
             busy = active_mcp_image_job()
             if busy and not job_id:
                 if busy.status == "coding":
+                    if not abandon_foreign_coding_job(
+                        busy, owner=owner or "", chat_id=chat_id or ""
+                    ):
+                        return text_response(
+                            data,
+                            f"The stack is already writing a page for job {busy.id}. "
+                            "Wait until that chat finishes, then ask again.",
+                        )
+                else:
                     return text_response(
                         data,
-                        f"The stack is already writing a page for job {busy.id}. "
-                        "Wait until that chat finishes, then ask again.",
+                        f"The GPU is already generating job {busy.id}. "
+                        "Wait until that batch finishes, then ask again.",
                     )
-                return text_response(
-                    data,
-                    f"The GPU is already generating job {busy.id}. "
-                    "Wait until that batch finishes, then ask again.",
-                )
             if workspace:
                 from common.phrase_switch import is_coding_task
 
