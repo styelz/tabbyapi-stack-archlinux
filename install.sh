@@ -3995,10 +3995,22 @@ if [[ -f "$SAVER_UNIT_SRC" ]]; then
     -e "s|__USER_TTY__|$USER_TTY|g" \
     -e "s|__SAVER_URL__|http://127.0.0.1:${TABBY_NETWORK_PORT}|g" \
     "$SAVER_UNIT_SRC" > "$SAVER_TMP"
-  if sudo -n install -m 644 "$SAVER_TMP" /etc/systemd/system/tabby-saver.service \
+  SAVER_UNIT_WROTE=0
+  SAVER_UNIT_OK=0
+  if [[ -f /etc/systemd/system/tabby-saver.service ]] && \
+     cmp -s "$SAVER_TMP" /etc/systemd/system/tabby-saver.service; then
+    echo "tabby-saver.service unchanged" >> "$INSTALL_LOG"
+    SAVER_UNIT_OK=1
+  elif sudo -n install -m 644 "$SAVER_TMP" /etc/systemd/system/tabby-saver.service \
        >>"$INSTALL_LOG" 2>&1; then
     sudo -n systemctl daemon-reload >>"$INSTALL_LOG" 2>&1 || true
     echo "Wrote /etc/systemd/system/tabby-saver.service" >> "$INSTALL_LOG"
+    SAVER_UNIT_WROTE=1
+    SAVER_UNIT_OK=1
+  else
+    echo "WARNING: could not write /etc/systemd/system/tabby-saver.service" >> "$INSTALL_LOG"
+  fi
+  if [[ "$SAVER_UNIT_OK" -eq 1 ]]; then
     sudo -n usermod -aG video,input,tty "$USER" >>"$INSTALL_LOG" 2>&1 || true
     if [[ "${TABBY_SAVER_ENABLED:-1}" == "1" ]]; then
       if sudo -n systemctl enable tabby-saver >>"$INSTALL_LOG" 2>&1; then
@@ -4017,7 +4029,8 @@ if [[ -f "$SAVER_UNIT_SRC" ]]; then
       # start is a no-op if the kiosk is already running, so an update that
       # changed tabby-saver.py / the unit must restart to load the new files.
       if [[ "${TABBY_ISO_CHROOT:-}" != 1 ]]; then
-        if [[ "$UPDATE_MODE" -eq 1 && "${TABBY_SAVER_CHANGED:-1}" == 1 ]] && \
+        if [[ "$UPDATE_MODE" -eq 1 ]] && \
+           { [[ "${TABBY_SAVER_CHANGED:-0}" == 1 ]] || [[ "$SAVER_UNIT_WROTE" -eq 1 ]]; } && \
            systemctl is-active --quiet tabby-saver 2>/dev/null; then
           echo "Restarting tabby-saver (screensaver files changed)" >> "$INSTALL_LOG"
           sudo -n systemctl restart tabby-saver >>"$INSTALL_LOG" 2>&1 || true
@@ -4026,8 +4039,6 @@ if [[ -f "$SAVER_UNIT_SRC" ]]; then
         fi
       fi
     fi
-  else
-    echo "WARNING: could not write /etc/systemd/system/tabby-saver.service" >> "$INSTALL_LOG"
   fi
   rm -f "$SAVER_TMP"
 fi

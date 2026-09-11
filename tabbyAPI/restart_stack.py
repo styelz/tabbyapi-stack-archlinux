@@ -17,10 +17,11 @@ from pathlib import Path
 JOBS_PERSIST = Path(__file__).resolve().parent / "pasted-images" / "mcp_jobs.json"
 RESTART_ABANDON_REASON = "TabbyAPI restarted before this job finished."
 _TABBY = Path(__file__).resolve().parent
+# Source files only. The installed unit is rewritten on every update; its
+# mtime is not a signal that the running kiosk is stale.
 SAVER_SOURCES = (
     _TABBY / "deploy/arch/tabby-saver.py",
     _TABBY / "deploy/arch/tabby-saver.service",
-    Path("/etc/systemd/system/tabby-saver.service"),
 )
 
 

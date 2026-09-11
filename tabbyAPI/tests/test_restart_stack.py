@@ -42,6 +42,14 @@ class RestartStackTests(unittest.TestCase):
             restart_stack.restart_units("llm")
         saver.assert_called_once_with()
 
+    def test_saver_sources_are_checkout_files_not_installed_unit(self):
+        paths = [str(path) for path in restart_stack.SAVER_SOURCES]
+        self.assertTrue(any(path.endswith("tabby-saver.py") for path in paths))
+        self.assertTrue(any(path.endswith("tabby-saver.service") for path in paths))
+        self.assertFalse(
+            any(path == "/etc/systemd/system/tabby-saver.service" for path in paths)
+        )
+
     def test_screensaver_needs_restart_when_files_are_newer(self):
         self.assertTrue(
             restart_stack.screensaver_needs_restart(force=True, pid=0)

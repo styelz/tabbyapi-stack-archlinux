@@ -757,9 +757,15 @@ install_tabby_saver() {
       -e "s|__USER_TTY__|$user_tty|g" \
       -e "s|__SAVER_URL__|http://127.0.0.1:${TABBY_NETWORK_PORT}|g" \
       "$src" > "$tmp"
-    if sudo -n install -m 644 "$tmp" /etc/systemd/system/tabby-saver.service 2>/dev/null; then
+    if [[ -f /etc/systemd/system/tabby-saver.service ]] && \
+       cmp -s "$tmp" /etc/systemd/system/tabby-saver.service; then
+      printf '%s\n' "==> tabby-saver.service unchanged" >> "$UPDATE_LOG"
+    elif sudo -n install -m 644 "$tmp" /etc/systemd/system/tabby-saver.service 2>/dev/null; then
       sudo -n systemctl daemon-reload 2>/dev/null || true
       printf '%s\n' "==> Wrote /etc/systemd/system/tabby-saver.service" >> "$UPDATE_LOG"
+      # Placeholders (TTY, URL) changed even if git did not touch the template.
+      TABBY_SAVER_CHANGED=1
+      export TABBY_SAVER_CHANGED
     else
       printf '%s\n' "WARNING: could not write tabby-saver.service" >> "$UPDATE_LOG"
     fi
