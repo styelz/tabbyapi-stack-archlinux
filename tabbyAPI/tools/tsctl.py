@@ -410,7 +410,7 @@ def tui() -> int:
 
 
 MENU_WIDTH = 76
-MENU_MAX_HEIGHT = 22  # fits an 80x24 console with the backtitle line
+MENU_MAX_HEIGHT = 21  # fits an 80x24 console under the backtitle and its rule
 
 
 def _menu_size(count: int, prompt: str = "") -> tuple[str, str, str]:
