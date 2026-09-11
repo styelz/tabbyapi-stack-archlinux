@@ -102,6 +102,12 @@ class TsctlTests(unittest.TestCase):
             keys = self.tsctl.complete_words(2, ["tsctl", "updates"])
         self.assertIn("interval_days", keys)
         self.assertIn("enable", keys)
+        self.assertIn("git", keys)
+        self.assertIn("all", keys)
+        with mock.patch.object(self.tsctl, "load_settings", return_value=payload):
+            flags = self.tsctl.complete_words(3, ["tsctl", "updates", "git"])
+        self.assertIn("--comfy", flags)
+        self.assertIn("--no-restart", flags)
 
     def test_backup_dry_run_prints_plan_without_copying(self):
         from ui import stack_backup
@@ -142,12 +148,16 @@ class TsctlTests(unittest.TestCase):
 
     def test_menu_groups_use_plain_tags(self):
         groups = [tag for tag, *_ in self.tsctl.MENU_GROUPS]
-        self.assertEqual(groups, ["service", "inference", "server", "host", "data", "help"])
+        self.assertEqual(
+            groups, ["service", "updates", "inference", "server", "host", "data", "help"]
+        )
         service = [tag for tag, *_ in self.tsctl.SERVICE_ACTIONS]
         self.assertEqual(service, ["start", "stop", "restart", "status"])
         backup = [tag for tag, *_ in self.tsctl.BACKUP_ACTIONS]
         self.assertEqual(backup, ["backup", "restore"])
-        for tag in groups + service + backup:
+        update_run = [tag for tag, *_ in self.tsctl.UPDATE_ACTIONS]
+        self.assertEqual(update_run, ["git", "all", "git-comfy", "all-comfy"])
+        for tag in groups + service + backup + update_run:
             self.assertFalse(tag.startswith("_"))
             self.assertFalse(tag.endswith("_"))
 
@@ -180,7 +190,8 @@ class TsctlTests(unittest.TestCase):
             ["model", "draft_model", "lora", "embeddings", "sampling", "memory"],
         )
         self.assertEqual(names("server"), ["network", "logging", "developer", "future_section"])
-        self.assertEqual(names("host"), ["gpu", "screensaver", "updates", "system"])
+        self.assertEqual(names("host"), ["gpu", "screensaver", "system"])
+        self.assertEqual(names("updates"), ["updates"])
         self.assertEqual(names("service"), [])
         self.assertEqual(names("data"), [])
         shown = [section["name"] for tag in grouped for section in grouped[tag]]
@@ -206,6 +217,45 @@ class TsctlTests(unittest.TestCase):
             [call.args[0] for call in run.call_args_list],
             ["start", "stop", "restart", "status"],
         )
+
+    def test_parse_update_run(self):
+        self.assertEqual(self.tsctl.parse_update_run(["git"]), ("git", False, None))
+        self.assertEqual(self.tsctl.parse_update_run(["all", "--comfy"]), ("all", True, None))
+        self.assertEqual(
+            self.tsctl.parse_update_run(["git-comfy", "--no-restart"]),
+            ("git", True, False),
+        )
+        self.assertEqual(
+            self.tsctl.parse_update_run(["all-comfy", "--restart"]),
+            ("all", True, True),
+        )
+
+    def test_run_stack_update_builds_update_sh_args(self):
+        script = Path("/tmp/tabbyapi-stack/update.sh")
+        with mock.patch.object(self.tsctl, "update_script", return_value=script):
+            with mock.patch("subprocess.call", return_value=0) as call:
+                code = self.tsctl.run_stack_update("all", comfy=True, restart=None)
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            call.call_args[0][0],
+            ["bash", str(script), "--all", "--comfy"],
+        )
+
+    def test_dispatch_updates_runs_update_sh(self):
+        payload = {
+            "ok": True,
+            "tabby": [],
+            "updates": {
+                "name": "updates",
+                "fields": [{"name": "enabled", "kind": "bool", "value": True}],
+            },
+            "system": {"name": "system", "fields": []},
+        }
+        with mock.patch.object(self.tsctl, "load_settings", return_value=payload):
+            with mock.patch.object(self.tsctl, "run_stack_update", return_value=0) as run:
+                code = self.tsctl.dispatch(["updates", "git", "--no-restart"])
+        self.assertEqual(code, 0)
+        run.assert_called_once_with("git", comfy=False, restart=False)
 
     def test_api_restart_refreshes_screensaver(self):
         with (

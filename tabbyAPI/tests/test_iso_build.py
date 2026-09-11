@@ -161,6 +161,14 @@ class IsoBuildSmallTests(unittest.TestCase):
         self.assertIn('[[ "${UPDATE_MODE:-0}" -eq 0 ]] || return 0', src)
         self.assertIn("--exclude 'pasted-images/'", src)
 
+    def test_installer_clears_screen_before_last_info(self):
+        src = INSTALLER.read_text(encoding="utf-8")
+        self.assertIn("clear_screen()", src)
+        self.assertIn("tput clear", src)
+        self.assertIn("final_message()", src)
+        live = ROOT / "iso" / "tsos-live-install.sh"
+        self.assertIn("tput clear", live.read_text(encoding="utf-8"))
+
     def test_installer_hides_unused_dialog_percent_marker(self):
         src = INSTALLER.read_text(encoding="utf-8")
         self.assertIn("use_scrollbar = OFF", src)

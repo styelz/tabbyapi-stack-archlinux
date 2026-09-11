@@ -132,10 +132,11 @@ The GPU moves to ComfyUI, the image URL comes from this same server (including a
 On the GPU host:
 
 ```bash
-bash "$HOME/tabbyapi-stack/update.sh"
+tsctl updates git          # or: bash "$HOME/tabbyapi-stack/update.sh" --git
+tsctl updates all          # pull, deps, and restart
 ```
 
-**Update git** pulls code. It does not rebuild the Code sandbox image or refresh Python deps. After the pull, Status offers Restart or Skip; the API only needs a bounce when Python it already loaded changed. The TTY screensaver restarts on its own if `tabby-saver.py` or its unit changed in that pull. **Update all** also refreshes dependencies, rebuilds a missing sandbox image, and restarts. Status can do the same. Auto-update (default every 7 days) runs Update all when the API is idle; **Settings → Updates** or `tsctl updates disable` turns it off. Config, `tabby.env`, weights, and the venv stay. This is not a full Arch upgrade.
+**Update git** pulls code. It does not rebuild the Code sandbox image or refresh Python deps. After the pull, Status (or `update.sh`) offers Restart or Skip; the API only needs a bounce when Python it already loaded changed. The TTY screensaver restarts on its own if `tabby-saver.py` or its unit changed in that pull. **Update all** also refreshes dependencies, rebuilds a missing sandbox image, and restarts. Status and the **tsctl Updates** menu can do the same. Auto-update (default every 7 days) runs Update all when the API is idle; **Settings → Updates** or `tsctl updates disable` turns it off. Config, `tabby.env`, weights, and the venv stay. This is not a full Arch upgrade.
 
 ## More
 

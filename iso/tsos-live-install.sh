@@ -71,6 +71,10 @@ set -e
 if [[ -x "$SPLASH" ]]; then
   bash "$SPLASH" --quit || true
 fi
+{
+  command -v tput >/dev/null 2>&1 && tput clear || printf '\033[H\033[2J'
+  printf '\033[?25h\033[m'
+} >/dev/tty 2>/dev/null || true
 printf '\n'
 if ((status != 0)); then
   printf 'Installer exited with status %s.\n' "$status"

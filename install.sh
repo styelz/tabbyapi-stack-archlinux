@@ -105,6 +105,9 @@ prompt() {
 }
 
 ui_cancel() {
+  if declare -F clear_screen >/dev/null; then
+    clear_screen
+  fi
   echo "Installer cancelled."
   exit 1
 }
@@ -1160,6 +1163,20 @@ restore_tty() {
   } >/dev/tty 2>/dev/null || true
 }
 
+# Last user-visible lines go on a clean console, not leftover dialog/gauge.
+clear_screen() {
+  [[ "${TABBY_NESTED_UI:-}" == 1 ]] && return 0
+  restore_tty
+  [[ -t 1 ]] || return 0
+  {
+    if command -v tput >/dev/null 2>&1; then
+      tput clear || true
+    else
+      printf '\033[H\033[2J'
+    fi
+  } >/dev/tty 2>/dev/null || true
+}
+
 progress_stop() {
   if [[ -n "${SUDO_KEEPALIVE_PID:-}" ]]; then
     kill "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
@@ -1205,6 +1222,7 @@ Full log:
   ${INSTALL_LOG}" \
       22 74 || true
   fi
+  clear_screen
   echo
   echo "Install failed. Last lines of ${INSTALL_LOG:-the log}:"
   [[ -n "$tail_txt" ]] && printf '%s\n' "$tail_txt"
@@ -4179,6 +4197,9 @@ TTY screensaver (spare VT, default tty8; on unless a desktop owns the GPU)
 
 Auto-update (user timer, default every 7 days)
   Status / Settings → Updates, or:
+  tsctl updates git            pull origin (same as update.sh --git)
+  tsctl updates all            pull, deps, and restart (update.sh --all)
+  tsctl updates git --comfy
   tsctl updates enable
   tsctl updates interval_days=7
   tsctl updates disable
@@ -4298,6 +4319,7 @@ Update
   $DEST/update.sh --no-restart skip the restart prompt on Update git
   $DEST/update.sh --all        pull, then apply deps and restart
   $DEST/update.sh --comfy      also pull ComfyUI and ComfyUI-GGUF
+  tsctl updates git|all        same functions from the tsctl Updates menu
 
   This folder is the git checkout. You do not need a second clone.
   config.yml, tabby.env, models, venv, and ComfyUI weights are kept.
@@ -4345,43 +4367,7 @@ The tunnel will not stay up until this key is on that host." \
     22
 fi
 
-if [[ "$INTERACTIVE" -eq 1 ]]; then
-  ui_msg "Install finished" \
-"TabbyAPI and ComfyUI are set up.
-${START_NOTE:+
-  NOTE: $START_NOTE
-}
-  API:     $API_URL
-  Start:   $DEST/start.sh
-  Health:  GET $API_URL/health
-  Editor:  $API_URL/v1   model gpt-4o  (leave it — else your editor or IDE may sandbox / block tools)
-  Agents:  $DEST/AGENTS.md
-  Images:  chat “generate an image of …” or POST /v1/images/generations
-  UI:      Chat, Code, Status, Gallery, Logs (Users is admin-only)
-
-Chat phrases (send as the whole message)
-  help
-  list models
-  restart
-  switch to qwen / qwen35 / qwen36 / gemma / gemma26 / glm
-  switch to comfy   then wait ~35s for images
-  switch to llm     to unload Comfy
-
-IDE / agent notes (not Cursor-only):
-  ${DEST}/AGENTS.md
-
-To remove this install later:
-  ${DEST}/uninstall.sh            (stops the services first — do not rm -rf)
-  ${DEST}/uninstall.sh --dry-run  to preview
-
-To pull later git changes on this install:
-  ${DEST}/update.sh
-
-The same how-to is in:
-  ${HOWTO}
-
-Linger starts TabbyAPI at boot (no login)."
-fi
+clear_screen
 
 if [[ "$UPDATE_MODE" -eq 1 ]]; then
   echo "Update finished."
@@ -4394,4 +4380,5 @@ echo "  UI:      $API_URL/v1/ui"
 echo "  Log:     $INSTALL_LOG"
 echo "  How-to:  $HOWTO"
 echo "  Update:  $DEST/update.sh"
+echo "           tsctl updates git | tsctl updates all"
 

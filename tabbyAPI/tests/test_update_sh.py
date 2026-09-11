@@ -22,6 +22,10 @@ class UpdateShRestartOptionTests(unittest.TestCase):
         self.assertIn("use_scrollbar = OFF", src)
         self.assertIn("position_indicator_color = (WHITE,WHITE,ON)", src)
         self.assertIn("write_dialogrc", src)
+        self.assertIn("clear_screen()", src)
+        self.assertIn("finish_out()", src)
+        self.assertIn("|git) UPDATE_KIND=git; shift ;;", src)
+        self.assertIn("|all) UPDATE_KIND=all; shift ;;", src)
 
     def test_git_update_always_offers_restart_button(self):
         src = UPDATE_SH.read_text()
@@ -29,6 +33,7 @@ class UpdateShRestartOptionTests(unittest.TestCase):
         self.assertIn('--no-label "Skip"', src)
         self.assertIn("Already up to date. Restart tabbyapi anyway", src)
         self.assertIn("if ask_restart_api; then", src)
+        self.assertIn('finish_out "Update git"', src)
         self.assertIn("git_should_auto_restart", src)
         self.assertIn("if [[ ! -t 1 ]]; then", src)
         self.assertNotIn('if [[ ! -t 1 && ! -c /dev/tty ]]; then', src)
@@ -65,6 +70,7 @@ class UpdateShRestartOptionTests(unittest.TestCase):
             'if [[ "$pulled" -eq 0 ]]; then\n    ui_msg "Update git" "Already up to date. The API was not restarted.',
             src,
         )
+        self.assertIn('finish_out "Update git" "$done_ok The API was not restarted.', src)
 
     def test_origin_wrappers_win_when_pull_changes_them(self):
         src = UPDATE_SH.read_text()
@@ -413,3 +419,5 @@ class InstallShHeadlessUpdateTests(unittest.TestCase):
             'if [[ "$UPDATE_MODE" -eq 1 && "$USE_TUI" -eq 0 ]] && tty_writable; then',
             src,
         )
+        self.assertIn("clear_screen()", src)
+        self.assertIn("tput clear", src)

@@ -264,6 +264,9 @@ die() {
   if declare -F gauge_stop >/dev/null; then
     gauge_stop || true
   fi
+  if declare -F clear_screen >/dev/null; then
+    clear_screen
+  fi
   printf 'error: %s\n' "$*" >&2
   if [[ ! -t 2 ]] && have_console; then
     printf 'error: %s\n' "$*" >/dev/tty
@@ -418,6 +421,19 @@ restore_tty() {
     }
     stty sane
   } </dev/tty >/dev/tty 2>/dev/null || true
+}
+
+# Last user-visible lines go on a clean console, not leftover dialog/gauge.
+clear_screen() {
+  restore_tty
+  [[ -t 1 ]] || return 0
+  {
+    if command -v tput >/dev/null 2>&1; then
+      tput clear || true
+    else
+      printf '\033[H\033[2J'
+    fi
+  } >/dev/tty 2>/dev/null || true
 }
 
 # Work phase: the install page is painted by this process on the console.
@@ -1078,6 +1094,7 @@ Full log:
   ${TSOS_LOG}" 16 70 >&4 2>&5 || true
     fi
     gauge_stop
+    clear_screen
     printf 'error: %s\n' "${err:-exit ${rc}}" >&2
     exit "$rc"
   fi
@@ -6332,6 +6349,7 @@ cleanup() {
 }
 
 final_message() {
+  clear_screen
   if [[ -f "$TARGET/etc/tsos/install.conf" ]]; then
     # shellcheck disable=SC1090
     source "$TARGET/etc/tsos/install.conf"
@@ -6398,6 +6416,7 @@ Reboot into the new system?" 1 || rc=$?
       reboot || systemctl reboot || true
     else
       log "Staying on the live ISO"
+      final_message
     fi
     return 0
   fi

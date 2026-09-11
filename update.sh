@@ -20,11 +20,13 @@ RESTART_API="${TABBY_UPDATE_RESTART:-}"
 usage() {
   cat <<EOF
 Usage: $(basename "$0") [--git|--all] [--comfy] [--restart|--no-restart]
+       $(basename "$0") git|all [--comfy] [--restart|--no-restart]
 
 Pull origin into this install. At the start a dialog asks Update git or
 Update all. If this script itself changes in that pull, it re-runs so the
 new update.sh is used. config.yml, tabby.env, models, and venv stay.
 Does not run pacman -Syu or upgrade already-installed OS packages.
+tsctl updates git|all runs the same functions.
 
 Options
   --git         Git pull only. No pip, missing OS packages, or Code sandbox
@@ -54,8 +56,8 @@ EOF
 
 while (($#)); do
   case "$1" in
-    --git|--files|--files-only) UPDATE_KIND=git; shift ;;
-    --all|--full) UPDATE_KIND=all; shift ;;
+    --git|--files|--files-only|git) UPDATE_KIND=git; shift ;;
+    --all|--full|all) UPDATE_KIND=all; shift ;;
     --comfy) UPDATE_COMFY=1; shift ;;
     --restart) RESTART_API=1; shift ;;
     --no-restart) RESTART_API=0; shift ;;
@@ -116,6 +118,7 @@ die() {
   if [[ "$UI_STARTED" -eq 1 ]]; then
     ui_fail "$*"
   fi
+  clear_screen
   echo "$*" >&2
   exit 1
 }
@@ -132,6 +135,28 @@ restore_tty() {
     printf '\033[?1049l\033[?25h\033[m'
     stty sane
   } >/dev/tty 2>/dev/null || true
+}
+
+# Last user-visible lines go on a clean console, not leftover dialog/gauge.
+clear_screen() {
+  restore_tty
+  [[ -t 1 ]] || return 0
+  {
+    if command -v tput >/dev/null 2>&1; then
+      tput clear || true
+    else
+      printf '\033[H\033[2J'
+    fi
+  } >/dev/tty 2>/dev/null || true
+}
+
+finish_out() {
+  local title="$1"
+  local text="$2"
+  progress_stop
+  trap - EXIT
+  clear_screen
+  printf '\n=== %s ===\n%s\n\n' "$title" "$text"
 }
 
 progress_stop() {
@@ -221,19 +246,6 @@ ui_start() {
   ui_gauge_only
 }
 
-ui_msg() {
-  local title="$1"
-  local text="$2"
-  if [[ -t 1 ]] && need_cmd dialog; then
-    dialog --backtitle "$BACKTITLE" --title "$title" --msgbox "$text" 12 74 || true
-  else
-    echo
-    echo "=== $title ==="
-    echo "$text"
-    echo
-  fi
-}
-
 ui_yesno() {
   local title="$1"
   local text="$2"
@@ -282,9 +294,9 @@ Full log: $UPDATE_LOG"
   fi
   if [[ -t 1 ]] && need_cmd dialog; then
     dialog --backtitle "$BACKTITLE" --title "Update failed" --msgbox "$msg" 20 74 || true
-  else
-    echo "$msg" >&2
   fi
+  clear_screen
+  echo "$msg" >&2
   exit 1
 }
 
@@ -570,9 +582,7 @@ Check: journalctl --user -u tabbyapi -e
 Log: $UPDATE_LOG"
   fi
   progress 100 "API healthy"
-  trap - EXIT
-  progress_stop
-  ui_msg "Update git" "$done_msg
+  finish_out "Update git" "$done_msg
 
 Log: $UPDATE_LOG"
 }
@@ -812,9 +822,7 @@ finish_git_update() {
 
   skip_restart() {
     progress 100 "Git update finished"
-    trap - EXIT
-    progress_stop
-    ui_msg "Update git" "$done_ok The API was not restarted.
+    finish_out "Update git" "$done_ok The API was not restarted.
 
 Reload later with:
   systemctl --user restart tabbyapi

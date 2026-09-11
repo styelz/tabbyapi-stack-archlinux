@@ -38,8 +38,21 @@ BACKUP_ACTIONS = (
     ("backup", "Backup", "Copy model weights and optional stack data to a folder"),
     ("restore", "Restore", "Restore a stack backup folder onto this host"),
 )
+UPDATE_ACTIONS = (
+    ("git", "Update git", "Pull origin; optional API restart"),
+    ("all", "Update all", "Pull, Python deps, and restart"),
+    ("git-comfy", "Update git + Comfy", "Also pull ComfyUI and ComfyUI-GGUF"),
+    ("all-comfy", "Update all + Comfy", "Comfy pull, deps, and restart"),
+)
+UPDATE_ACTION_TAGS = tuple(tag for tag, *_ in UPDATE_ACTIONS)
 MENU_GROUPS = (
     ("service", "Service", "Start, stop, restart TabbyAPI; unit status", tuple(tag for tag, *_ in SERVICE_ACTIONS)),
+    (
+        "updates",
+        "Updates",
+        "Update git / Update all; auto-update timer",
+        ("updates",),
+    ),
     (
         "inference",
         "Model and inference",
@@ -47,7 +60,7 @@ MENU_GROUPS = (
         ("model", "draft_model", "lora", "embeddings", "sampling", "memory"),
     ),
     ("server", "Server", "config.yml: network, logging, developer", ("network", "logging", "developer")),
-    ("host", "Host", "tabby.env: GPU, screensaver, updates, system", ("gpu", "screensaver", "updates", "system")),
+    ("host", "Host", "tabby.env: GPU, screensaver, system", ("gpu", "screensaver", "system")),
     ("data", "Backup and restore", "Model weights and stack data, to/from a folder", tuple(tag for tag, *_ in BACKUP_ACTIONS)),
     ("help", "Help", "Command-line usage", ()),
 )
@@ -63,7 +76,7 @@ SECTION_INFO = {
     "developer": ("Developer", "Experimental flags"),
     "gpu": ("GPU", "Fan profile, power limit, persistence, live sensors"),
     "screensaver": ("Screensaver", "TTY kiosk and idle timeouts"),
-    "updates": ("Updates", "Auto-update timer"),
+    "updates": ("Updates", "Update git / Update all; auto-update timer"),
     "system": ("System", "ComfyUI, SSH tunnel, log level, tokens"),
 }
 # Sections with a "status" action in the menu and what it shows.
@@ -84,6 +97,9 @@ tsctl — tabbyapi-stack settings
   tsctl <section> <key> <value>
   tsctl screensaver enable|disable|status
   tsctl screensaver hud-timeout=300   idle clock seconds; 0 hides it
+  tsctl updates                     auto-update settings
+  tsctl updates git [--comfy] [--restart|--no-restart]
+  tsctl updates all [--comfy]
   tsctl updates enable|disable|status
   tsctl updates interval_days=7
   tsctl gpu                     settings plus live sensors
@@ -194,6 +210,70 @@ def apply_sets(section_name: str, pairs: list[tuple[str, str]]) -> dict[str, Any
     if name == "system":
         return save_settings({"system": updates})
     return save_settings({"tabby": {name: updates}})
+
+
+def clear_terminal() -> None:
+    if not sys.stdout.isatty():
+        return
+    try:
+        subprocess.run(["tput", "clear"], check=False)
+    except OSError:
+        print("\033[H\033[2J", end="", flush=True)
+
+
+def stack_root() -> Path:
+    return TABBY_ROOT.parent
+
+
+def update_script() -> Path:
+    script = stack_root() / "update.sh"
+    if not script.is_file():
+        raise SettingsError(f"update.sh not found at {script}")
+    return script
+
+
+def parse_update_run(tokens: list[str]) -> tuple[str, bool, Optional[bool]]:
+    if not tokens or tokens[0] not in UPDATE_ACTION_TAGS:
+        raise SettingsError(
+            "Usage: tsctl updates git|all|git-comfy|all-comfy [--comfy] [--restart|--no-restart]"
+        )
+    action = tokens[0]
+    kind = "all" if action.startswith("all") else "git"
+    comfy = action.endswith("-comfy")
+    restart: Optional[bool] = None
+    allowed = {"--comfy", "--restart", "--no-restart"}
+    unknown = [token for token in tokens[1:] if token not in allowed]
+    if unknown:
+        raise SettingsError(f"Unknown updates option: {unknown[0]}")
+    if "--comfy" in tokens[1:]:
+        comfy = True
+    if "--restart" in tokens[1:]:
+        restart = True
+    if "--no-restart" in tokens[1:]:
+        restart = False
+    return kind, comfy, restart
+
+
+def run_stack_update(kind: str, *, comfy: bool = False, restart: Optional[bool] = None) -> int:
+    args = ["bash", str(update_script())]
+    if kind == "git":
+        args.append("--git")
+    elif kind == "all":
+        args.append("--all")
+    else:
+        raise SettingsError(f"Unknown update kind {kind}")
+    if comfy:
+        args.append("--comfy")
+    if restart is True:
+        args.append("--restart")
+    elif restart is False:
+        args.append("--no-restart")
+    return subprocess.call(args)
+
+
+def run_stack_update_from_argv(tokens: list[str]) -> int:
+    kind, comfy, restart = parse_update_run(tokens)
+    return run_stack_update(kind, comfy=comfy, restart=restart)
 
 
 def saver_status() -> int:
@@ -359,11 +439,22 @@ def complete_words(cword: int, words: list[str]) -> list[str]:
     if section.get("name") == "screensaver":
         names.extend(["enable", "disable", "status", "timeout", "logout-timeout"])
     if section.get("name") == "updates":
-        names.extend(["enable", "disable", "status", "interval_days", "interval-days"])
+        names.extend(
+            [
+                "enable",
+                "disable",
+                "status",
+                "interval_days",
+                "interval-days",
+                *UPDATE_ACTION_TAGS,
+            ]
+        )
     if section.get("name") == "gpu":
         names.extend([*GPU_PROFILE_NAMES, "status", "apply", "fan-speed", "power-limit"])
     if cword == 2:
         return sorted(set(names))
+    if cword >= 3 and section.get("name") == "updates" and words[2] in UPDATE_ACTION_TAGS:
+        return ["--comfy", "--restart", "--no-restart"]
     if cword == 3 and section.get("name") == "gpu" and words[2] in ("profile",):
         return list(GPU_PROFILE_NAMES)
     return []
@@ -516,11 +607,14 @@ def tui_dialog() -> int:
             ]
         )
         if code != 0 or not choice:
+            clear_terminal()
             return 0
         if choice == "help":
             run_dialog(["--title", "tsctl help", "--msgbox", USAGE, "0", "0"])
         elif choice == "service":
             dialog_service()
+        elif choice == "updates":
+            dialog_updates()
         elif choice == "data":
             dialog_backup_menu()
         else:
@@ -553,6 +647,50 @@ def dialog_service() -> int:
             run_dialog(["--infobox", f"{choice.capitalize()}ing TabbyAPI…", "3", "40"])
         note = _capture(api_unit, choice) or "ok"
         run_dialog(["--title", "Service", "--msgbox", note, "0", "0"])
+    return 0
+
+
+def dialog_updates() -> int:
+    while True:
+        items: list[str] = []
+        for tag, title, blurb in UPDATE_ACTIONS:
+            items.extend([tag, f"{title:<22} {blurb}"])
+        items.extend(["settings", f"{'Settings':<22} Auto-update timer and interval"])
+        items.extend(["status", SECTION_STATUS["updates"]])
+        count = (len(UPDATE_ACTIONS) + 2)
+        height, width, rows = _menu_size(count)
+        code, choice = run_dialog(
+            [
+                "--title",
+                "Updates",
+                "--no-tags",
+                "--menu",
+                "Runs update.sh. Update git pulls; Update all also refreshes deps and restarts.",
+                height,
+                width,
+                rows,
+                *items,
+            ]
+        )
+        if code != 0 or not choice:
+            return 0
+        if choice in UPDATE_ACTION_TAGS:
+            try:
+                run_stack_update_from_argv([choice])
+            except SettingsError as exc:
+                run_dialog(["--title", "Updates", "--msgbox", str(exc), "8", "60"])
+                continue
+            if sys.stdin.isatty():
+                try:
+                    input("Press Enter to return to tsctl...")
+                except EOFError:
+                    pass
+            continue
+        if choice == "status":
+            note = _capture(updates_status) or "No status."
+            run_dialog(["--title", "Updates status", "--msgbox", note, "0", "0"])
+            continue
+        dialog_section("updates")
     return 0
 
 
@@ -745,6 +883,10 @@ def repl() -> int:
                     options.extend(
                         name for name in (*GPU_PROFILE_NAMES, "status") if name.startswith(text)
                     )
+                if section.get("name") == "updates":
+                    options.extend(
+                        name for name in (*UPDATE_ACTION_TAGS, "status") if name.startswith(text)
+                    )
             except SettingsError:
                 options = []
         return options[state] if state < len(options) else None
@@ -760,8 +902,10 @@ def repl() -> int:
             line = input("tsctl> ").strip()
         except (EOFError, KeyboardInterrupt):
             print()
+            clear_terminal()
             return 0
         if not line or line in ("q", "quit", "exit"):
+            clear_terminal()
             return 0
         try:
             code = dispatch(shlex.split(line))
@@ -992,6 +1136,8 @@ def dispatch(argv: list[str]) -> int:
             return updates_status()
         body = save_settings({"updates": {"enabled": rest[0] == "enable"}})
         return report_save(body)
+    if section_name == "updates" and rest and rest[0] in UPDATE_ACTION_TAGS:
+        return run_stack_update_from_argv(rest)
     if section_name == "gpu":
         if not rest or rest[0] == "status":
             return gpu_status()
@@ -1028,6 +1174,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(f"tsctl: {exc}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
+        clear_terminal()
         return 130
 
 

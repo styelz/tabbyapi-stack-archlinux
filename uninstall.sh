@@ -76,7 +76,23 @@ need_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
 
+clear_screen() {
+  [[ -t 1 ]] || return 0
+  {
+    command -v tput >/dev/null 2>&1 && {
+      tput rmcup || true
+      tput rmkx || true
+      tput cnorm || true
+      tput sgr0 || true
+      tput clear || true
+    } || printf '\033[H\033[2J'
+    printf '\033[?1049l\033[?25h\033[m'
+    stty sane
+  } >/dev/tty 2>/dev/null || true
+}
+
 die() {
+  clear_screen
   echo "$*" >&2
   exit 1
 }
@@ -442,7 +458,7 @@ if [[ "$DISABLE_LINGER" -eq 1 ]]; then
   fi
 fi
 
-echo
+clear_screen
 if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "Dry run finished. Re-run without --dry-run to apply."
   exit 0
