@@ -344,6 +344,60 @@ class SlashCommandTests(unittest.TestCase):
         self.assertIn("not installed", text)
         self.assertIn("Models page", text)
 
+    def test_console_chat_uses_dropdown_switch_path(self):
+        from pathlib import Path
+
+        src = Path(__file__).resolve().parents[1] / "ui" / "chat.py"
+        text = src.read_text(encoding="utf-8")
+        self.assertIn("apply_gpu_mode", text)
+        self.assertIn("missing_profile_reply", text)
+        self.assertNotIn("start_switch(name)", text)
+
+
+class ConsolePhraseSwitchTests(unittest.IsolatedAsyncioTestCase):
+    async def _run(self, text):
+        from ui.chat import _run_console_work
+
+        data = ChatCompletionRequest(
+            messages=[ChatCompletionMessage(role="user", content=text)],
+            stream=False,
+        )
+        handler = mock.Mock()
+        handler.poll = mock.AsyncMock()
+        return await _run_console_work(
+            mock.Mock(),
+            data,
+            "pbp",
+            "c1",
+            False,
+            [],
+            "http://x",
+            handler,
+        )
+
+    async def test_phrase_switch_uses_apply_gpu_mode(self):
+        apply = mock.AsyncMock()
+        with (
+            mock.patch("ui.chat.requested_profile", return_value="gemma"),
+            mock.patch("ui.chat.missing_profile_reply", return_value=None),
+            mock.patch("ui.router.apply_gpu_mode", apply),
+            mock.patch("ui.chat.switch_reply_text", return_value="Switching to gemma."),
+        ):
+            result = await self._run("switch to gemma")
+        apply.assert_awaited_once_with("gemma")
+        self.assertIn("Switching to gemma", result.choices[0].message.content)
+
+    async def test_missing_profile_skips_apply_gpu_mode(self):
+        apply = mock.AsyncMock()
+        with (
+            mock.patch("ui.chat.requested_profile", return_value="qwen36"),
+            mock.patch("ui.chat.missing_profile_reply", return_value="qwen36 is not installed."),
+            mock.patch("ui.router.apply_gpu_mode", apply),
+        ):
+            result = await self._run("switch to qwen36")
+        apply.assert_not_called()
+        self.assertIn("not installed", result.choices[0].message.content)
+
 
 class UnpumpedAssistantTextTests(unittest.TestCase):
     def test_job_mark_and_hint_after_live_stream(self):

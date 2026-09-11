@@ -303,7 +303,7 @@ class GatedGpuSwitchTests(unittest.IsolatedAsyncioTestCase):
     async def test_console_phrase_switch_waits_for_gate(self):
         from ui.chat import run_console_chat
 
-        start = mock.Mock()
+        apply = mock.AsyncMock()
         handler = mock.Mock()
         handler.poll = mock.AsyncMock()
         request = mock.Mock()
@@ -319,7 +319,8 @@ class GatedGpuSwitchTests(unittest.IsolatedAsyncioTestCase):
         with (
             mock.patch("ui.chat.handle_if_requested", return_value=None),
             mock.patch("ui.chat.requested_profile", return_value="qwen"),
-            mock.patch("ui.chat.start_switch", start),
+            mock.patch("ui.chat.missing_profile_reply", return_value=None),
+            mock.patch("ui.router.apply_gpu_mode", apply),
             mock.patch("ui.chat.switch_reply_text", return_value="Switching to qwen."),
             mock.patch("ui.chat.DisconnectHandler", return_value=handler),
             mock.patch("ui.chat.public_api_base", return_value="http://x"),
@@ -330,10 +331,10 @@ class GatedGpuSwitchTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(oid)
             task = asyncio.create_task(run_console_chat(request, body, username="bob"))
             await asyncio.sleep(0)
-            self.assertFalse(start.called)
+            self.assertFalse(apply.called)
             await occupancy.release(oid)
             result = await asyncio.wait_for(task, timeout=2)
-        start.assert_called_once_with("qwen")
+        apply.assert_awaited_once_with("qwen")
         self.assertIn("Switching to qwen", result.choices[0].message.content)
 
     def test_help_still_skips_the_gate(self):

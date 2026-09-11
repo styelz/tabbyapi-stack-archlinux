@@ -21,10 +21,10 @@ from common.phrase_switch import (
     is_restart_request,
     last_user_text,
     looks_like_chat_not_image,
+    missing_profile_reply,
     requested_profile,
     restart_reply_text,
     start_restart,
-    start_switch,
     stream_text,
     stream_tool_calls,
     switch_reply_text,
@@ -204,7 +204,16 @@ async def _run_console_work(
         return text_response(data, restart_reply_text())
     name = requested_profile(data)
     if name:
-        start_switch(name)
+        missing = missing_profile_reply(name)
+        if missing:
+            return text_response(data, missing)
+        # Same loader as the header GPU dropdown, not switch_model.py.
+        from ui.router import apply_gpu_mode
+
+        try:
+            await apply_gpu_mode(name)
+        except HTTPException as exc:
+            return text_response(data, str(exc.detail))
         return text_response(data, switch_reply_text(name))
     try:
         from sidecar.model_status import _backend_configured, llm_is_ready as _remote_ready
