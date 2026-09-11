@@ -236,6 +236,12 @@
 
   function formatAssistantContent(text) {
     let out = String(text || "");
+    const wrapped = out.match(/^\s*<answer>\s*([\s\S]*?)\s*<\/answer>\s*$/i);
+    if (wrapped) {
+      out = wrapped[1];
+    } else {
+      out = out.replace(/^\s*<answer>\s*/i, "").replace(/\s*<\/answer>\s*$/i, "");
+    }
     out = out.replace(/[ \t]*tabby-image-job:\s*[0-9a-fA-F-]{8,}[ \t]*/gi, "");
     out = out.replace(/^[ \t]*tabby-switch-llm[ \t]*\n?/gim, "");
     out = out.replace(/<mode_hint\b[^>]*>[\s\S]*?<\/mode_hint>/gi, "");

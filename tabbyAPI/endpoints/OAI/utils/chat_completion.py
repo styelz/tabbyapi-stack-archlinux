@@ -673,6 +673,8 @@ async def _chat_stream_collector(
         parser = TagStreamParser(
             reasoning_start=mc.reasoning_start_token if use_think else None,
             reasoning_end=mc.reasoning_end_token if use_think else None,
+            answer_start=getattr(mc, "answer_start_token", None) or None,
+            answer_end=getattr(mc, "answer_end_token", None) or None,
             tool_start=t_tool_start if use_tool else None,
             tool_end=t_tool_end if use_tool else None,
             start_in_reasoning=in_reasoning_now,

@@ -451,6 +451,8 @@ class ExllamaV3Container:
         self.reasoning = kwargs.get("reasoning", False)
         self.reasoning_start_token = kwargs.get("reasoning_start_token", "<think>")
         self.reasoning_end_token = kwargs.get("reasoning_end_token", "</think>")
+        self.answer_start_token = kwargs.get("answer_start_token") or None
+        self.answer_end_token = kwargs.get("answer_end_token") or None
         self.tool_calls_in_reasoning = kwargs.get("tool_calls_in_reasoning", True)
 
         # Reasoning budget defaults, overridable per request

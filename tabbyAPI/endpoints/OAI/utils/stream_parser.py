@@ -20,12 +20,18 @@ class TagStreamParser:
 
     Whitespace between the end of a reasoning block and the first content is
     held and dropped if no content ever follows.
+
+    Optional answer_start/answer_end tags (GLM ``<answer>`` / ``</answer>``)
+    are swallowed the same way: they mark the user-visible reply, they are
+    not part of it.
     """
 
     def __init__(
         self,
         reasoning_start: Optional[str] = None,
         reasoning_end: Optional[str] = None,
+        answer_start: Optional[str | list[str] | tuple[str, ...]] = None,
+        answer_end: Optional[str | list[str] | tuple[str, ...]] = None,
         tool_start: Optional[str | list[str] | tuple[str, ...]] = None,
         tool_end: Optional[str | list[str] | tuple[str, ...]] = None,
         start_in_reasoning: bool = False,
@@ -33,6 +39,10 @@ class TagStreamParser:
     ):
         self.reasoning_start = reasoning_start
         self.reasoning_end = reasoning_end
+        self.answer_starts = _as_tag_list(answer_start)
+        self.answer_ends = _as_tag_list(answer_end)
+        self.answer_start = self.answer_starts[0] if self.answer_starts else None
+        self.answer_end = self.answer_ends[0] if self.answer_ends else None
         self.tool_starts = _as_tag_list(tool_start)
         self.tool_ends = _as_tag_list(tool_end)
         # First tag kept for callers that still read the singular names
@@ -63,6 +73,8 @@ class TagStreamParser:
                 *self.tool_ends,
                 reasoning_start,
                 reasoning_end,
+                *self.answer_starts,
+                *self.answer_ends,
             )
             if t
         ]
@@ -143,9 +155,10 @@ class TagStreamParser:
     def _handle_tag(self, tag: str, events: list):
         """
         Process a state transition. Tool tags are included in the tool channel
-        text; reasoning tags are consumed. Tool calls may occur inside
-        reasoning content. Multiple tool start/end tags nest by depth so an
-        inner closer (</function>) does not leave an outer wrapper (<tool_call>).
+        text; reasoning and answer tags are consumed. Tool calls may occur
+        inside reasoning content. Multiple tool start/end tags nest by depth
+        so an inner closer (</function>) does not leave an outer wrapper
+        (<tool_call>).
         """
 
         if not self.in_tool:
@@ -155,6 +168,17 @@ class TagStreamParser:
                 self._held_ws = ""
                 return
             if tag == self.reasoning_end:
+                self.in_reasoning = False
+                self._holding_ws = True
+                return
+            if tag in self.answer_starts:
+                # GLM: <answer> starts the visible reply, including when
+                # </think> never arrived.
+                self.in_reasoning = False
+                self._holding_ws = True
+                self._held_ws = ""
+                return
+            if tag in self.answer_ends:
                 self.in_reasoning = False
                 self._holding_ws = True
                 return

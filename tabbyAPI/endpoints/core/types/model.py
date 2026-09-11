@@ -123,6 +123,8 @@ class ModelLoadRequest(BaseModel):
     reasoning: Optional[bool] = None
     reasoning_start_token: Optional[str] = None
     reasoning_end_token: Optional[str] = None
+    answer_start_token: Optional[str] = None
+    answer_end_token: Optional[str] = None
     start_in_reasoning: Optional[str] = None
     harmony: Optional[bool] = None
     muse_glimmer: Optional[bool] = None

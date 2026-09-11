@@ -13,6 +13,8 @@ model:
   reasoning: true
   reasoning_start_token: "<think>"
   reasoning_end_token: "</think>"
+  answer_start_token: "<answer>"
+  answer_end_token: "</answer>"
   start_in_reasoning: always
   tool_format:
   harmony: false

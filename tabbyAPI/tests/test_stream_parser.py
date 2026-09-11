@@ -41,6 +41,32 @@ class TagStreamParserTests(unittest.TestCase):
         # Whitespace between reasoning and content is preserved once content arrives
         self.assertEqual(out["content"], "\n\nanswer")
 
+    def test_glm_answer_tags_are_swallowed(self):
+        p = TagStreamParser(
+            reasoning_start="<think>",
+            reasoning_end="</think>",
+            answer_start="<answer>",
+            answer_end="</answer>",
+            start_in_reasoning=True,
+        )
+        out = collect(
+            p, ["thinking...", "</think>", "\n", "<answer>", "glm-ok", "</answer>"]
+        )
+        self.assertEqual(out["reasoning"], "thinking...")
+        self.assertEqual(out["content"], "glm-ok")
+
+    def test_glm_answer_tag_ends_reasoning_without_think_close(self):
+        p = TagStreamParser(
+            reasoning_start="<think>",
+            reasoning_end="</think>",
+            answer_start="<answer>",
+            answer_end="</answer>",
+            start_in_reasoning=True,
+        )
+        out = collect(p, ["hmm\n", "<answer>", "glm-ok"])
+        self.assertEqual(out["reasoning"], "hmm\n")
+        self.assertEqual(out["content"], "glm-ok")
+
     def test_tag_embedded_in_larger_span(self):
         p = qwen_parser(start_in_reasoning=True)
         out = collect(p, ["thinking\n</think>\n\nanswer"])

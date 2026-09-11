@@ -18,6 +18,8 @@ LOAD_FIELDS = (
     "reasoning",
     "reasoning_start_token",
     "reasoning_end_token",
+    "answer_start_token",
+    "answer_end_token",
     "start_in_reasoning",
     "harmony",
     "muse_glimmer",

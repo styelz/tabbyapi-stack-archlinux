@@ -401,6 +401,18 @@ class ModelConfig(BaseConfigModel):
         "</think>",
         description="End token for the reasoning parser (default: </think>).",
     )
+    answer_start_token: Optional[str] = Field(
+        None,
+        description=(
+            "Start token for the visible answer after reasoning (default: none).\n"
+            "GLM-4.1V thinking wraps the reply in <answer>…</answer>; those tags\n"
+            "are consumed and not returned as content."
+        ),
+    )
+    answer_end_token: Optional[str] = Field(
+        None,
+        description="End token for the visible-answer wrapper (default: none).",
+    )
     start_in_reasoning: str = Field(
         "auto",
         description=(

@@ -121,5 +121,24 @@ class UtilsJsProxyPrefixTests(unittest.TestCase):
         self.assertEqual(out["ui"], "/openai/v1/ui/gallery/file/a.png")
 
 
+@unittest.skipUnless(shutil.which("node"), "node not installed")
+class UtilsJsAssistantContentTests(unittest.TestCase):
+    def test_format_assistant_content_strips_glm_answer_tags(self):
+        src = UTILS_JS.read_text(encoding="utf-8")
+        fn = _js_function(src, "formatAssistantContent")
+        script = (
+            fn
+            + "\nconsole.log(JSON.stringify({"
+            "wrapped: formatAssistantContent('<answer>glm-ok</answer>'),"
+            "open: formatAssistantContent('<answer>glm-ok'),"
+            "keep: formatAssistantContent('see the <answer> element in HTML')"
+            "}));"
+        )
+        out = _run_node(script)
+        self.assertEqual(out["wrapped"], "glm-ok")
+        self.assertEqual(out["open"], "glm-ok")
+        self.assertEqual(out["keep"], "see the <answer> element in HTML")
+
+
 if __name__ == "__main__":
     unittest.main()
