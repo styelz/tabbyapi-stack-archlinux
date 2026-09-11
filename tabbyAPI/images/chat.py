@@ -802,6 +802,69 @@ def _inject_unwired_dests(data: ChatCompletionRequest, job) -> None:
     )
 
 
+def _job_workspace_ids(job) -> tuple[str, str]:
+    return (
+        str(getattr(job, "owner", "") or ""),
+        str(getattr(job, "chat_id", "") or ""),
+    )
+
+
+def _bound_workspace(job) -> bool:
+    owner, chat_id = _job_workspace_ids(job)
+    return bool(owner and chat_id)
+
+
+def _history_needs_page(data) -> bool:
+    """True when an earlier user line asked for a page, not only pictures."""
+    from common.phrase_switch import is_coding_task
+
+    for message in getattr(data, "messages", None) or []:
+        if (getattr(message, "role", "") or "").lower() != "user":
+            continue
+        text = _content_text(getattr(message, "content", None))
+        if is_coding_task(text) or _CREATE_SITE_RE.search(text or ""):
+            return True
+    return False
+
+
+def _workspace_page_ready(job, data=None) -> bool:
+    owner, chat_id = _job_workspace_ids(job)
+    if not owner or not chat_id:
+        return False
+    if _pages_on_disk(owner, chat_id):
+        return True
+    return _dests_already_on_page(owner, chat_id, _job_plan_items(job))
+
+
+def _page_blocking_comfy(job, data=None) -> bool:
+    """Hold Comfy while a Code workspace still has no HTML for a page ask."""
+    from common.phrase_switch import IMAGE_GEN_RE, is_coding_task, last_user_text
+
+    if not _bound_workspace(job):
+        return False
+    if _workspace_page_ready(job, data):
+        return False
+    if data is not None and _history_needs_page(data):
+        return True
+    ask = last_user_text(data) or "" if data is not None else ""
+    if IMAGE_GEN_RE.match(ask) and not is_coding_task(ask):
+        return False
+    return True
+
+
+def _should_launch_mixed_render(code_response, job, data=None) -> bool:
+    """Comfy only after a real code pass, and after a page workspace has files."""
+    if code_response is None:
+        return False
+    return not _page_blocking_comfy(job, data)
+
+
+def _profile_writes_files() -> bool:
+    from common.phrase_switch import container_parses_tools
+
+    return container_parses_tools()
+
+
 def _keep_writing_page(code_response, job, data=None) -> bool:
     if int(getattr(job, "code_turns", 0) or 0) >= MAX_CODE_TURNS:
         return False
@@ -832,14 +895,17 @@ async def _write_page_then_maybe_launch(data, job, disconnect_handler):
     _inject_missing_requested_pages(data, job)
     note_coding_progress(job)
     code_response = await _write_site_code(data, disconnect_handler)
+    if code_response is None:
+        return None, False
     if _keep_writing_page(code_response, job, data):
         return code_response, False
     can_retry = int(getattr(job, "code_turns", 0) or 0) < MAX_CODE_TURNS
     if _missing_linked_page_files(job) and can_retry:
         _inject_missing_page_files(data, job)
         extra = await _write_site_code(data, disconnect_handler)
-        if extra is not None:
-            code_response = extra
+        if extra is None:
+            return code_response, False
+        code_response = extra
         if _keep_writing_page(code_response, job, data):
             return code_response, False
     owner = str(getattr(job, "owner", "") or "")
@@ -847,21 +913,23 @@ async def _write_page_then_maybe_launch(data, job, disconnect_handler):
     if _missing_requested_pages(owner, chat_id, data) and can_retry:
         _inject_missing_requested_pages(data, job)
         extra = await _write_site_code(data, disconnect_handler)
-        if extra is not None:
-            code_response = extra
+        if extra is None:
+            return code_response, False
+        code_response = extra
         if _keep_writing_page(code_response, job, data):
             return code_response, False
     if not _dests_already_on_page(owner, chat_id, _job_plan_items(job)) and can_retry:
         _inject_unwired_dests(data, job)
         extra = await _write_site_code(data, disconnect_handler)
-        if extra is not None:
-            code_response = extra
+        if extra is None:
+            return code_response, False
+        code_response = extra
         if _keep_writing_page(code_response, job, data):
             return code_response, False
         message = _assistant_message(code_response)
         if _tool_call_pairs(message):
             return code_response, False
-    return code_response, True
+    return code_response, _should_launch_mixed_render(code_response, job, data)
 
 
 def _first_code_pass_holds_llm(code_response, *, page_ready: bool = False) -> bool:
@@ -1609,11 +1677,15 @@ async def handle(
                 job.owner = bound_owner
             if bound_chat and (not job.chat_id or job.chat_id == bound_chat):
                 job.chat_id = bound_chat
+            if _page_blocking_comfy(job, data) and not _profile_writes_files():
+                return None
             _inject_planned_dests(data, _job_plan_items(job))
             code_response, launch = await _write_page_then_maybe_launch(
                 data, job, disconnect_handler
             )
             if not launch:
+                if code_response is None:
+                    return None
                 return _code_reply(data, job, code_response)
             await _launch_mixed_job(job)
             if code_response and _file_write_pairs(_assistant_message(code_response)):
@@ -1628,6 +1700,8 @@ async def handle(
                 workspace=workspace,
             )
         if console:
+            if _page_blocking_comfy(job, data):
+                return None
             await _launch_mixed_job(job)
             return await _hold_then_reply(
                 data, job, mixed=False, api_base=api_base, console=True
@@ -1637,6 +1711,8 @@ async def handle(
             data, job, disconnect_handler
         )
         if not launch:
+            if code_response is None:
+                return None
             return _code_reply(data, job, code_response)
         await _launch_mixed_job(job)
         if code_response and _file_write_pairs(_assistant_message(code_response)):
@@ -1724,8 +1800,14 @@ async def handle(
                     "Wait until that batch finishes, then ask again.",
                 )
             if workspace:
+                from common.phrase_switch import is_coding_task
+
+                if is_coding_task(ask) and not _profile_writes_files():
+                    return None
                 _inject_planned_dests(data, plan.items)
                 code_response = await _write_site_code(data, disconnect_handler)
+                if code_response is None:
+                    return None
                 keep = _first_code_pass_holds_llm(
                     code_response,
                     page_ready=_dests_already_on_page(owner, chat_id, plan.items)
@@ -1763,6 +1845,8 @@ async def handle(
                 )
             _inject_planned_dests(data, plan.items)
             code_response = await _write_site_code(data, disconnect_handler)
+            if code_response is None:
+                return None
             keep = _first_code_pass_holds_llm(code_response)
             started = await _start_mixed_job(
                 plan.items,
@@ -1829,6 +1913,8 @@ async def handle(
 
     if not llm_ready:
         if job and job.status == "coding":
+            if _page_blocking_comfy(job, data):
+                return None
             await _launch_mixed_job(job)
             return await _hold_then_reply(
                 data, job, mixed=True, api_base=api_base, console=console

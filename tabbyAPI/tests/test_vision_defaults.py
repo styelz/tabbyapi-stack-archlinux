@@ -151,6 +151,19 @@ class ProfileDefaultMatrixTests(unittest.TestCase):
         self.assertNotIn("vision_offload", data["model"])
         self.assertEqual(data["pretty"], "malaiwah/Qwen3.8 main")
 
+    def test_glm_thinking_download_gets_reasoning_tokens(self):
+        from ui.models import profile_defaults_from_config
+
+        with tempfile.TemporaryDirectory() as raw:
+            folder = self._vl_folder(Path(raw), "GLM-4.1V-9B-Thinking-exl3-6.00bpw")
+            data = profile_defaults_from_config(folder, vram_mib=12288)
+        model = data["model"]
+        self.assertTrue(model["reasoning"])
+        self.assertEqual(model["reasoning_start_token"], "<think>")
+        self.assertEqual(model["answer_start_token"], "<answer>")
+        self.assertEqual(model["start_in_reasoning"], "always")
+        self.assertNotIn("tool_format", model)
+
 
 class DisableProfileVisionTests(unittest.TestCase):
     def test_writes_vision_false_and_pretty_note(self):

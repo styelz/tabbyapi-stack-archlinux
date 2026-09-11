@@ -1149,11 +1149,28 @@ def profile_defaults_from_config(
     }
     if choice["vision_offload"]:
         model["vision_offload"] = True
+    _apply_family_model_defaults(folder.name, model)
     return {
         "pretty": pretty_name,
         "model": model,
         "sampling": {"override_preset": "safe_defaults"},
     }
+
+
+def _apply_family_model_defaults(folder_name: str, model: dict) -> None:
+    """Fill shipped-profile tokens that a Hugging Face download would omit."""
+    name = str(folder_name or "").lower()
+    if "glm" not in name:
+        return
+    thinking = "thinking" in name or "4.1" in name or "41v" in name
+    if not thinking:
+        return
+    model.setdefault("reasoning", True)
+    model.setdefault("reasoning_start_token", "<think>")
+    model.setdefault("reasoning_end_token", "</think>")
+    model.setdefault("answer_start_token", "<answer>")
+    model.setdefault("answer_end_token", "</answer>")
+    model.setdefault("start_in_reasoning", "always")
 
 
 def _write_profile_yaml(path: Path, data: dict) -> None:
