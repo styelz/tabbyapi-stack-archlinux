@@ -409,9 +409,29 @@ def tui() -> int:
     return repl()
 
 
-def _menu_size(count: int, extra: int = 8, max_rows: int = 16) -> tuple[str, str, str]:
-    rows = max(1, min(count, max_rows))
-    return str(rows + extra), "76", str(rows)
+MENU_WIDTH = 76
+MENU_MAX_HEIGHT = 22  # fits an 80x24 console with the backtitle line
+
+
+def _menu_size(count: int, prompt: str = "") -> tuple[str, str, str]:
+    """(height, width, list rows) for a dialog --menu that fits 80x24."""
+    prompt_lines = max(1, sum(1 + len(line) // (MENU_WIDTH - 6) for line in prompt.splitlines() or [""]))
+    frame = 6 + prompt_lines  # borders, prompt, button row
+    rows = max(1, min(count, MENU_MAX_HEIGHT - frame))
+    return str(rows + frame), str(MENU_WIDTH), str(rows)
+
+
+def _section_prompt(section: dict[str, Any]) -> str:
+    """First sentence or two of the section description; status shows the rest."""
+    text = " ".join(str(section.get("description") or "").split())
+    if not text:
+        return "Pick a setting to change it."
+    kept: list[str] = []
+    for sentence in text.replace(". ", ".\x00").split("\x00"):
+        if kept and sum(len(part) + 1 for part in kept) + len(sentence) > 140:
+            break
+        kept.append(sentence)
+    return " ".join(kept).strip()
 
 
 def _capture(func, *args) -> str:
@@ -541,14 +561,15 @@ def dialog_backup_menu() -> int:
         items: list[str] = []
         for tag, title, blurb in BACKUP_ACTIONS:
             items.extend([tag, f"{title:<10} {blurb}"])
-        height, width, rows = _menu_size(len(BACKUP_ACTIONS))
+        prompt = "Model weights always go into a backup; config, users and chats are optional."
+        height, width, rows = _menu_size(len(BACKUP_ACTIONS), prompt)
         code, choice = run_dialog(
             [
                 "--title",
                 "Backup and restore",
                 "--no-tags",
                 "--menu",
-                "Model weights always go into a backup; config, users and chats are optional.",
+                prompt,
                 height,
                 width,
                 rows,
@@ -606,8 +627,8 @@ def dialog_section(name: str) -> int:
         item_width = max(24, 68 - tag_width)
         for field in fields:
             rows.extend(_field_row(field, item_width))
-        prompt = str(section.get("description") or "Pick a setting to change it.")
-        height, width, count = _menu_size(len(rows) // 2)
+        prompt = _section_prompt(section)
+        height, width, count = _menu_size(len(rows) // 2, prompt)
         code, key = run_dialog(
             [
                 "--title",
