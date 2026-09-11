@@ -45,6 +45,7 @@ function mountModels(root) {
             <div class="range-bar models-format" role="group" aria-label="Format">
               <button type="button" class="range-seg is-active" data-format="exl3">EXL3</button>
               <button type="button" class="range-seg" data-format="exl2">EXL2</button>
+              <button type="button" class="range-seg" data-format="gguf">GGUF</button>
             </div>
             <button class="btn primary" type="submit">Search</button>
           </form>
@@ -323,11 +324,11 @@ function mountModels(root) {
     const rows = (payload && payload.results) || [];
     if (!rows.length) {
       resultsEl.innerHTML = payload && payload.query
-        ? `<p class="muted">No EXL${payload.format === "exl2" ? "2" : "3"} models matched.</p>`
+        ? `<p class="muted">No ${payload.format === "gguf" ? "GGUF" : payload.format === "exl2" ? "EXL2" : "EXL3"} models matched.</p>`
         : "";
       return;
     }
-    const fmtLabel = payload.format === "exl2" ? "EXL2" : "EXL3";
+    const fmtLabel = payload.format === "gguf" ? "GGUF" : payload.format === "exl2" ? "EXL2" : "EXL3";
     resultsEl.innerHTML = rows
       .map((row) => {
         const id = TabbyUI.escapeHtml(row.id);
@@ -335,7 +336,7 @@ function mountModels(root) {
         badges.push(
           row.compatible
             ? `<span class="models-badge is-on">${fmtLabel}</span>`
-            : '<span class="models-badge is-warn">not EXL2/EXL3</span>'
+            : '<span class="models-badge is-warn">not EXL/GGUF</span>'
         );
         if (row.gated) badges.push('<span class="models-badge is-warn">gated</span>');
         const meta = [];
@@ -407,7 +408,7 @@ function mountModels(root) {
     slot.hidden = false;
     const id = TabbyUI.escapeHtml(data.id);
     const note = data.gguf_only
-      ? '<p class="error">This repo looks like GGUF. Tabby needs EXL2/EXL3.</p>'
+      ? '<p class="muted">GGUF via llama.cpp. Larger than VRAM still loads (CPU offload; slower). Switch to qwen for EXL3 vision.</p>'
       : data.compatible
         ? ""
         : '<p class="muted">This may not be an EXL2/EXL3 snapshot. Download only if you know it will load.</p>';
@@ -430,7 +431,7 @@ function mountModels(root) {
         const name = TabbyUI.escapeHtml(rev.name);
         const size = rev.size_bytes != null ? TabbyUI.formatBytes(rev.size_bytes) : "size unknown";
         const files = rev.files ? `${rev.files} files` : "";
-        const disabled = data.gguf_only ? "disabled" : "";
+        const disabled = "";
         const vramBadge = rev.vram_badge
           ? `<div class="models-sub"><span class="models-badge is-warn">${TabbyUI.escapeHtml(rev.vram_badge)}</span></div>`
           : "";
@@ -625,6 +626,7 @@ function mountModels(root) {
           repo_id: download.getAttribute("data-hf"),
           revision: download.getAttribute("data-rev"),
           size_bytes: size ? Number(size) : null,
+          format: format,
           alias: hfAlias || null,
         });
       } catch (exc) {

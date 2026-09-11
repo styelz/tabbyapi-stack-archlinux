@@ -41,6 +41,7 @@ DEFAULT_READY_S = {
     "comfy": 4,
     "flux": 4,
     "llm": 52,
+    "llama": 25,
 }
 
 

@@ -156,6 +156,25 @@ class ParseAndFilterTests(unittest.TestCase):
         self.assertFalse(matches_format("org/foo-exl2", ["exl2"], "exl3"))
         self.assertTrue(is_gguf_only("org/foo-gguf", ["gguf"]))
         self.assertFalse(is_gguf_only("org/foo-exl3", ["exl3", "gguf"]))
+        self.assertTrue(matches_format("org/foo-gguf", ["gguf"], "gguf"))
+
+    def test_search_gguf_format_keeps_gguf_drops_exl3(self):
+        api = FakeApi(
+            [
+                FakeModel("org/keep-gguf", ["gguf"], downloads=9),
+                FakeModel("org/skip-exl3", ["exl3"], downloads=99),
+            ]
+        )
+        payload = search_models("qwen", "gguf", hf_api=api)
+        ids = [row["id"] for row in payload["results"]]
+        self.assertEqual(ids, ["org/keep-gguf"])
+        self.assertTrue(payload["results"][0]["compatible"])
+        self.assertEqual(api.list_calls[0].get("filter"), "gguf")
+
+    def test_revision_vram_fit_gguf_offload_still_fits(self):
+        over = revision_vram_fit(22 * 1024**3, 12288, offload=True)
+        self.assertTrue(over["fits"])
+        self.assertIn("CPU offload", over["vram_badge"])
 
     def test_search_models_filters_and_caps(self):
         api = FakeApi(
@@ -259,6 +278,33 @@ class LibraryAndDeleteTests(unittest.TestCase):
             self.assertFalse(flux["installed"])
             self.assertEqual(flux["kind"], "image")
             self.assertIn("free_bytes", data["disk"])
+
+    def test_library_lists_gguf_folder_without_config(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            paths = _paths(root)
+            folder = paths.models_dir / "Some-20B-Q4_K_M"
+            folder.mkdir()
+            (folder / "Some-20B-Q4_K_M.gguf").write_bytes(b"gguf")
+            (paths.profiles_dir / "biggguf.yml").write_text(
+                "pretty: Some 20B GGUF\nmodel:\n  backend: llamacpp\n  model_name: Some-20B-Q4_K_M\n",
+                encoding="utf-8",
+            )
+            data = library_state(paths, loaded="")
+            ids = [row["id"] for row in data["llms"]]
+            self.assertIn("Some-20B-Q4_K_M", ids)
+            row = next(item for item in data["llms"] if item["id"] == "Some-20B-Q4_K_M")
+            self.assertEqual(row["profile"], "biggguf")
+
+    def test_gguf_profile_defaults_use_llamacpp(self):
+        with tempfile.TemporaryDirectory() as raw:
+            folder = Path(raw) / "Some-20B"
+            folder.mkdir()
+            (folder / "model.gguf").write_bytes(b"gguf")
+            data = ui_models.profile_defaults_from_config(folder)
+            self.assertEqual(data["model"]["backend"], "llamacpp")
+            self.assertEqual(data["model"]["n_gpu_layers"], -1)
+            self.assertEqual(data["model"]["model_name"], "model.gguf")
 
     def test_delete_refuses_loaded_and_removes_hf_profile(self):
         with tempfile.TemporaryDirectory() as raw:

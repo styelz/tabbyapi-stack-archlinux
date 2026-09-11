@@ -63,6 +63,9 @@ dev = [
     "ruff == 0.11.10",
     "pytest >= 8.0",
 ]
+exl2 = [
+    "exllamav2",
+]
 cu12 = [
     # Torch (Extra index URLs not support in pyproject.toml)
     "torch @ https://download.pytorch.org/whl/cu128/torch-2.9.0%2Bcu128-cp313-cp313-win_amd64.whl ; platform_system == 'Windows' and python_version == '3.13'",

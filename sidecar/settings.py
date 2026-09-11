@@ -35,6 +35,27 @@ def backend_url() -> str:
     return f"http://{backend_host()}:{backend_port()}"
 
 
+def llama_url() -> str:
+    explicit = os.environ.get("LLAMA_BACKEND_URL")
+    if explicit:
+        return explicit.rstrip("/")
+    host = os.environ.get("LLAMA_HOST") or "127.0.0.1"
+    port = os.environ.get("LLAMA_PORT") or "5002"
+    return f"http://{host}:{int(port)}"
+
+
+def chat_backend_url() -> str:
+    """Tabby on 5001, or llama-server when GGUF owns the GPU."""
+    try:
+        from common.gpu_mode import read_mode
+
+        if (read_mode().get("mode") or "").lower() == "llama":
+            return llama_url()
+    except Exception:
+        pass
+    return backend_url()
+
+
 def backend_dir() -> Path:
     override = os.environ.get("TABBY_BACKEND_DIR")
     if override:

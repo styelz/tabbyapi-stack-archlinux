@@ -24,6 +24,7 @@ from common.gpu_mode import (
     read_mode,
     recent_generated_files,
 )
+from common.llama_runtime import LLAMA_ALIASES
 from common.logger import xlogger
 from common.networking import get_sse_ping_interval
 from common.pasted_images import is_save_image_request, pasted_download_text
@@ -428,6 +429,7 @@ def profile_map() -> dict[str, dict]:
             "vision": bool(model_cfg.get("vision")),
             "thinking_only": data.get("thinking_only"),
             "tool_format": model_cfg.get("tool_format"),
+            "backend": str(model_cfg.get("backend") or ""),
         }
         mapping[alias] = entry
         if folder:
@@ -494,12 +496,16 @@ def profile_ui_labels(names: Optional[list[str]] = None) -> dict[str, str]:
 
 
 def installed_models() -> list[str]:
-    """Folder names under models/ that look like real EXL3 downloads."""
+    """Folder names under models/ that look like real EXL or GGUF downloads."""
     if not MODELS_DIR.exists():
         return []
     names = []
     for path in sorted(MODELS_DIR.iterdir(), key=lambda p: p.name.lower()):
-        if path.is_dir() and (path / "config.json").exists():
+        if path.is_dir() and (
+            (path / "config.json").exists() or any(path.glob("*.gguf"))
+        ):
+            names.append(path.name)
+        elif path.is_file() and path.suffix.lower() == ".gguf":
             names.append(path.name)
     return names
 
@@ -518,7 +524,7 @@ def current_folder() -> Optional[str]:
 def missing_profile_reply(name: str) -> Optional[str]:
     """Plain reply when a switch target has no weights on disk."""
     key = (name or "").strip().lower()
-    if not key or key in GPU_ALIASES or key in ("llm", "comfy"):
+    if not key or key in GPU_ALIASES or key in LLAMA_ALIASES or key in ("llm", "comfy"):
         return None
     from select_model import folder_for_choice
 
@@ -537,6 +543,8 @@ def resolve_switch_target(token: str) -> Optional[str]:
     key = token.strip().lower()
     if key in GPU_ALIASES or key == "llm":
         return GPU_ALIASES.get(key, "llm")
+    if key in LLAMA_ALIASES:
+        return "llama"
     profiles = profile_map()
     if key in profiles:
         return profiles[key]["alias"]
@@ -659,7 +667,7 @@ def help_text(api_base: Optional[str] = None, request=None) -> str:
         "password for the stack admin, or the password set on the Users page "
         "for a Tabby-only account.",
         "",
-        "The NVIDIA GPU runs either a language model or ComfyUI, never both at once. "
+        "The NVIDIA GPU runs either a language model (EXL3/EXL2 via Tabby, or GGUF via llama.cpp) or ComfyUI, never two at once. "
         "CPU embeddings remain available in either mode. Browser and editor requests "
         "share one GPU slot.",
         "",
@@ -678,6 +686,7 @@ def help_text(api_base: Optional[str] = None, request=None) -> str:
         lines.append(f"switch to {alias}{mark}")
     lines.extend(
         [
+            "switch to llama",
             "switch to comfy",
             "switch to flux",
             "switch to llm",
@@ -687,7 +696,9 @@ def help_text(api_base: Optional[str] = None, request=None) -> str:
             "- `list models` shows only installed profiles and marks the loaded one.",
             "- `restart` restarts the API and restores the last language model.",
             "- `switch to comfy` and `switch to flux` start image generation.",
-            "- `switch to llm` stops ComfyUI and restores the last language model.",
+            "- `switch to llm` stops ComfyUI/llama.cpp and restores the last EXL3/EXL2 model.",
+            "- `switch to llama` restores the last GGUF (CPU offload; slower).",
+            "- EXL3 vision (`qwen`) is faster for pictures in chat than GGUF.",
             "",
             f"### Model profiles on this {gpu_label()}",
             "",
@@ -793,7 +804,8 @@ def list_text() -> str:
         "Daily chat: qwen. Long Agent tasks: switch to qwen35 or qwen36 first. "
         "glm is thinking chat only — it does not parse coding tools.",
         "Image gen: switch to comfy (unloads the LLM, Flux Schnell). "
-        "Switch back with switch to qwen.",
+        "Switch back with switch to qwen. GGUF profiles use llama.cpp "
+        "(CPU offload; slower). Vision and fast coding stay on EXL3 qwen.",
         "",
     ]
     found = False
@@ -1588,17 +1600,22 @@ def should_yield_comfy_to_llm(data: ChatCompletionRequest) -> bool:
 
 
 def last_llm_profile_name() -> str:
-    """Last LLM profile for a Comfy→LLM handoff (never 'comfy')."""
+    """Last EXL profile for a Comfy→LLM handoff (never 'comfy' or GGUF)."""
     alias = profile_alias_for_model(current_folder())
     if alias:
         return alias
     try:
-        from select_model import last_profile
+        from select_model import last_exl_profile
 
-        name = last_profile()
+        name = last_exl_profile()
     except Exception:
         name = None
-    if name and name.lower() not in GPU_ALIASES and name.lower() != "comfy":
+    if (
+        name
+        and name.lower() not in GPU_ALIASES
+        and name.lower() not in LLAMA_ALIASES
+        and name.lower() != "comfy"
+    ):
         return name
     return "qwen"
 
@@ -1664,6 +1681,10 @@ def gpu_is_comfy() -> bool:
     return (read_mode().get("mode") or "llm").lower() == "comfy"
 
 
+def gpu_is_llama() -> bool:
+    return (read_mode().get("mode") or "").lower() == "llama"
+
+
 def switch_lock_name() -> str:
     try:
         return LOCK.read_text(encoding="utf-8").strip().lower()
@@ -1725,10 +1746,6 @@ async def llm_not_ready_response(
             "Wait for the download curl in the chat that started that job.",
         )
     if busy and busy.status == "coding":
-        return text_response(
-            data, llm_loading_text(last_llm_profile_name(), console=console)
-        )
-    if not gpu_is_comfy():
         return text_response(
             data, llm_loading_text(last_llm_profile_name(), console=console)
         )

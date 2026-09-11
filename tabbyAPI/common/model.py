@@ -22,6 +22,8 @@ from common.vram_recover import reset_cuda_memory
 
 if dependencies.exllamav3:
     from backends.exllamav3.model import ExllamaV3Container
+if dependencies.exllamav2:
+    from backends.exllamav2.model import ExllamaV2Container
 
 # Global variables for model container
 container: Optional["ExllamaV3Container"] = None
@@ -57,19 +59,27 @@ def load_progress(module, modules):
 
 
 def validate_backend(backend: Optional[str], hf_model: HFModel):
-    """Check that the requested model can be loaded with the exllamav3 backend."""
+    """Check that the requested model can be loaded with a supported backend."""
 
-    if backend == "exllamav2":
-        raise ValueError("The exllamav2 backend is no longer supported. Please use exllamav3.")
-    elif backend and backend != "exllamav3":
-        raise ValueError(f"Invalid backend '{backend}'. Available backends: ['exllamav3']")
+    requested = (backend or "").strip().lower()
+    if requested in {"llamacpp", "llama.cpp", "llama", "gguf"}:
+        raise ValueError(
+            "GGUF models load through llama-server, not Tabby's in-process backend. "
+            "Use switch to <gguf-profile>."
+        )
+    if requested and requested not in {"exllamav3", "exl3", "exllamav2", "exl2"}:
+        raise ValueError(
+            f"Invalid backend '{backend}'. Available backends: ['exllamav3', 'exllamav2']"
+        )
 
     quant_method = hf_model.quant_method()
-    if quant_method in {"exl2", "gptq"}:
-        raise ValueError(
-            f"Models quantized with '{quant_method}' require the exllamav2 backend, "
-            "which is no longer supported. Please use an exl3 or unquantized model."
-        )
+    use_v2 = requested in {"exllamav2", "exl2"} or quant_method in {"exl2", "gptq"}
+    if use_v2:
+        if not dependencies.exllamav2:
+            raise ValueError(
+                "This is an EXL2/GPTQ model, but the exllamav2 package is not installed."
+            )
+        return
 
     if not dependencies.exllamav3:
         raise ValueError(
@@ -193,11 +203,22 @@ async def load_model_gen(model_path: pathlib.Path, **kwargs):
 
         # Exclusive GPU: Comfy's RAM-pressure cache OOMs a 27B split if it
         # is still up. Every load path goes through here.
-        from common.gpu_mode import stop_comfy
+        from common.gpu_mode import stop_comfy, stop_llama
 
         await asyncio.to_thread(stop_comfy)
+        await asyncio.to_thread(stop_llama)
 
-        new_container = await ExllamaV3Container.create(model_path.resolve(), hf_model, **kwargs)
+        quant_method = hf_model.quant_method()
+        backend = (kwargs.get("backend") or "").strip().lower()
+        use_v2 = backend in {"exllamav2", "exl2"} or quant_method in {"exl2", "gptq"}
+        if use_v2:
+            new_container = await ExllamaV2Container.create(
+                model_path.resolve(), hf_model, **kwargs
+            )
+        else:
+            new_container = await ExllamaV3Container.create(
+                model_path.resolve(), hf_model, **kwargs
+            )
 
         # Add possible types of models that can be loaded
         model_type = [ModelType.MODEL]

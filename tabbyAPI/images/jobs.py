@@ -24,9 +24,12 @@ from common.gpu_mode import (
     JOBS_PERSIST_NAME,
     comfy_up,
     generate_image,
+    llama_up,
     save_generated_image,
     start_comfy_if_needed,
+    start_llama_if_needed,
     stop_comfy,
+    stop_llama,
     wait_gpu_vram_drain,
     write_mode,
 )
@@ -36,7 +39,7 @@ from common.tabby_config import config
 from endpoints.core.types.model import ModelLoadRequest
 from endpoints.core.utils.model import stream_model_load
 from common.load_fields import LOAD_FIELDS
-from select_model import apply_profile, available_profiles, last_profile
+from select_model import apply_profile, available_profiles, last_profile, profile_backend, resolve_gguf_path, resolve_mmproj_path
 
 # Chat holds the HTTP request, so Comfy can start immediately.
 MCP_HANDOFF_DELAY_S = 0.0
@@ -181,7 +184,7 @@ async def ensure_comfy() -> None:
     if is_sidecar_process():
         from sidecar.model_status import unload_backend
 
-        if comfy_up() and not loaded_tabby_name():
+        if comfy_up() and not loaded_tabby_name() and not llama_up():
             write_mode("comfy")
             return
         set_switch_lock("comfy")
@@ -189,6 +192,7 @@ async def ensure_comfy() -> None:
         was_up = comfy_up()
         try:
             await asyncio.to_thread(unload_backend)
+            await asyncio.to_thread(stop_llama)
             write_mode("comfy")
             await asyncio.to_thread(start_comfy_if_needed)
             if not comfy_up():
@@ -201,7 +205,7 @@ async def ensure_comfy() -> None:
             record_ready("comfy", time.time() - started)
         return
 
-    if comfy_up() and not loaded_tabby_name():
+    if comfy_up() and not loaded_tabby_name() and not llama_up():
         write_mode("comfy")
         return
 
@@ -211,6 +215,7 @@ async def ensure_comfy() -> None:
     try:
         if loaded_tabby_name():
             await model.unload_model(skip_wait=True)
+        await asyncio.to_thread(stop_llama)
         write_mode("comfy")
         await asyncio.to_thread(start_comfy_if_needed)
         if not comfy_up():
@@ -324,6 +329,7 @@ async def reload_last_llm(name: Optional[str] = None, *, from_job: bool = False)
         raise RuntimeError("No TabbyAPI profile is installed")
 
     from common.phrase_switch import clear_switch_lock, set_switch_lock
+    from sidecar.settings import is_sidecar_process
 
     # Lock before stop_comfy so /status reports switching during the wait
     # (systemd stop can take tens of seconds). The UI loading banner keys off it.
@@ -333,38 +339,43 @@ async def reload_last_llm(name: Optional[str] = None, *, from_job: bool = False)
     from_comfy = comfy_up()
     try:
         await asyncio.to_thread(stop_comfy)
-        await asyncio.to_thread(wait_gpu_vram_drain)
-        reset_cuda_memory()
-        load_exc: Optional[BaseException] = None
-        try:
-            await _load_profile(profile_name)
-        except RuntimeError as exc:
-            if not is_vram_error(exc):
-                raise
-            load_exc = exc
+        if profile_backend(profile_name) == "llamacpp":
+            await asyncio.to_thread(wait_gpu_vram_drain)
+            if is_sidecar_process():
+                from sidecar.model_status import unload_backend
 
-        if load_exc is not None:
-            # A retry in this process never wins: after a Comfy batch the
-            # allocator and CUDA context here still hold 1-1.8 GiB that
-            # empty_cache cannot hand back, and the tight 12 GiB profiles need
-            # exactly that margin. Only a fresh process frees it, so bounce
-            # instead of burning another full load attempt.
-            xlogger.warning(
-                "LLM load hit leftover VRAM; bouncing for a clean CUDA context"
-            )
-            await asyncio.to_thread(stop_comfy)
-            # Keep last.json / config.yml on the intended profile. A 9B
-            # fallback is the wrong model, not a recovery.
-            write_mode("llm", profile=profile_name)
-            await _unload_tabby_leftovers()
-            if from_job:
-                raise RuntimeError(
-                    f"Insufficient VRAM reloading {profile_name}"
-                ) from load_exc
-            bounce = True
+                await asyncio.to_thread(unload_backend)
+            elif loaded_tabby_name():
+                await model.unload_model(skip_wait=True)
+            write_mode("llama", profile=profile_name)
+            await _start_llama_profile(profile_name)
+        else:
+            await asyncio.to_thread(stop_llama)
+            await asyncio.to_thread(wait_gpu_vram_drain)
+            reset_cuda_memory()
+            load_exc: Optional[BaseException] = None
+            try:
+                await _load_profile(profile_name)
+            except RuntimeError as exc:
+                if not is_vram_error(exc):
+                    raise
+                load_exc = exc
 
-        if not bounce:
-            write_mode("llm", profile=profile_name)
+            if load_exc is not None:
+                xlogger.warning(
+                    "LLM load hit leftover VRAM; bouncing for a clean CUDA context"
+                )
+                await asyncio.to_thread(stop_comfy)
+                write_mode("llm", profile=profile_name)
+                await _unload_tabby_leftovers()
+                if from_job:
+                    raise RuntimeError(
+                        f"Insufficient VRAM reloading {profile_name}"
+                    ) from load_exc
+                bounce = True
+
+            if not bounce:
+                write_mode("llm", profile=profile_name)
     finally:
         clear_switch_lock()
     if bounce:
@@ -379,6 +390,29 @@ async def reload_last_llm(name: Optional[str] = None, *, from_job: bool = False)
     if from_comfy:
         record_ready("llm", elapsed)
     return profile_name
+
+
+async def _start_llama_profile(profile_name: str) -> None:
+    try:
+        profile = apply_profile(profile_name)
+    except SystemExit as exc:
+        raise RuntimeError(str(exc)) from exc
+    model_cfg = profile.get("model") or {}
+    model_name = model_cfg.get("model_name")
+    if not model_name:
+        raise RuntimeError(f"Profile {profile_name} has no model_name")
+    gguf = resolve_gguf_path(model_name)
+    if not gguf:
+        raise RuntimeError(f"GGUF for {profile_name} is not installed ({model_name})")
+    mmproj = model_cfg.get("mmproj") or resolve_mmproj_path(model_name)
+    await asyncio.to_thread(
+        start_llama_if_needed,
+        gguf,
+        profile=profile_name,
+        n_gpu_layers=model_cfg.get("n_gpu_layers", -1),
+        max_seq_len=model_cfg.get("max_seq_len"),
+        mmproj=str(mmproj) if mmproj else None,
+    )
 
 
 def _generate_lock() -> asyncio.Lock:

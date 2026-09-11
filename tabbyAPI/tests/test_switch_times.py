@@ -475,8 +475,8 @@ class NotReadyWaitTests(unittest.IsolatedAsyncioTestCase):
         ):
             result = await llm_not_ready_response(data, console=True)
         self.assertEqual(slept, [])
-        self.assertIn("still loading", result.choices[0].message.content.lower())
-        self.assertNotIn("coding model is not loaded", result.choices[0].message.content.lower())
+        self.assertIn("not loaded", result.choices[0].message.content.lower())
+        self.assertNotIn("still loading", result.choices[0].message.content.lower())
 
 
 class YieldComfyTests(unittest.TestCase):

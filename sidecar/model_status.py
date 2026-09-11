@@ -52,6 +52,13 @@ def _admin_headers() -> dict[str, str]:
 
 
 def loaded_model_id() -> str | None:
+    try:
+        from common.gpu_mode import llama_loaded_id, read_mode
+
+        if (read_mode().get("mode") or "").lower() == "llama":
+            return llama_loaded_id()
+    except Exception:
+        pass
     card = model_card()
     name = str(card.get("id") or "").strip()
     return name or None
@@ -122,6 +129,13 @@ def load_backend_model(payload: dict[str, Any]) -> None:
 
 
 def llm_is_ready() -> bool:
+    try:
+        from common.gpu_mode import llama_up, read_mode
+
+        if (read_mode().get("mode") or "").lower() == "llama":
+            return llama_up()
+    except Exception:
+        pass
     if _backend_configured():
         status, payload = _get_json("/v1/model")
         if status != 200 or not isinstance(payload, dict):
@@ -134,6 +148,21 @@ def llm_is_ready() -> bool:
 
 
 def model_card() -> dict[str, Any]:
+    try:
+        from common.gpu_mode import llama_loaded_id, llama_up, read_mode
+        from common.llama_runtime import read_llama_runtime
+
+        if (read_mode().get("mode") or "").lower() == "llama" and llama_up():
+            runtime = read_llama_runtime()
+            return {
+                "id": llama_loaded_id() or runtime.get("profile") or "gpt-4o",
+                "max_seq_len": runtime.get("max_seq_len"),
+                "cache_size": runtime.get("max_seq_len"),
+                "cache_mode": "gguf",
+                "use_vision": bool(runtime.get("mmproj")),
+            }
+    except Exception:
+        pass
     if _backend_configured():
         status, payload = _get_json("/v1/model")
         if status != 200 or not isinstance(payload, dict):

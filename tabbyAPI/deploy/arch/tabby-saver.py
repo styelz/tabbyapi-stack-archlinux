@@ -714,6 +714,9 @@ def idle_fact_lines(
     mode_l = str(mode or "").strip().lower()
     if mode_l == "comfy":
         facts.append("comfy is loaded  describe an image in chat")
+    elif mode_l == "llama":
+        facts.append("gguf via llama.cpp  keep the editor model as gpt-4o")
+        facts.append("slow cpu offload  switch to qwen for vision / fast coding")
     elif mode_l == "llm" or prof.lower() not in _SKIP_PROFILES:
         facts.append("chat and code are ready  keep the editor model as gpt-4o")
         facts.append("say switch to comfy for pictures")

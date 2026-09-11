@@ -60,8 +60,9 @@
   function currentGpuMode(data) {
     if (!data || data.down) return "";
     const mode = String(data.gpu_mode || "").toLowerCase();
-    if (mode && mode !== "llm") return "comfy";
-    if (data.comfy_up && !data.tabby_model) return "comfy";
+    if (mode === "comfy") return "comfy";
+    if (mode === "llama") return data.profile || "llama";
+    if (data.comfy_up && !data.tabby_model && !data.llama_up) return "comfy";
     return data.profile || "";
   }
 

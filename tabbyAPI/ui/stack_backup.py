@@ -103,7 +103,11 @@ def _installed_llm_dirs() -> list[Path]:
     for child in sorted(root.iterdir()):
         if not child.is_dir() or child.is_symlink():
             continue
-        ready = (child / "config.json").is_file() or any(child.glob("*.safetensors"))
+        ready = (
+            (child / "config.json").is_file()
+            or any(child.glob("*.safetensors"))
+            or any(child.glob("*.gguf"))
+        )
         if ready:
             installed.append(child)
     return installed

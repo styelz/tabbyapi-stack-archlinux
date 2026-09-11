@@ -47,6 +47,9 @@ RESERVED_ALIASES = frozenset(
         "image",
         "comfyui",
         "llm",
+        "llama",
+        "llamacpp",
+        "gguf",
         "help",
         "restart",
         "list",
@@ -59,6 +62,7 @@ RESERVED_ALIASES = frozenset(
 FORMAT_NEEDLES = {
     "exl3": ("exl3", "exllamav3"),
     "exl2": ("exl2", "exllamav2"),
+    "gguf": ("gguf",),
 }
 ALL_EXL_NEEDLES = FORMAT_NEEDLES["exl3"] + FORMAT_NEEDLES["exl2"]
 
@@ -251,6 +255,10 @@ def is_exllama_compatible(repo_id: str, tags: list[str] | None) -> bool:
     return any(needle in blob for needle in ALL_EXL_NEEDLES)
 
 
+def is_gguf_compatible(repo_id: str, tags: list[str] | None) -> bool:
+    return is_gguf_only(repo_id, tags) or "gguf" in _tag_blob(repo_id, tags)
+
+
 def normalize_format(fmt: str | None) -> str:
     value = str(fmt or "exl3").strip().lower()
     return value if value in FORMAT_NEEDLES else "exl3"
@@ -423,7 +431,11 @@ def search_models(query: str, fmt: str = "exl3", hf_api=None, limit: int = SEARC
             raise ModelsError(message, status) from exc
         repo_id = str(getattr(info, "id", None) or exact)
         tags = list(getattr(info, "tags", None) or [])
-        compatible = is_exllama_compatible(repo_id, tags) and not is_gguf_only(repo_id, tags)
+        compatible = (
+            is_gguf_compatible(repo_id, tags)
+            if fmt == "gguf"
+            else (is_exllama_compatible(repo_id, tags) and not is_gguf_only(repo_id, tags))
+        )
         results.append(_model_card(info, repo_id, tags, compatible))
         return {
             "ok": True,
@@ -447,7 +459,9 @@ def search_models(query: str, fmt: str = "exl3", hf_api=None, limit: int = SEARC
         if not repo_id:
             continue
         tags = list(getattr(info, "tags", None) or [])
-        if is_gguf_only(repo_id, tags):
+        if fmt != "gguf" and is_gguf_only(repo_id, tags):
+            continue
+        if fmt == "gguf" and not is_gguf_compatible(repo_id, tags):
             continue
         if not used_filter and not matches_format(repo_id, tags, fmt):
             continue
@@ -513,14 +527,20 @@ def gpu_vram_gb(vram_mib: int) -> int:
     return max(1, int(round(int(vram_mib) / 1024.0))) if vram_mib else 0
 
 
-def revision_vram_fit(size_bytes: int | None, vram_mib: int) -> dict:
-    """On-disk EXL snapshot vs this GPU. File size stands in for resident weights."""
+def revision_vram_fit(size_bytes: int | None, vram_mib: int, *, offload: bool = False) -> dict:
+    """On-disk snapshot vs this GPU. File size stands in for resident weights."""
     need_mib = 0
     if size_bytes is not None and int(size_bytes) > 0:
         need_mib = int(round(int(size_bytes) / (1024 * 1024)))
     if vram_mib <= 0 or need_mib <= 0:
         return {"fits": None, "need_mib": need_mib, "vram_badge": ""}
     if need_mib > int(vram_mib):
+        if offload:
+            return {
+                "fits": True,
+                "need_mib": need_mib,
+                "vram_badge": f"CPU offload on {gpu_vram_gb(vram_mib)} GB",
+            }
         return {
             "fits": False,
             "need_mib": need_mib,
@@ -583,17 +603,20 @@ def inspect_repo(
                 "name": name,
                 "size_bytes": size_bytes,
                 "files": files,
-                **revision_vram_fit(size_bytes, vram_mib),
+                **revision_vram_fit(size_bytes, vram_mib, offload=is_gguf_only(parsed, tags)),
             }
         )
 
-    compatible = is_exllama_compatible(parsed, tags) and not is_gguf_only(parsed, tags)
+    gguf = is_gguf_only(parsed, tags)
+    compatible = is_gguf_compatible(parsed, tags) if gguf else (
+        is_exllama_compatible(parsed, tags) and not gguf
+    )
     return {
         "ok": True,
         "id": parsed,
         "tags": tags,
         "compatible": compatible,
-        "gguf_only": is_gguf_only(parsed, tags),
+        "gguf_only": gguf,
         "gated": bool(getattr(info, "gated", False)),
         "private": bool(getattr(info, "private", False)),
         "revisions": revisions,
@@ -701,7 +724,10 @@ def library_llms(paths: ModelPaths | None = None, loaded: str | None = None) -> 
     except OSError:
         return rows
     for child in sorted(children, key=lambda path: path.name.lower()):
-        if not child.is_dir() or not (child / "config.json").is_file():
+        if not child.is_dir():
+            continue
+        gguf_files = list(child.glob("*.gguf"))
+        if not (child / "config.json").is_file() and not gguf_files:
             continue
         entry = profiles.get(child.name.lower()) or {}
         embed = is_embedding_folder(child.name)
@@ -873,10 +899,13 @@ def _prepare_hf_job(body: dict, paths: ModelPaths, hf_api=None) -> dict:
     if dest != models_root and models_root not in dest.parents:
         raise ModelsError("Download path is outside the models directory")
     fm = fetch_models_mod()
-    ready_item = {"kind": "snapshot", "ready": ["config.json"]}
-    if dest.exists() and fm.is_ready(dest, ready_item) and (dest / "config.json").is_file():
-        if not fm.has_incomplete_downloads(dest):
-            raise ModelsError(f"{folder} is already installed", 409)
+    fmt = str(body.get("format") or "").strip().lower()
+    if not fmt:
+        fmt = "gguf" if "gguf" in repo_id.lower() else "exl3"
+    has_cfg = dest.exists() and (dest / "config.json").is_file()
+    has_gguf = dest.exists() and any(dest.glob("*.gguf"))
+    if dest.exists() and (has_cfg or has_gguf) and not fm.has_incomplete_downloads(dest):
+        raise ModelsError(f"{folder} is already installed", 409)
 
     size_bytes = body.get("size_bytes")
     try:
@@ -900,6 +929,7 @@ def _prepare_hf_job(body: dict, paths: ModelPaths, hf_api=None) -> dict:
         "revision": revision,
         "folder": folder,
         "alias": optional_alias(body.get("alias") or body.get("name") or ""),
+        "format": fmt,
         "dests": [str(dest)],
         "percent": 0,
         "bytes_done": 0,
@@ -1052,13 +1082,15 @@ def _run_hf_job(job: dict, paths: ModelPaths) -> None:
         "repo": repo_id,
         "revision": revision,
         "dest": f"tabby/models/{folder}",
-        "ready": ["config.json"],
+        "ready": ["config.json"] if job.get("format") != "gguf" else [],
     }
     patch_job(paths, message=f"Downloading {repo_id}", file=repo_id)
     fm.download_item(item, dest, tqdm_class=_job_tqdm_class(paths))
-    if not (dest / "config.json").is_file():
+    has_cfg = (dest / "config.json").is_file()
+    has_gguf = any(dest.glob("*.gguf"))
+    if not has_cfg and not has_gguf:
         raise ModelsError(
-            "Download finished but config.json is missing. This repo may not be an EXL2/EXL3 model."
+            "Download finished but the folder has no config.json or .gguf file."
         )
 
 
@@ -1101,7 +1133,27 @@ def profile_defaults_from_config(
 
     max_seq = MAX_SEQ_CAP
     capable = False
+    ggufs = list(folder.glob("*.gguf")) if folder.is_dir() else []
     cfg_path = folder / "config.json"
+    if not cfg_path.is_file() and ggufs:
+        pretty_name = pretty or folder.name
+        mmproj = next((p for p in ggufs if "mmproj" in p.name.lower()), None)
+        weights = [p for p in ggufs if p != mmproj]
+        model_file = weights[0].name if len(weights) == 1 else folder.name
+        model = {
+            "backend": "llamacpp",
+            "model_name": model_file,
+            "n_gpu_layers": -1,
+            "max_seq_len": max_seq,
+            "vision": bool(mmproj),
+        }
+        if mmproj:
+            model["mmproj"] = mmproj.name
+        return {
+            "pretty": pretty_name,
+            "model": model,
+            "sampling": {"override_preset": "safe_defaults"},
+        }
     if cfg_path.is_file():
         try:
             data = json.loads(cfg_path.read_text(encoding="utf-8"))

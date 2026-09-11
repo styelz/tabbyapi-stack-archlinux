@@ -1941,6 +1941,7 @@ apply_choices() {
   fi
   DEST_TABBY="${DEST}/tabbyAPI"
   DEST_COMFY="${DEST}/ComfyUI"
+  DEST_LLAMA="${DEST}/llama.cpp"
 }
 
 valid_port() {
@@ -3689,6 +3690,26 @@ if [[ -d "$DEST_COMFY/venv/Scripts" ]]; then
   rm -rf "$DEST_COMFY/venv"
 fi
 
+progress 28 "Installing llama.cpp (GGUF)"
+if ! command -v llama-server >/dev/null 2>&1 && [[ ! -x "$DEST_LLAMA/build/bin/llama-server" && ! -x "$DEST_LLAMA/llama-server" ]]; then
+  if [[ ! -d "$DEST_LLAMA/.git" ]]; then
+    if llama_bundle=$(tsos_bundle llama.cpp 2>/dev/null); then
+      run_quiet git clone "$llama_bundle" "$DEST_LLAMA" || true
+    else
+      run_quiet git clone --depth 1 https://github.com/ggml-org/llama.cpp.git "$DEST_LLAMA" || true
+    fi
+  fi
+  if [[ -f "$DEST_LLAMA/CMakeLists.txt" ]] && command -v cmake >/dev/null 2>&1; then
+    cmake_args=(-S "$DEST_LLAMA" -B "$DEST_LLAMA/build" -DCMAKE_BUILD_TYPE=Release)
+    if command -v nvcc >/dev/null 2>&1; then
+      cmake_args+=(-DGGML_CUDA=ON)
+    fi
+    run_quiet cmake "${cmake_args[@]}" || true
+    run_quiet cmake --build "$DEST_LLAMA/build" --config Release -j"$(nproc 2>/dev/null || echo 2)" --target llama-server || true
+  fi
+fi
+chmod +x "$DEST_TABBY/deploy/arch/llama-start.sh" 2>/dev/null || true
+
 mkdir -p "$HOME/.ssh"
 chmod 700 "$HOME/.ssh"
 SSH_KEY_NAME="$(basename "${TABBY_SSH_KEY:-id_ed25519}")"
@@ -3972,6 +3993,15 @@ if [[ ! -f "$COMFY_UNIT_SRC" ]]; then
 fi
 if [[ -f "$COMFY_UNIT_SRC" ]]; then
   sed "s|__COMFY_DIR__|$DEST_COMFY|g" "$COMFY_UNIT_SRC" > "$UNIT_DIR/comfyui.service"
+fi
+
+LLAMA_UNIT_SRC="$DEST_TABBY/deploy/arch/llamacpp.service"
+if [[ ! -f "$LLAMA_UNIT_SRC" ]]; then
+  LLAMA_UNIT_SRC="$SCRIPT_DIR/llamacpp.service"
+fi
+if [[ -f "$LLAMA_UNIT_SRC" ]]; then
+  sed "s|__TABBY_DIR__|$DEST_TABBY|g" "$LLAMA_UNIT_SRC" > "$UNIT_DIR/llamacpp.service"
+  chmod +x "$DEST_TABBY/deploy/arch/llama-start.sh" 2>/dev/null || true
 fi
 
 # KMS kiosk on a spare VT. Default on for TTY/TSOS; off if a desktop owns the GPU.

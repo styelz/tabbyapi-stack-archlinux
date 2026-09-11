@@ -39,6 +39,32 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
         ensure.assert_awaited_once()
         reload.assert_not_awaited()
 
+    async def test_ensure_comfy_stops_llama_first(self):
+        from images.jobs import ensure_comfy
+
+        order = []
+
+        def stop_llama(*_a, **_k):
+            order.append("llama")
+
+        def start_comfy(*_a, **_k):
+            order.append("comfy")
+
+        with (
+            mock.patch("sidecar.settings.is_sidecar_process", return_value=False),
+            mock.patch("images.jobs.comfy_up", side_effect=[False, False, True]),
+            mock.patch("images.jobs.loaded_tabby_name", return_value=None),
+            mock.patch("images.jobs.llama_up", return_value=True),
+            mock.patch("images.jobs.stop_llama", stop_llama),
+            mock.patch("images.jobs.start_comfy_if_needed", start_comfy),
+            mock.patch("images.jobs.write_mode"),
+            mock.patch("common.phrase_switch.set_switch_lock"),
+            mock.patch("common.phrase_switch.clear_switch_lock"),
+            mock.patch("common.switch_times.record_ready"),
+        ):
+            await ensure_comfy()
+        self.assertEqual(order, ["llama", "comfy"])
+
     async def test_generate_items_restore_once(self):
         png = Path("/tmp/generated-3.png")
         with (

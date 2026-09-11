@@ -6,6 +6,7 @@ from typing import Any, Awaitable, Callable, Optional
 
 from fastapi import Request
 from sse_starlette import EventSourceResponse
+from fastapi.responses import StreamingResponse
 
 from sidecar.paths import ensure_import_path
 
@@ -115,17 +116,75 @@ async def handle_chat_completion(
         payload = data.model_dump(mode="json", exclude_none=True)
         import json
 
+        from sidecar.llama_adapter import adapt_chat_payload, rewrite_sse_line
+        from sidecar.settings import chat_backend_url
+        from sidecar.proxy import get_client
+
+        target = chat_backend_url()
+        llama = False
+        try:
+            from common.phrase_switch import gpu_is_llama
+
+            llama = gpu_is_llama()
+        except Exception:
+            llama = target.rstrip("/").endswith(":5002")
+        if llama:
+            payload = adapt_chat_payload(payload)
         result = await forward(
             request,
             path="/v1/chat/completions",
             body=json.dumps(payload).encode("utf-8"),
+            client=get_client(target) if llama else None,
         )
+        if llama and isinstance(result, StreamingResponse):
+            upstream = result.body_iterator
+
+            async def _rewrite():
+                in_think = False
+                try:
+                    async for chunk in upstream:
+                        text = (
+                            chunk.decode("utf-8", "replace")
+                            if isinstance(chunk, bytes)
+                            else str(chunk)
+                        )
+                        out_parts = []
+                        for line in text.splitlines(keepends=True):
+                            if line.startswith("data:"):
+                                rewritten, in_think = rewrite_sse_line(
+                                    line.rstrip("\n"), in_think=in_think
+                                )
+                                out_parts.append(
+                                    rewritten + ("\n" if line.endswith("\n") else "")
+                                )
+                            else:
+                                out_parts.append(line)
+                        yield "".join(out_parts).encode("utf-8")
+                finally:
+                    closer = getattr(upstream, "aclose", None)
+                    if closer is not None:
+                        await closer()
+
+            result = StreamingResponse(
+                _rewrite(),
+                status_code=result.status_code,
+                headers=dict(result.headers),
+                media_type=result.media_type,
+            )
         if isinstance(result, EventSourceResponse):
             handed_off = True
             return EventSourceResponse(
                 stream_and_release(gate, result, adopt=True),
                 ping=result.ping if hasattr(result, "ping") else 15,
                 sep="\n",
+            )
+        if isinstance(result, StreamingResponse) and not skip_occupancy:
+            handed_off = True
+            return StreamingResponse(
+                stream_and_release(gate, result, adopt=True),
+                status_code=result.status_code,
+                headers=dict(result.headers),
+                media_type=result.media_type,
             )
         return result
     finally:

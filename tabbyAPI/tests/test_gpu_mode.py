@@ -25,6 +25,7 @@ from common.gpu_mode import (
     flux_checkpoint_ready,
     format_comfy_journal_line,
     gallery_page,
+    llama_user_unit_path,
     list_generated_files,
     nvidia_lib_dirs,
     parse_size,
@@ -80,6 +81,8 @@ class GpuModeTests(unittest.TestCase):
                 self.assertFalse(should_skip_startup_load())
                 status.write_text('{"mode": "comfy"}\n', encoding="utf-8")
                 self.assertTrue(should_skip_startup_load())
+                status.write_text('{"mode": "llama", "profile": "biggguf"}\n', encoding="utf-8")
+                self.assertTrue(should_skip_startup_load())
                 status.write_text('{"mode": "llm", "profile": "qwen"}\n', encoding="utf-8")
                 self.assertFalse(should_skip_startup_load())
 
@@ -99,6 +102,20 @@ class GpuModeTests(unittest.TestCase):
             self.assertEqual(
                 comfy_user_unit_path(),
                 Path("/tmp/xdg-test/systemd/user/comfyui.service"),
+            )
+        finally:
+            if old is None:
+                os.environ.pop("XDG_CONFIG_HOME", None)
+            else:
+                os.environ["XDG_CONFIG_HOME"] = old
+
+    def test_llama_user_unit_path_uses_xdg(self):
+        old = os.environ.get("XDG_CONFIG_HOME")
+        try:
+            os.environ["XDG_CONFIG_HOME"] = "/tmp/xdg-test"
+            self.assertEqual(
+                llama_user_unit_path(),
+                Path("/tmp/xdg-test/systemd/user/llamacpp.service"),
             )
         finally:
             if old is None:

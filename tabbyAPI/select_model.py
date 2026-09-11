@@ -22,6 +22,9 @@ def available_profiles() -> list[str]:
 
 
 PROFILE_META_KEYS = frozenset({"pretty", "local", "thinking_only"})
+LLAMACPP_BACKENDS = frozenset({"llamacpp", "llama.cpp", "llama", "gguf"})
+EXL2_BACKENDS = frozenset({"exllamav2", "exl2"})
+EXL3_BACKENDS = frozenset({"exllamav3", "exl3"})
 
 
 def profile_aliases() -> dict[str, str]:
@@ -52,26 +55,144 @@ def save_yaml(yaml: YAML, data, path: Path):
 
 
 def last_profile() -> str | None:
-    if LAST_PATH.exists():
-        try:
-            return json.loads(LAST_PATH.read_text(encoding="utf-8")).get("profile")
-        except (json.JSONDecodeError, OSError):
-            return None
-    return None
+    name = _last_data().get("profile")
+    return str(name) if name else None
 
 
 def write_last(name: str):
-    LAST_PATH.write_text(json.dumps({"profile": name}), encoding="utf-8")
+    data = _last_data()
+    data["profile"] = name
+    if profile_backend(name) == "llamacpp":
+        data["llama"] = name
+    else:
+        data["exl"] = name
+    LAST_PATH.write_text(json.dumps(data), encoding="utf-8")
 
 
 def is_embedding_folder(folder_name: str) -> bool:
     return "embedding" in (folder_name or "").lower()
 
 
+def _gguf_in(path: Path) -> list[Path]:
+    if path.is_file() and path.suffix.lower() == ".gguf":
+        return [path]
+    if not path.is_dir():
+        return []
+    return sorted(path.glob("*.gguf"))
+
+
 def model_folder_ready(folder_name: str, models_dir: Path | None = None) -> bool:
     if not folder_name or is_embedding_folder(folder_name):
         return False
-    return ((models_dir or (ROOT / "models")) / folder_name / "config.json").is_file()
+    base = models_dir or (ROOT / "models")
+    path = base / folder_name
+    if (path / "config.json").is_file():
+        return True
+    return bool(_gguf_in(path))
+
+
+def resolve_gguf_path(folder_name: str, models_dir: Path | None = None) -> Path | None:
+    if not folder_name:
+        return None
+    base = models_dir or (ROOT / "models")
+    path = base / folder_name
+    files = _gguf_in(path)
+    if not files:
+        return None
+    if len(files) == 1:
+        return files[0]
+    named = [item for item in files if item.stem.lower() == Path(folder_name).stem.lower()]
+    if named:
+        return named[0]
+    return max(files, key=lambda item: item.stat().st_size if item.is_file() else 0)
+
+
+def resolve_mmproj_path(folder_name: str, models_dir: Path | None = None) -> Path | None:
+    base = models_dir or (ROOT / "models")
+    path = base / folder_name
+    if path.is_file():
+        path = path.parent
+    if not path.is_dir():
+        return None
+    hits = sorted(path.glob("*mmproj*.gguf")) + sorted(path.glob("*mmproj*.bin"))
+    return hits[0] if hits else None
+
+
+def _config_quant_method(folder_name: str, models_dir: Path | None = None) -> str:
+    path = (models_dir or (ROOT / "models")) / folder_name / "config.json"
+    if not path.is_file():
+        return ""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    cfg = data.get("quantization_config") if isinstance(data.get("quantization_config"), dict) else {}
+    return str(cfg.get("quant_method") or data.get("quant_method") or "").lower()
+
+
+def profile_backend(name: str | None, profile: dict | None = None) -> str:
+    """Return llamacpp, exllamav2, or exllamav3."""
+    model_cfg: dict = {}
+    if profile and isinstance(profile.get("model"), dict):
+        model_cfg = dict(profile.get("model") or {})
+    elif name:
+        path = PROFILES_DIR / f"{name}.yml"
+        if path.is_file():
+            try:
+                _, data = load_yaml(path)
+            except Exception:
+                data = {}
+            model_cfg = dict((data or {}).get("model") or {})
+    backend = str(model_cfg.get("backend") or "").strip().lower()
+    if backend in LLAMACPP_BACKENDS:
+        return "llamacpp"
+    if backend in EXL2_BACKENDS:
+        return "exllamav2"
+    if backend in EXL3_BACKENDS:
+        return "exllamav3"
+    folder = str(model_cfg.get("model_name") or name or "")
+    if folder.lower().endswith(".gguf") or _gguf_in((ROOT / "models") / folder):
+        cfg_json = (ROOT / "models") / folder / "config.json"
+        if not cfg_json.is_file():
+            return "llamacpp"
+    quant = _config_quant_method(folder)
+    if quant in {"exl2", "gptq"}:
+        return "exllamav2"
+    return "exllamav3"
+
+
+def last_exl_profile() -> str | None:
+    data = _last_data()
+    name = data.get("exl") or data.get("profile")
+    if name and profile_backend(str(name)) != "llamacpp":
+        return str(name)
+    for alias in available_profiles():
+        if profile_backend(alias) != "llamacpp":
+            return alias
+    return None
+
+
+def last_llama_profile() -> str | None:
+    data = _last_data()
+    name = data.get("llama")
+    if name and profile_backend(str(name)) == "llamacpp":
+        return str(name)
+    for alias in available_profiles():
+        if profile_backend(alias) == "llamacpp":
+            return alias
+    return None
+
+
+def _last_data() -> dict:
+    if not LAST_PATH.exists():
+        return {}
+    try:
+        data = json.loads(LAST_PATH.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def profile_model_name(name: str, profiles_dir: Path | None = None) -> str | None:
@@ -331,6 +452,13 @@ def apply_profile(name: str):
         raise SystemExit(f"Missing {CONFIG_PATH}")
 
     _, profile = load_yaml(profile_path)
+    pretty = profile.get("pretty") or name
+    if profile_backend(name, profile) == "llamacpp":
+        write_last(name)
+        print(f"Using {pretty}")
+        print(f"  model: {(profile.get('model') or {}).get('model_name', name)}")
+        return profile
+
     yaml, config = load_yaml(CONFIG_PATH)
 
     pretty = profile.pop("pretty", name)

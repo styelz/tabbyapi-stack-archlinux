@@ -17,6 +17,7 @@ class UiManagerTests(unittest.TestCase):
         self.assertNotIn("-n", cmd)
         self.assertIn("tabbyapi", cmd)
         self.assertIn("comfyui", cmd)
+        self.assertIn("llamacpp", cmd)
 
     def test_journalctl_cmd_history_still_uses_line_count(self):
         cmd = manager.journalctl_cmd(follow=False, lines=300)

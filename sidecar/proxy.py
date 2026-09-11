@@ -24,23 +24,32 @@ _HOP = {
     "content-length",
 }
 
+_CLIENTS: dict[str, httpx.AsyncClient] = {}
 _DEFAULT_CLIENT: Optional[httpx.AsyncClient] = None
 GENERATE_ONLY_HEADER = "x-tabby-generate-only"
 
 
-def get_client() -> httpx.AsyncClient:
+def get_client(base: Optional[str] = None) -> httpx.AsyncClient:
     global _DEFAULT_CLIENT
-    if _DEFAULT_CLIENT is None:
-        _DEFAULT_CLIENT = httpx.AsyncClient(
-            base_url=backend_url(),
-            timeout=httpx.Timeout(None),
-        )
-    return _DEFAULT_CLIENT
+    url = (base or backend_url()).rstrip("/")
+    if base is None:
+        if _DEFAULT_CLIENT is None:
+            _DEFAULT_CLIENT = httpx.AsyncClient(
+                base_url=url,
+                timeout=httpx.Timeout(None),
+            )
+        return _DEFAULT_CLIENT
+    client = _CLIENTS.get(url)
+    if client is None:
+        client = httpx.AsyncClient(base_url=url, timeout=httpx.Timeout(None))
+        _CLIENTS[url] = client
+    return client
 
 
 def reset_client() -> None:
-    global _DEFAULT_CLIENT
+    global _DEFAULT_CLIENT, _CLIENTS
     _DEFAULT_CLIENT = None
+    _CLIENTS = {}
 
 
 def set_client(client: Optional[httpx.AsyncClient]) -> None:

@@ -1,4 +1,4 @@
-"""Exclusive GPU ownership between TabbyAPI (LLM) and ComfyUI (Flux)."""
+"""Exclusive GPU ownership between TabbyAPI (LLM), llama.cpp (GGUF), and ComfyUI."""
 
 from __future__ import annotations
 
@@ -219,6 +219,17 @@ GPU_ALIASES = {
     "comfyui": "comfy",
 }
 
+from common.llama_runtime import (  # noqa: E402
+    LLAMA_ALIASES,
+    llama_loaded_id,
+    llama_server_bin,
+    llama_up,
+    llama_url,
+    llama_user_unit_path,
+    start_llama_if_needed,
+    stop_llama,
+)
+
 
 def _is_http_timeout(exc: BaseException) -> bool:
     """True for urlopen socket timeouts, including those wrapped in URLError."""
@@ -263,9 +274,9 @@ def read_mode() -> dict:
 
 
 def should_skip_startup_load() -> bool:
-    """True when Flux owns the GPU. Restarting Tabby must not load an LLM."""
+    """True when Comfy or llama-server owns the GPU. Restarting Tabby must not load an LLM."""
 
-    return (read_mode().get("mode") or "").lower() == "comfy"
+    return (read_mode().get("mode") or "").lower() in ("comfy", "llama")
 
 
 def write_mode(mode: str, **extra) -> dict:

@@ -36,6 +36,8 @@ class ModelsJobBannerTests(unittest.TestCase):
         self.assertIn("Short name", self.src)
         self.assertIn("models/alias", self.src)
         self.assertIn("data-alias", self.src)
+        self.assertIn("data-format=\"gguf\"", self.src)
+        self.assertIn(">GGUF</button>", self.src)
         self.assertIn("promptModal", self.src)
         self.assertIn("alias: hfAlias || null", self.src)
 

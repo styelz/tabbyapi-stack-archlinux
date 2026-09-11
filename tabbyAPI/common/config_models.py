@@ -189,7 +189,8 @@ class ModelConfig(BaseConfigModel):
     backend: Optional[str] = Field(
         None,
         description=(
-            "Backend to use for this model (auto-detect if not specified)\nOptions: exllamav3"
+            "Backend to use for this model (auto-detect if not specified)\n"
+            "Options: exllamav3, exllamav2, llamacpp"
         ),
     )
     max_seq_len: Optional[int] = Field(

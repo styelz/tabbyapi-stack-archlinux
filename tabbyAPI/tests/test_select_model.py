@@ -157,6 +157,54 @@ class ReadyFolderTests(unittest.TestCase):
             self.assertEqual(aliases["custom-exl3"], "qwen38")
 
 
+class GgufProfileTests(unittest.TestCase):
+    def test_folder_ready_with_gguf_file(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            models = root / "models"
+            folder = models / "Some-20B"
+            folder.mkdir(parents=True)
+            (folder / "weights.gguf").write_bytes(b"gguf")
+            with mock.patch.object(select_model, "ROOT", root):
+                self.assertTrue(select_model.model_folder_ready("Some-20B", models_dir=models))
+                self.assertEqual(
+                    select_model.resolve_gguf_path("Some-20B", models_dir=models).name,
+                    "weights.gguf",
+                )
+
+    def test_profile_backend_and_apply_skips_config_yml(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            profiles = root / "model_profiles"
+            models = root / "models" / "Some-20B"
+            profiles.mkdir()
+            models.mkdir(parents=True)
+            (models / "weights.gguf").write_bytes(b"gguf")
+            (profiles / "biggguf.yml").write_text(
+                "pretty: Some 20B\nmodel:\n  backend: llamacpp\n  model_name: Some-20B\n  n_gpu_layers: -1\n",
+                encoding="utf-8",
+            )
+            (profiles / "qwen.yml").write_text(
+                "pretty: Qwen\nmodel:\n  model_name: Qwen3.5-9B-exl3-4.00bpw\n",
+                encoding="utf-8",
+            )
+            config = root / "config.yml"
+            config.write_text("model:\n  model_name: other\n", encoding="utf-8")
+            with (
+                mock.patch.object(select_model, "ROOT", root),
+                mock.patch.object(select_model, "PROFILES_DIR", profiles),
+                mock.patch.object(select_model, "CONFIG_PATH", config),
+                mock.patch.object(select_model, "LAST_PATH", profiles / "last.json"),
+            ):
+                self.assertEqual(select_model.profile_backend("biggguf"), "llamacpp")
+                self.assertEqual(select_model.profile_backend("qwen"), "exllamav3")
+                select_model.apply_profile("biggguf")
+                last = json.loads((profiles / "last.json").read_text(encoding="utf-8"))
+            self.assertEqual(last["profile"], "biggguf")
+            self.assertEqual(last["llama"], "biggguf")
+            self.assertNotIn("Some-20B", config.read_text(encoding="utf-8"))
+
+
 class InstallShSeedTests(unittest.TestCase):
     def test_install_seeds_from_model_set_not_qwen(self):
         src = Path(__file__).resolve().parents[2] / "install.sh"

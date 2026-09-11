@@ -92,6 +92,14 @@ class StackBackupTests(unittest.TestCase):
         )
         self.assertEqual(resumed["needed_bytes"], 0)
 
+    def test_gguf_folder_is_llm_weight(self):
+        gguf = self.tabby / "models" / "Some-20B"
+        gguf.mkdir()
+        (gguf / "weights.gguf").write_bytes(b"gguf-data")
+        plan = stack_backup.plan_backup(self.destination)
+        relatives = [str(job["relative"]) for job in plan["_jobs"]]
+        self.assertTrue(any("Some-20B" in path and path.endswith("weights.gguf") for path in relatives))
+
     def test_restore_round_trip(self):
         stack_backup.run_backup(
             self.destination,

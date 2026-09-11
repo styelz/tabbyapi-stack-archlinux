@@ -4,13 +4,14 @@ from pydantic import BaseModel, Field
 
 
 class GpuModeRequest(BaseModel):
-    mode: str = Field(description="comfy/flux/image, llm, or a TabbyAPI profile alias such as qwen")
+    mode: str = Field(description="comfy/flux/image, llm, llama, or a profile alias such as qwen")
 
 
 class GpuModeResponse(BaseModel):
     mode: str
     tabby_model: Optional[str] = None
     comfy_up: bool = False
+    llama_up: bool = False
     message: str = ""
 
 

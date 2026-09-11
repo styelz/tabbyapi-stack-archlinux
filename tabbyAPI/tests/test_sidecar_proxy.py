@@ -331,6 +331,43 @@ class SidecarInterceptTests(unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual(calls, ["wait", "proxy", "release"])
 
+    async def test_llama_mode_forwards_adapted_payload(self):
+        from sidecar.chat import handle_chat_completion
+
+        seen = {}
+
+        async def fake_proxy(request, path=None, body=None, client=None, **_k):
+            seen["path"] = path
+            seen["body"] = json.loads(body.decode("utf-8"))
+            seen["client"] = client
+            return {"ok": True}
+
+        async def fake_image(*_a, **_k):
+            return None
+
+        with (
+            mock.patch("sidecar.chat.llm_is_ready", return_value=True),
+            mock.patch("sidecar.settings.chat_backend_url", return_value="http://127.0.0.1:5002"),
+            mock.patch("common.phrase_switch.gpu_is_llama", return_value=True),
+            mock.patch("sidecar.proxy.get_client", return_value="llama-client"),
+        ):
+            result = await handle_chat_completion(
+                self._request(),
+                {
+                    "messages": [{"role": "user", "content": "hello"}],
+                    "model": "qwen",
+                    "dry_multiplier": 1.5,
+                },
+                proxy_fn=fake_proxy,
+                image_handler=fake_image,
+                skip_occupancy=True,
+            )
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(seen["path"], "/v1/chat/completions")
+        self.assertEqual(seen["body"]["model"], "gpt-4o")
+        self.assertNotIn("dry_multiplier", seen["body"])
+        self.assertEqual(seen["client"], "llama-client")
+
     async def test_generate_chat_sends_generate_only_header(self):
         seen = {}
 

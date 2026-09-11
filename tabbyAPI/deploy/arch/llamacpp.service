@@ -1,0 +1,18 @@
+[Unit]
+Description=llama-server (GGUF)
+After=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-__TABBY_DIR__/model_profiles/llama.env
+ExecStart=__TABBY_DIR__/deploy/arch/llama-start.sh
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=llamacpp
+
+# Do not enable at boot. GPU is exclusive: start only via switch to a GGUF profile.
+
+[Install]
+WantedBy=default.target

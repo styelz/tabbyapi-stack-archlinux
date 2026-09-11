@@ -45,10 +45,11 @@ Send a message that is **only** one of these. Times are warm switches on this RT
 | `switch to gemma` | General | 262k | ~85 seconds |
 | `switch to gemma26` | General | 262k | ~2 minutes |
 | `switch to glm` | Thinking chat only (no coding tools; vision off on RTX 4070 Ti 12 GB) | 65k (model max) | ~40 seconds |
+| `switch to llama` | Last GGUF via llama.cpp (CPU offload; slower) | profile | first load varies |
 | `switch to comfy` / `flux` | Unload the LLM; image gen | — | ~4 seconds (then Flux ~2 minutes / Qwen-Image ~3 minutes for the first picture) |
-| `switch to llm` | Free Comfy; reload the last LLM | — | ~50 seconds |
+| `switch to llm` | Free Comfy/llama.cpp; reload the last EXL3/EXL2 model | — | ~50 seconds |
 
-The GPU is exclusive: **LLM or Comfy, not both**. `Qwen3-Embedding-0.6B` stays on CPU (`POST /v1/embeddings`). After `switch to comfy`, Flux Schnell is for drafts; Qwen-Image is for text / posters / UI, or a `qwen-image:` prefix.
+The GPU is exclusive: **one of EXL (Tabby), GGUF (llama.cpp), or Comfy**. Never two at once. `Qwen3-Embedding-0.6B` stays on CPU (`POST /v1/embeddings`). Download a GGUF from the Models page (GGUF format) to run a file larger than VRAM; it will be slower. For vision and fast coding, `switch to qwen`. After `switch to comfy`, Flux Schnell is for drafts; Qwen-Image is for text / posters / UI, or a `qwen-image:` prefix.
 
 ## Images (works in every IDE)
 

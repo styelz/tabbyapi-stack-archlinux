@@ -95,7 +95,7 @@ model:
   use_as_default: []
 
   # Backend to use for this model (auto-detect if not specified)
-  # Options: exllamav3
+  # Options: exllamav3, exllamav2, llamacpp
   backend:
 
   # Max sequence length (default: min(max_position_embeddings, cache_size)).

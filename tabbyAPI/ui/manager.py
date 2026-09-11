@@ -21,7 +21,7 @@ from common.logger import is_hidden_journal_line, is_ui_access_line
 
 ROOT = Path(__file__).resolve().parent.parent
 STACK_ROOT = ROOT.parent
-JOURNAL_UNITS = ("tabbyapi", "comfyui")
+JOURNAL_UNITS = ("tabbyapi", "comfyui", "llamacpp")
 UPDATE_UNIT = "tabbyapi-stack-update"
 CONSOLE_SYSTEM = (
     "You are chatting in the TabbyAPI Stack web console. Answer in this conversation "
@@ -307,7 +307,7 @@ def _auto_update_status() -> dict[str, Any]:
 
 
 async def stack_status(request=None, username: str = "") -> dict[str, Any]:
-    from common.gpu_mode import comfy_up, public_api_base, read_mode
+    from common.gpu_mode import comfy_up, llama_up, public_api_base, read_mode
     from common.health import HealthManager
     from common.phrase_switch import (
         last_llm_profile_name,
@@ -319,12 +319,22 @@ async def stack_status(request=None, username: str = "") -> dict[str, Any]:
         switch_lock_name,
     )
     from images.jobs import active_mcp_image_job, loaded_tabby_name
-    from select_model import available_profiles, folder_for_choice, last_profile
+    from select_model import (
+        available_profiles,
+        folder_for_choice,
+        last_llama_profile,
+        last_profile,
+    )
     from ui.occupancy import snapshot as stack_queue_snapshot
 
     mode = read_mode()
     tabby = loaded_tabby_name()
-    gpu_mode = "llm" if tabby else (mode.get("mode") or "llm")
+    llama = llama_up()
+    gpu_mode = mode.get("mode") or "llm"
+    if llama:
+        gpu_mode = "llama"
+    elif tabby:
+        gpu_mode = "llm"
     try:
         healthy, issues = await HealthManager.is_service_healthy()
         issue_text = [
@@ -360,11 +370,15 @@ async def stack_status(request=None, username: str = "") -> dict[str, Any]:
     names = available_profiles()
     profile_ready = {name: bool(folder_for_choice(name)) for name in names}
     # Prefer the folder actually in VRAM over last.json (VRAM fallback can desync them).
-    profile = profile_alias_for_model(tabby) or last_llm_profile_name() or last_profile()
+    if gpu_mode == "llama":
+        profile = last_llama_profile() or last_profile()
+    else:
+        profile = profile_alias_for_model(tabby) or last_llm_profile_name() or last_profile()
     return {
         "ok": True,
         "gpu_mode": gpu_mode,
         "comfy_up": http_up,
+        "llama_up": llama,
         "tabby_model": tabby,
         "profile": profile,
         "profiles": names,
@@ -377,6 +391,7 @@ async def stack_status(request=None, username: str = "") -> dict[str, Any]:
         "units": {
             "tabbyapi": unit_active("tabbyapi"),
             "comfyui": comfy_unit,
+            "llamacpp": unit_active("llamacpp"),
         },
         "gpu": await asyncio.to_thread(nvidia_stats),
         "host": _host_live(),

@@ -1,6 +1,7 @@
 """Keys sent on /v1/model/load so a profile switch keeps tool and reasoning settings."""
 
 LOAD_FIELDS = (
+    "backend",
     "max_seq_len",
     "cache_size",
     "cache_mode",

@@ -16,9 +16,13 @@ from common.gpu_mode import (
     COMFY_PYTHON,
     GPU_ALIASES,
     comfy_up,
+    llama_loaded_id,
+    llama_up,
     persisted_jobs_block_llm_load,
     start_comfy_if_needed,
+    start_llama_if_needed,
     stop_comfy,
+    stop_llama,
     write_mode,
 )
 from common.switch_times import record_ready
@@ -37,9 +41,14 @@ from select_model import (
     ask_profile,
     available_profiles,
     disable_profile_vision,
+    last_exl_profile,
+    last_llama_profile,
     last_profile,
     load_yaml,
     profile_aliases,
+    profile_backend,
+    resolve_gguf_path,
+    resolve_mmproj_path,
 )
 
 from common.load_fields import load_payload
@@ -264,6 +273,7 @@ def recover_after_vram(base: str, name: str, model_name: str, model_cfg: dict, p
     except SystemExit:
         pass
     stop_comfy()
+    stop_llama()
     time.sleep(2)
     try:
         load_model(base, model_name, model_cfg)
@@ -311,6 +321,7 @@ def switch_to_comfy(base: str, record: bool = True) -> dict:
         unload_tabby(base)
     else:
         print(f"TabbyAPI is not running at {base}; starting ComfyUI anyway.")
+    stop_llama()
     write_mode("comfy")
     start_comfy_if_needed()
     elapsed = time.time() - started
@@ -365,6 +376,7 @@ def switch_to_llm(
     wait_out_image_jobs()
     from_comfy = comfy_up()
     stop_comfy()
+    stop_llama()
     write_mode("llm", profile=name)
     loaded = current_model(base)
     already = loaded == model_name and not force
@@ -411,6 +423,54 @@ def switch_to_llm(
     }
 
 
+def switch_to_llama(
+    name: str,
+    base: str | None = None,
+    record: bool = True,
+) -> dict:
+    """Unload Tabby/Comfy and start llama-server on a GGUF profile."""
+    profile = apply_profile(name)
+    model_cfg = profile.get("model") or {}
+    model_name = model_cfg.get("model_name")
+    if not model_name:
+        raise SystemExit(f"Profile {name} has no model_name")
+    gguf = resolve_gguf_path(model_name)
+    if not gguf:
+        raise SystemExit(f"GGUF for {name} is not installed ({model_name})")
+    mmproj = model_cfg.get("mmproj") or resolve_mmproj_path(model_name)
+    if base is None:
+        base = api_base()
+    started = time.time()
+    wait_out_image_jobs()
+    from_comfy = comfy_up()
+    if server_up(base):
+        unload_tabby(base)
+    stop_comfy()
+    write_mode("llama", profile=name)
+    already = llama_up() and llama_loaded_id() in {name, model_name, "gpt-4o"}
+    start_llama_if_needed(
+        gguf,
+        profile=name,
+        n_gpu_layers=model_cfg.get("n_gpu_layers", -1),
+        max_seq_len=model_cfg.get("max_seq_len"),
+        mmproj=str(mmproj) if mmproj else None,
+    )
+    elapsed = time.time() - started
+    print(f"Now loaded: {gguf.name} via llama.cpp ({elapsed:.0f}s)")
+    print("GPU mode: llama")
+    if record and not (already and elapsed < 5):
+        record_ready(name, elapsed)
+        if from_comfy:
+            record_ready("llm", elapsed)
+    return {
+        "ready_s": elapsed,
+        "already": already,
+        "loaded": gguf.name,
+        "profile": name,
+        "mode": "llama",
+    }
+
+
 def resolve_name(raw: str | None) -> str:
     names = available_profiles()
     if not raw:
@@ -420,21 +480,29 @@ def resolve_name(raw: str | None) -> str:
     token = raw.strip()
     lowered = token.lower()
     if lowered == "llm":
-        return last_profile() if last_profile() in names else (names[0] if names else "qwen")
+        name = last_exl_profile()
+        return name if name in names else (names[0] if names else "qwen")
     if lowered in GPU_ALIASES:
         return GPU_ALIASES[lowered]
+    from common.llama_runtime import LLAMA_ALIASES
+
+    if lowered in LLAMA_ALIASES:
+        name = last_llama_profile()
+        if not name:
+            raise SystemExit("No GGUF profile is installed. Download one from the Models page.")
+        return name
     aliases = profile_aliases()
     name = aliases.get(token) or aliases.get(lowered) or aliases.get(token.upper())
     if not name:
-        raise SystemExit(f"Unknown model {raw!r}. Use: {', '.join(names)}, comfy")
+        raise SystemExit(f"Unknown model {raw!r}. Use: {', '.join(names)}, comfy, llama")
     return name
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Switch TabbyAPI models or hand the GPU to ComfyUI"
+        description="Switch TabbyAPI / llama.cpp models or hand the GPU to ComfyUI"
     )
-    parser.add_argument("profile", nargs="?", help="qwen, qwen35, comfy, flux, llm, ...")
+    parser.add_argument("profile", nargs="?", help="qwen, qwen35, comfy, flux, llm, llama, ...")
     parser.add_argument(
         "--no-load",
         action="store_true",
@@ -458,7 +526,10 @@ def main():
         print("Profile written. Start or restart TabbyAPI to load it.")
         return 0
 
-    switch_to_llm(name)
+    if profile_backend(name) == "llamacpp":
+        switch_to_llama(name)
+    else:
+        switch_to_llm(name)
     print("Cursor can stay on gpt-4o.")
     return 0
 

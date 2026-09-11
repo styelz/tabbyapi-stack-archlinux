@@ -16,6 +16,7 @@ class DependenciesModel(BaseModel):
 
     torch: bool
     exllamav3: bool
+    exllamav2: bool
     infinity_emb: bool
     sentence_transformers: bool
 

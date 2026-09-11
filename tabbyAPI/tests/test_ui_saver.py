@@ -1860,6 +1860,14 @@ class SaverKioskSceneTests(unittest.TestCase):
         self.assertIn("qwen warm switch ~66s", facts)
         self.assertIn("flux first picture ~3 min", facts)
         self.assertIn("asleep  2m", facts)
+        llama_facts = self.kiosk.idle_fact_lines(
+            {"gpu": "RTX 4070 Ti 12 GB"},
+            5.0,
+            profile="biggguf",
+            mode="llama",
+        )
+        self.assertTrue(any("llama.cpp" in item for item in llama_facts))
+        self.assertTrue(any("cpu offload" in item for item in llama_facts))
         self.assertEqual(
             self.kiosk.pick_idle_fact(["a", "b", "c"], 0.0),
             "a",

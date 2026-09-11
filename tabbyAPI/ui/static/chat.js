@@ -1079,8 +1079,8 @@ function mountChat(root) {
     if (!contextWindowMax(data)) return true;
     const mode = String(data.gpu_mode || "").toLowerCase();
     if (mode === "comfy") return true;
-    if (data.comfy_up && !data.tabby_model) return true;
-    return !data.tabby_model;
+    if (data.comfy_up && !data.tabby_model && !data.llama_up) return true;
+    return !data.tabby_model && mode !== "llama";
   }
 
   function usageFromChat(chat, list) {
@@ -10003,7 +10003,7 @@ function mountChat(root) {
   function displayModelName(data) {
     const status = data || TabbyUI.lastGpuStatus || {};
     const mode = String(status.gpu_mode || "").toLowerCase();
-    if ((mode === "comfy" || (status.comfy_up && !status.tabby_model)) && !status.tabby_model) {
+    if ((mode === "comfy" || (status.comfy_up && !status.tabby_model && !status.llama_up)) && !status.tabby_model && mode !== "llama") {
       return "Comfy";
     }
     const profile = String(status.profile || "").trim();
@@ -11673,7 +11673,7 @@ function mountChat(root) {
   }
 
   function comfyOwnsGpu() {
-    return gpuMode === "comfy" || (comfyUp && gpuMode !== "llm");
+    return gpuMode === "comfy" || (comfyUp && gpuMode !== "llm" && gpuMode !== "llama");
   }
 
   function hasSwitchLlmMark(text) {

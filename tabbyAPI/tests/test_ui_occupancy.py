@@ -228,6 +228,7 @@ class WaitOutImageJobTests(unittest.IsolatedAsyncioTestCase):
         with (
             mock.patch("images.jobs.wait_out_generating_image_jobs", wait),
             mock.patch("images.jobs.stop_comfy", stop),
+            mock.patch("images.jobs.stop_llama"),
             mock.patch("images.jobs.wait_gpu_vram_drain"),
             mock.patch("images.jobs.reset_cuda_memory"),
             mock.patch("images.jobs.available_profiles", return_value=["qwen"]),

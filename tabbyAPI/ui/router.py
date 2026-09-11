@@ -324,9 +324,17 @@ async def ui_update(request: Request, _admin: str = Depends(require_ui_admin)):
 
 
 async def apply_gpu_mode(token: str) -> dict:
-    from common.gpu_mode import GPU_ALIASES, comfy_up
+    from common.gpu_mode import GPU_ALIASES, comfy_up, llama_up
+    from common.llama_runtime import LLAMA_ALIASES
     from endpoints.core.image_jobs import ensure_comfy, loaded_tabby_name, reload_last_llm
-    from select_model import available_profiles, last_profile, profile_aliases
+    from select_model import (
+        available_profiles,
+        last_exl_profile,
+        last_llama_profile,
+        last_profile,
+        profile_aliases,
+        profile_backend,
+    )
 
     if token in GPU_ALIASES:
         try:
@@ -338,12 +346,17 @@ async def apply_gpu_mode(token: str) -> dict:
             "mode": "comfy",
             "tabby_model": None,
             "comfy_up": comfy_up(),
+            "llama_up": llama_up(),
             "message": "GPU handed to ComfyUI.",
         }
     names = available_profiles()
     aliases = profile_aliases()
-    if token == "llm":
-        name = last_profile() if last_profile() in names else (names[0] if names else None)
+    if token in LLAMA_ALIASES:
+        name = last_llama_profile()
+        if not name:
+            raise HTTPException(400, "No GGUF profile is installed")
+    elif token == "llm":
+        name = last_exl_profile() if last_exl_profile() in names else (names[0] if names else None)
     else:
         name = aliases.get(token)
     if not name:
@@ -352,12 +365,14 @@ async def apply_gpu_mode(token: str) -> dict:
         await reload_last_llm(name)
     except RuntimeError as exc:
         raise HTTPException(400, str(exc)) from exc
+    mode = "llama" if profile_backend(name) == "llamacpp" else "llm"
     return {
         "ok": True,
-        "mode": "llm",
+        "mode": mode,
         "tabby_model": loaded_tabby_name(),
         "comfy_up": comfy_up(),
-        "message": f"GPU handed to TabbyAPI ({name})",
+        "llama_up": llama_up(),
+        "message": f"GPU handed to {'llama.cpp' if mode == 'llama' else 'TabbyAPI'} ({name})",
     }
 
 
