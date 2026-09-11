@@ -266,3 +266,28 @@ class TsctlTests(unittest.TestCase):
             self.assertEqual(self.tsctl.api_unit("restart"), 0)
         saver.assert_called_once_with()
         user.assert_called()
+
+    def test_run_dialog_labels_submenu_cancel_as_back(self):
+        with mock.patch("subprocess.run") as run:
+            run.return_value = mock.Mock(returncode=1, stderr="")
+            self.tsctl.run_dialog(["--menu", "x", "10", "40", "4"], cancel_label="Back")
+            argv = run.call_args[0][0]
+            self.assertEqual(argv[argv.index("--cancel-label") + 1], "Back")
+            self.tsctl.run_dialog(["--menu", "x", "10", "40", "4"])
+            argv = run.call_args[0][0]
+            self.assertNotIn("--cancel-label", argv)
+
+    def test_submenu_menus_use_back_button(self):
+        calls = []
+
+        def fake_dialog(args, cancel_label=None):
+            calls.append(cancel_label)
+            return 1, ""
+
+        with mock.patch.object(self.tsctl, "run_dialog", side_effect=fake_dialog):
+            self.assertEqual(self.tsctl.tui_dialog(), 0)
+            self.assertEqual(self.tsctl.dialog_service(), 0)
+            self.assertEqual(self.tsctl.dialog_updates(), 0)
+            self.assertEqual(self.tsctl.dialog_backup_menu(), 0)
+        self.assertEqual(calls[0], None)
+        self.assertEqual(calls[1:], ["Back", "Back", "Back"])

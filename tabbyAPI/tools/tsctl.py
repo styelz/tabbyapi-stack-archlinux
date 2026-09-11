@@ -474,9 +474,12 @@ def parse_pairs(tokens: list[str]) -> list[tuple[str, str]]:
     return pairs
 
 
-def run_dialog(args: list[str]) -> tuple[int, str]:
+def run_dialog(args: list[str], *, cancel_label: str | None = None) -> tuple[int, str]:
+    extra: list[str] = []
+    if cancel_label:
+        extra.extend(["--cancel-label", cancel_label])
     result = subprocess.run(
-        ["dialog", "--backtitle", "tabbyapi-stack", *args],
+        ["dialog", "--backtitle", "tabbyapi-stack", *extra, *args],
         stderr=subprocess.PIPE,
         text=True,
     )
@@ -639,7 +642,8 @@ def dialog_service() -> int:
                 width,
                 rows,
                 *items,
-            ]
+            ],
+            cancel_label="Back",
         )
         if code != 0 or not choice:
             return 0
@@ -670,7 +674,8 @@ def dialog_updates() -> int:
                 width,
                 rows,
                 *items,
-            ]
+            ],
+            cancel_label="Back",
         )
         if code != 0 or not choice:
             return 0
@@ -712,7 +717,8 @@ def dialog_backup_menu() -> int:
                 width,
                 rows,
                 *items,
-            ]
+            ],
+            cancel_label="Back",
         )
         if code != 0 or not choice:
             return 0
@@ -744,7 +750,8 @@ def dialog_group(group_tag: str) -> int:
                 width,
                 rows,
                 *items,
-            ]
+            ],
+            cancel_label="Back",
         )
         if code != 0 or not choice:
             return 0
@@ -777,7 +784,8 @@ def dialog_section(name: str) -> int:
                 width,
                 count,
                 *rows,
-            ]
+            ],
+            cancel_label="Back",
         )
         if code != 0 or not key:
             return 0
@@ -808,7 +816,8 @@ def dialog_section(name: str) -> int:
                     "70",
                     "8",
                     *items,
-                ]
+                ],
+                cancel_label="Back",
             )
         elif field.get("kind") == "bool":
             yes_args = ["--title", str(field.get("label") or field["name"])]
