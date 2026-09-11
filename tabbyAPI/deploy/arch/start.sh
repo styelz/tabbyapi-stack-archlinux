@@ -20,6 +20,7 @@ if command -v systemctl >/dev/null 2>&1 && systemctl --user is-active --quiet ta
   exit 0
 fi
 
+export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
 cd "$TABBY"
 # shellcheck source=load-env.sh
 . "$TABBY/deploy/arch/load-env.sh"

@@ -36,6 +36,7 @@ dependencies = [
     "websockets >= 10.4",
     "pillow",
     "requests",
+    "httpx",
 
     # Improved asyncio loops
     "uvloop ; platform_system == 'Linux' and platform_machine == 'x86_64'",

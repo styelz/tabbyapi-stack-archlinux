@@ -3,6 +3,8 @@
 # is in the docker group, including before a re-login.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+STACK="$(cd "$ROOT/.." && pwd)"
+export PYTHONPATH="$STACK${PYTHONPATH:+:$PYTHONPATH}"
 PY="$ROOT/venv/bin/python"
 ENV_FILE="$ROOT/deploy/arch/tabby.env"
 # shellcheck source=load-env.sh

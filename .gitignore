@@ -52,6 +52,8 @@ ui_sessions.json
 **/switch-model.log
 **/ssh-forwarder.log
 **/.env
+sidecar/.backend-key
+vendor/tabbyAPI/
 
 # Keys and Cursor auth
 id_rsa

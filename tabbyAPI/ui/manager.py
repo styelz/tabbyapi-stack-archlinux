@@ -264,24 +264,29 @@ def unit_active(name: str) -> Optional[bool]:
 
 
 def _model_card() -> dict[str, Any]:
-    from common import model
-
-    container = getattr(model, "container", None)
-    if not container or not getattr(container, "loaded", False):
-        return {}
     try:
-        card = container.model_info()
-        payload = card.model_dump() if hasattr(card, "model_dump") else dict(card)
+        from sidecar.model_status import model_card
+
+        return model_card()
     except Exception:
-        payload = {"id": getattr(getattr(container, "model_dir", None), "name", None)}
-    params = payload.get("parameters") or {}
-    return {
-        "id": payload.get("id"),
-        "max_seq_len": params.get("max_seq_len"),
-        "cache_size": params.get("cache_size"),
-        "cache_mode": params.get("cache_mode"),
-        "use_vision": params.get("use_vision"),
-    }
+        from common import model
+
+        container = getattr(model, "container", None)
+        if not container or not getattr(container, "loaded", False):
+            return {}
+        try:
+            card = container.model_info()
+            payload = card.model_dump() if hasattr(card, "model_dump") else dict(card)
+        except Exception:
+            payload = {"id": getattr(getattr(container, "model_dir", None), "name", None)}
+        params = payload.get("parameters") or {}
+        return {
+            "id": payload.get("id"),
+            "max_seq_len": params.get("max_seq_len"),
+            "cache_size": params.get("cache_size"),
+            "cache_mode": params.get("cache_mode"),
+            "use_vision": params.get("use_vision"),
+        }
 
 
 def _auto_update_status() -> dict[str, Any]:

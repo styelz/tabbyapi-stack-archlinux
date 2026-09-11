@@ -275,6 +275,9 @@ def permission_for_token(test_key: str) -> Optional[str]:
     """Return 'admin', 'api', or None for a presented API/admin token."""
     if not test_key:
         return None
+    backend = os.environ.get("TABBY_BACKEND_KEY") or ""
+    if backend and _keys_equal(test_key, backend):
+        return "admin"
     yaml_perm = _yaml_permission(test_key)
     if yaml_perm:
         return yaml_perm

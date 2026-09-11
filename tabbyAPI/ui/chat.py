@@ -206,7 +206,15 @@ async def _run_console_work(
     if name:
         start_switch(name)
         return text_response(data, switch_reply_text(name))
-    if not model.container or not getattr(model.container, "loaded", False):
+    try:
+        from sidecar.model_status import _backend_configured, llm_is_ready as _remote_ready
+    except Exception:
+        _backend_configured = lambda: False  # noqa: E731
+        _remote_ready = None
+    llm_ready = _remote_ready() if _backend_configured() and _remote_ready else bool(
+        model.container and getattr(model.container, "loaded", False)
+    )
+    if not llm_ready:
         if gpu_is_comfy() and looks_like_chat_not_image(last_user_text(data)):
             return text_response(data, comfy_chat_suggest_text())
     try:

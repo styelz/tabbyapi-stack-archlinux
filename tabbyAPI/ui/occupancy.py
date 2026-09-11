@@ -74,13 +74,18 @@ def _switch_busy() -> bool:
 
 def _llm_jobs_active() -> bool:
     try:
-        from common import model as tabby_model
+        from sidecar.model_status import llm_jobs_active
 
-        container = tabby_model.container
-        jobs = getattr(container, "active_job_ids", None) if container is not None else None
-        return bool(jobs)
+        return llm_jobs_active()
     except Exception:
-        return False
+        try:
+            from common import model as tabby_model
+
+            container = tabby_model.container
+            jobs = getattr(container, "active_job_ids", None) if container is not None else None
+            return bool(jobs)
+        except Exception:
+            return False
 
 
 def _gpu_held() -> bool:
