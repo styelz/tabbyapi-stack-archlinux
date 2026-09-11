@@ -156,7 +156,7 @@ UPDATE_FIELDS = (
         "name": "enabled",
         "env": "TABBY_AUTO_UPDATE",
         "label": "Enable auto-update",
-        "description": "Pull GitHub origin/main on a timer. Skips while a chat or image job is running.",
+        "description": "Pull the checked-out GitHub branch on a timer (main unless you switched). Skips while a chat or image job is running.",
         "kind": "bool",
         "optional": False,
         "default": True,

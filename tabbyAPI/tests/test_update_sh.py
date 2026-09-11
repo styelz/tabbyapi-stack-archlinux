@@ -55,6 +55,8 @@ class UpdateShRestartOptionTests(unittest.TestCase):
         self.assertIn("stdbuf -oL -eL", src)
         self.assertIn('kill "$GAUGE_PID"', src)
         self.assertIn("Applying deps and restart", src)
+        self.assertIn("update_branch()", src)
+        self.assertIn("Prefer the branch already checked out", src)
         self.assertIn("restart_prompt_text", src)
         self.assertNotIn("tabbyapi is not running, so it was not restarted.", src)
         self.assertNotIn(
@@ -232,6 +234,151 @@ class UpdateShFfPullTests(unittest.TestCase):
             self.assertIn("saver_files=1", log)
             prompt = json.loads((live / "tabby-update-prompt.json").read_text())
             self.assertNotIn("tabbyAPI/deploy/arch/tabby-saver.py", prompt.get("restart_files") or [])
+
+    def test_pull_stays_on_checked_out_origin_branch(self):
+        script = UPDATE_SH.read_text()
+        git_env = {
+            **os.environ,
+            "GIT_AUTHOR_NAME": "test",
+            "GIT_AUTHOR_EMAIL": "test@test",
+            "GIT_COMMITTER_NAME": "test",
+            "GIT_COMMITTER_EMAIL": "test@test",
+            "GIT_TERMINAL_PROMPT": "0",
+            "TABBY_INSTALL_VERBOSE": "1",
+        }
+
+        def git(cwd, *args):
+            subprocess.check_call(["git", "-c", "init.defaultBranch=main", *args], cwd=cwd, env=git_env)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            origin = tmp / "origin.git"
+            live = tmp / "live"
+            origin.mkdir()
+            git(origin, "init", "--bare")
+
+            seed = tmp / "seed"
+            seed.mkdir()
+            git(seed, "init")
+            git(seed, "config", "user.email", "test@test")
+            git(seed, "config", "user.name", "test")
+            (seed / "install.sh").write_text("#!/bin/bash\necho install\n")
+            (seed / "tabbyAPI").mkdir()
+            (seed / "tabbyAPI" / "main.py").write_text("print('ok')\n")
+            (seed / "tabbyAPI" / "phrase.py").write_text("main-v1\n")
+            (seed / "update.sh").write_text(script)
+            git(seed, "add", "install.sh", "update.sh", "tabbyAPI/main.py", "tabbyAPI/phrase.py")
+            git(seed, "commit", "-m", "seed")
+            git(seed, "remote", "add", "origin", str(origin))
+            git(seed, "push", "-u", "origin", "HEAD:main")
+            git(seed, "checkout", "-b", "vanilla-tapi")
+            (seed / "tabbyAPI" / "phrase.py").write_text("feature-v1\n")
+            git(seed, "add", "tabbyAPI/phrase.py")
+            git(seed, "commit", "-m", "feature seed")
+            git(seed, "push", "-u", "origin", "HEAD:vanilla-tapi")
+
+            git(tmp, "clone", "-b", "vanilla-tapi", str(origin), str(live))
+            git(live, "config", "user.email", "test@test")
+            git(live, "config", "user.name", "test")
+            os.chmod(live / "update.sh", 0o755)
+
+            git(seed, "checkout", "main")
+            (seed / "tabbyAPI" / "phrase.py").write_text("main-should-not-win\n")
+            git(seed, "add", "tabbyAPI/phrase.py")
+            git(seed, "commit", "-m", "main newer")
+            git(seed, "push", "origin", "HEAD:main")
+
+            git(seed, "checkout", "vanilla-tapi")
+            (seed / "tabbyAPI" / "phrase.py").write_text("feature-v2\n")
+            git(seed, "add", "tabbyAPI/phrase.py")
+            git(seed, "commit", "-m", "feature newer")
+            git(seed, "push", "origin", "HEAD:vanilla-tapi")
+
+            proc = subprocess.run(
+                ["bash", str(live / "update.sh"), "--git", "--no-restart"],
+                cwd=live,
+                env=git_env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=60,
+            )
+            log = (live / "tabby-update.log").read_text() if (live / "tabby-update.log").exists() else proc.stdout
+            self.assertEqual(proc.returncode, 0, log)
+            branch = subprocess.check_output(
+                ["git", "-C", str(live), "rev-parse", "--abbrev-ref", "HEAD"],
+                text=True,
+            ).strip()
+            self.assertEqual(branch, "vanilla-tapi", log)
+            self.assertEqual((live / "tabbyAPI" / "phrase.py").read_text(), "feature-v2\n")
+            self.assertNotIn("Switching tabbyapi-stack from vanilla-tapi to main", log)
+
+    def test_pull_falls_back_to_main_for_local_only_branch(self):
+        script = UPDATE_SH.read_text()
+        git_env = {
+            **os.environ,
+            "GIT_AUTHOR_NAME": "test",
+            "GIT_AUTHOR_EMAIL": "test@test",
+            "GIT_COMMITTER_NAME": "test",
+            "GIT_COMMITTER_EMAIL": "test@test",
+            "GIT_TERMINAL_PROMPT": "0",
+            "TABBY_INSTALL_VERBOSE": "1",
+        }
+
+        def git(cwd, *args):
+            subprocess.check_call(["git", "-c", "init.defaultBranch=main", *args], cwd=cwd, env=git_env)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            origin = tmp / "origin.git"
+            live = tmp / "live"
+            origin.mkdir()
+            git(origin, "init", "--bare")
+
+            seed = tmp / "seed"
+            seed.mkdir()
+            git(seed, "init")
+            git(seed, "config", "user.email", "test@test")
+            git(seed, "config", "user.name", "test")
+            (seed / "install.sh").write_text("#!/bin/bash\necho install\n")
+            (seed / "tabbyAPI").mkdir()
+            (seed / "tabbyAPI" / "main.py").write_text("print('ok')\n")
+            (seed / "tabbyAPI" / "phrase.py").write_text("main-v1\n")
+            (seed / "update.sh").write_text(script)
+            git(seed, "add", "install.sh", "update.sh", "tabbyAPI/main.py", "tabbyAPI/phrase.py")
+            git(seed, "commit", "-m", "seed")
+            git(seed, "remote", "add", "origin", str(origin))
+            git(seed, "push", "-u", "origin", "HEAD:main")
+
+            git(tmp, "clone", str(origin), str(live))
+            git(live, "config", "user.email", "test@test")
+            git(live, "config", "user.name", "test")
+            git(live, "checkout", "-b", "rewrite")
+            os.chmod(live / "update.sh", 0o755)
+
+            (seed / "tabbyAPI" / "phrase.py").write_text("main-v2\n")
+            git(seed, "add", "tabbyAPI/phrase.py")
+            git(seed, "commit", "-m", "main newer")
+            git(seed, "push", "origin", "HEAD:main")
+
+            proc = subprocess.run(
+                ["bash", str(live / "update.sh"), "--git", "--no-restart"],
+                cwd=live,
+                env=git_env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=60,
+            )
+            log = (live / "tabby-update.log").read_text() if (live / "tabby-update.log").exists() else proc.stdout
+            self.assertEqual(proc.returncode, 0, log)
+            branch = subprocess.check_output(
+                ["git", "-C", str(live), "rev-parse", "--abbrev-ref", "HEAD"],
+                text=True,
+            ).strip()
+            self.assertEqual(branch, "main", log)
+            self.assertEqual((live / "tabbyAPI" / "phrase.py").read_text(), "main-v2\n")
+            self.assertIn("Switching tabbyapi-stack from rewrite to main", log)
 
 
 INSTALL_SH = Path(__file__).resolve().parents[2] / "install.sh"

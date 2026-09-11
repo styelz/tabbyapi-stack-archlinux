@@ -2,8 +2,9 @@
 # Pull the latest tabbyapi-stack commit into this install, then apply it.
 #
 # The live tree is the git checkout (clone into $HOME/tabbyapi-stack, or an
-# older rsync dest that this script bootstraps). It always sits on
-# origin's default branch (main). Runtime data stays: venv, models,
+# older rsync dest that this script bootstraps). It stays on the branch
+# already checked out when that branch exists on origin; otherwise it sits
+# on origin's default branch (main). Runtime data stays: venv, models,
 # ComfyUI, config.yml, tabby.env.
 set -euo pipefail
 
@@ -352,7 +353,7 @@ if [[ -f "$root/.live-install" \
      || "$root" == "${HOME}/tabbyapi-stack" \
      || "$root" == "${HOME}/tabby-stack" ]]; then
   echo "Refuse: this is the live Tabby install (${root})." >&2
-  echo "Commit and push in the git source tree. Live only pulls origin/main." >&2
+  echo "Commit and push in the git source tree. Live only pulls the branch it is already on." >&2
   exit 1
 fi
 exit 0
@@ -931,6 +932,21 @@ origin_branch() {
   printf '%s' "$branch"
 }
 
+# Prefer the branch already checked out when origin has it, so a live
+# install on another origin branch is not yanked back to main. Fall
+# back to origin's default for leftover local-only names.
+update_branch() {
+  local dir="$1"
+  local current=""
+  current="$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  if [[ -n "$current" && "$current" != "HEAD" ]] \
+     && git -C "$dir" rev-parse --verify -q "origin/$current" >/dev/null; then
+    printf '%s' "$current"
+    return
+  fi
+  origin_branch "$dir"
+}
+
 ensure_stack_origin() {
   if ! git -C "$DEST" remote get-url origin >/dev/null 2>&1; then
     run_git git -C "$DEST" remote add origin "$ORIGIN"
@@ -1020,7 +1036,7 @@ ff_pull() {
   local pct_merge="${4:-75}"
   progress "$pct_fetch" "Fetching $label"
   run_git git -C "$dir" fetch --progress origin
-  branch="$(origin_branch "$dir")"
+  branch="$(update_branch "$dir")"
   if [[ -z "$branch" ]]; then
     branch="$(git -C "$dir" rev-parse --abbrev-ref HEAD)"
   fi
@@ -1062,8 +1078,9 @@ ff_pull() {
   if [[ -n "$current" && "$current" != "HEAD" && "$current" != "$branch" ]]; then
     printf '%s\n' "==> Switching $label from $current to $branch" >> "$UPDATE_LOG"
   fi
-  # Deploy checkout: sit on origin's branch, not a leftover local name
-  # (rewrite, etc.). -B moves that branch to origin and checks it out.
+  # Stay on the current branch when origin has it. Otherwise sit on
+  # origin's default, not a leftover local name (rewrite, etc.).
+  # -B moves that branch to origin and checks it out.
   run_git git -C "$dir" checkout -B "$branch" "origin/$branch"
   git -C "$dir" branch --set-upstream-to="origin/$branch" "$branch" >>"$UPDATE_LOG" 2>&1 || true
   if [[ -n "$wrappers_tmp" ]]; then
