@@ -105,9 +105,40 @@ class RestartStackTests(unittest.TestCase):
             units.assert_called_once_with("llm")
             self.assertFalse(lock.exists())
 
-    def test_start_restart_detaches_helper(self):
+    def test_start_restart_uses_systemd_run(self):
+        def which(name):
+            if name in {"systemctl", "systemd-run"}:
+                return f"/usr/bin/{name}"
+            return None
+
         with (
-            mock.patch("common.phrase_switch.shutil.which", return_value="/usr/bin/systemctl"),
+            mock.patch("common.phrase_switch.shutil.which", side_effect=which),
+            mock.patch("common.phrase_switch.gpu_is_comfy", return_value=False),
+            mock.patch("common.phrase_switch._abandon_jobs_for_restart") as abandon,
+            mock.patch("common.phrase_switch.subprocess.run") as run,
+            mock.patch("common.phrase_switch.subprocess.Popen") as popen,
+            mock.patch("common.phrase_switch.LOCK") as lock,
+            mock.patch("common.phrase_switch.LOG") as log,
+        ):
+            lock.write_text = mock.Mock()
+            log.touch = mock.Mock()
+            log.open = mock.mock_open()
+            run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
+            self.assertTrue(start_restart())
+            abandon.assert_called_once()
+            popen.assert_not_called()
+            cmds = [call.args[0] for call in run.call_args_list]
+            spawned = next(cmd for cmd in cmds if cmd and cmd[0] == "/usr/bin/systemd-run")
+            self.assertIn("--no-block", spawned)
+            self.assertIn("--unit=tabbyapi-stack-restart", spawned)
+            self.assertTrue(any("restart_stack.py" in str(part) for part in spawned))
+
+    def test_start_restart_falls_back_to_popen(self):
+        def which(name):
+            return "/usr/bin/systemctl" if name == "systemctl" else None
+
+        with (
+            mock.patch("common.phrase_switch.shutil.which", side_effect=which),
             mock.patch("common.phrase_switch.gpu_is_comfy", return_value=False),
             mock.patch("common.phrase_switch._abandon_jobs_for_restart") as abandon,
             mock.patch("common.phrase_switch.subprocess.Popen") as popen,

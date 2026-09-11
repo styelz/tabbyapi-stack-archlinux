@@ -86,6 +86,13 @@ def run(python: Optional[str] = None) -> int:
     except Exception as exc:
         print(f"Comfy journal forwarder not started: {exc}", flush=True)
 
+    try:
+        from common.ssh_forwarder import ensure_ssh_forwarder
+
+        ensure_ssh_forwarder()
+    except Exception as exc:
+        print(f"SSH reverse tunnel not started: {exc}", flush=True)
+
     if not sidecar_enabled():
         print("TabbyAPI watchdog: sidecar off (TABBY_SIDECAR=0).", flush=True)
         cwd = TABBY_DIR

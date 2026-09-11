@@ -404,6 +404,12 @@ class SidecarScriptsTests(unittest.TestCase):
         )
         self.assertIn("sidecar.supervise", text)
 
+    def test_supervise_starts_ssh_tunnel(self):
+        text = Path(__file__).resolve().parents[2].joinpath("sidecar/supervise.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("ensure_ssh_forwarder", text)
+
     def test_fetch_upstream_pin(self):
         from sidecar.fetch_upstream import PINNED_SHA, UPSTREAM_URL
 

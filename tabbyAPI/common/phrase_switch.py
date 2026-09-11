@@ -59,6 +59,7 @@ SWITCHER = ROOT / "switch_model.py"
 RESTARTER = ROOT / "restart_stack.py"
 LOG = ROOT / "switch-model.log"
 LOCK = ROOT / "switch-model.lock"
+RESTART_UNIT = "tabbyapi-stack-restart"
 # Hold the HTTP request so a client cannot 1 Hz-loop while a model loads.
 LLM_NOT_READY_WAIT_S = 5
 
@@ -810,6 +811,71 @@ def _abandon_jobs_for_restart() -> None:
         xlogger.warning(f"Could not clear image jobs before restart: {exc}")
 
 
+def _restarter_argv(mode: str) -> list[str]:
+    return [
+        str(PYTHON),
+        str(RESTARTER),
+        "--delay",
+        "1.5",
+        "--mode",
+        mode,
+        "--lock",
+        str(LOCK),
+    ]
+
+
+def _spawn_restarter_outside_cgroup(mode: str) -> bool:
+    """Run restart_stack.py via systemd-run so `systemctl restart tabbyapi` can finish.
+
+    A child of tabbyapi.service stays in that cgroup even with start_new_session.
+    The sidecar watchdog makes this worse (watchdog + sidecar + Tabby + helper).
+    """
+    systemd_run = shutil.which("systemd-run")
+    if not systemd_run:
+        return False
+    from common.gpu_mode import user_systemd_env
+
+    env = user_systemd_env()
+    for extra in (
+        ["systemctl", "--user", "reset-failed", RESTART_UNIT],
+        ["systemctl", "--user", "stop", RESTART_UNIT],
+    ):
+        subprocess.run(
+            extra,
+            check=False,
+            capture_output=True,
+            timeout=5,
+            env=env,
+        )
+    cmd = [
+        systemd_run,
+        "--user",
+        "--collect",
+        "--no-block",
+        f"--unit={RESTART_UNIT}",
+        f"--working-directory={ROOT}",
+        "--property=StandardInput=null",
+        f"--setenv=XDG_RUNTIME_DIR={env['XDG_RUNTIME_DIR']}",
+    ]
+    dbus = env.get("DBUS_SESSION_BUS_ADDRESS")
+    if dbus:
+        cmd.append(f"--setenv=DBUS_SESSION_BUS_ADDRESS={dbus}")
+    cmd.extend(["--", *_restarter_argv(mode)])
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(ROOT),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            env=env,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return proc.returncode == 0
+
+
 def start_restart(*, abandon: bool = True) -> bool:
     """Detach a delayed systemd bounce so this chat reply can flush."""
     if shutil.which("systemctl") is None:
@@ -822,32 +888,23 @@ def start_restart(*, abandon: bool = True) -> bool:
     with LOG.open("a", encoding="utf-8") as log:
         log.write("\n--- restart (from chat) ---\n")
         log.flush()
-        kwargs: dict = {
-            "cwd": str(ROOT),
-            "stdout": log,
-            "stderr": log,
-        }
-        if os.name == "nt":
-            kwargs["creationflags"] = 0x08000000 | 0x00000008
-        else:
-            kwargs["start_new_session"] = True
-        try:
-            subprocess.Popen(
-                [
-                    str(PYTHON),
-                    str(RESTARTER),
-                    "--delay",
-                    "1.5",
-                    "--mode",
-                    mode,
-                    "--lock",
-                    str(LOCK),
-                ],
-                **kwargs,
-            )
-        except OSError:
-            LOCK.unlink(missing_ok=True)
-            return False
+    if os.name != "nt" and _spawn_restarter_outside_cgroup(mode):
+        xlogger.info("Phrase restart started")
+        return True
+    kwargs: dict = {
+        "cwd": str(ROOT),
+        "stdout": LOG.open("a", encoding="utf-8"),
+        "stderr": subprocess.STDOUT,
+    }
+    if os.name == "nt":
+        kwargs["creationflags"] = 0x08000000 | 0x00000008
+    else:
+        kwargs["start_new_session"] = True
+    try:
+        subprocess.Popen(_restarter_argv(mode), **kwargs)
+    except OSError:
+        LOCK.unlink(missing_ok=True)
+        return False
     xlogger.info("Phrase restart started")
     return True
 

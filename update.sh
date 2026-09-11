@@ -435,6 +435,8 @@ path_needs_api_restart() {
   case "$1" in
     tabbyAPI/tests/*) return 1 ;;
     tabbyAPI/deploy/arch/tabby-saver.py) return 1 ;;
+    sidecar/*.py|sidecar/*.sh) return 0 ;;
+    tabbyAPI/watch_api.py|tabbyAPI/deploy/arch/run-api.sh) return 0 ;;
     tabbyAPI/*.py) return 0 ;;
     *) return 1 ;;
   esac

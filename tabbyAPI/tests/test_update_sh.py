@@ -57,6 +57,8 @@ class UpdateShRestartOptionTests(unittest.TestCase):
         self.assertIn("Applying deps and restart", src)
         self.assertIn("update_branch()", src)
         self.assertIn("Prefer the branch already checked out", src)
+        self.assertIn("sidecar/*.py|sidecar/*.sh) return 0 ;;", src)
+        self.assertIn("tabbyAPI/watch_api.py|tabbyAPI/deploy/arch/run-api.sh) return 0 ;;", src)
         self.assertIn("restart_prompt_text", src)
         self.assertNotIn("tabbyapi is not running, so it was not restarted.", src)
         self.assertNotIn(
