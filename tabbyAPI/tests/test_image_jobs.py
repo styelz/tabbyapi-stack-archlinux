@@ -1,5 +1,6 @@
 import json
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -704,6 +705,75 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(items[0].source_image, "/tmp/star.png")
         self.assertEqual(items[0].denoise, 0.85)
+
+    async def test_resume_skips_stale_leftover_job(self):
+        from endpoints.core.image_jobs import (
+            McpImageItem,
+            McpImageJob,
+            _MCP_JOBS,
+            _MCP_ORDER,
+            reset_mcp_image_jobs_for_tests,
+            resume_persisted_jobs,
+        )
+
+        with tempfile.TemporaryDirectory() as raw:
+            with mock.patch("common.gpu_mode.GENERATED_DIR", Path(raw)):
+                await reset_mcp_image_jobs_for_tests()
+                job = McpImageJob(
+                    id="job-stale",
+                    items=[McpImageItem(prompt="logo", output_path="images/logo.png")],
+                    restore=True,
+                    api_base="https://gpu.example/v1",
+                    wait_text="",
+                    wait_s=0,
+                    status="queued",
+                    phase="queued",
+                    started_at=time.time() - 3 * 60 * 60,
+                )
+                _MCP_JOBS[job.id] = job
+                _MCP_ORDER.append(job.id)
+                with mock.patch(
+                    "images.jobs.launch_mcp_image_job", new=mock.AsyncMock()
+                ) as launch:
+                    resumed = await resume_persisted_jobs()
+                self.assertEqual(resumed, 0)
+                self.assertEqual(job.status, "error")
+                launch.assert_not_awaited()
+                await reset_mcp_image_jobs_for_tests()
+
+    async def test_resume_launches_recent_job(self):
+        from endpoints.core.image_jobs import (
+            McpImageItem,
+            McpImageJob,
+            _MCP_JOBS,
+            _MCP_ORDER,
+            reset_mcp_image_jobs_for_tests,
+            resume_persisted_jobs,
+        )
+
+        with tempfile.TemporaryDirectory() as raw:
+            with mock.patch("common.gpu_mode.GENERATED_DIR", Path(raw)):
+                await reset_mcp_image_jobs_for_tests()
+                job = McpImageJob(
+                    id="job-fresh",
+                    items=[McpImageItem(prompt="logo", output_path="images/logo.png")],
+                    restore=True,
+                    api_base="https://gpu.example/v1",
+                    wait_text="",
+                    wait_s=0,
+                    status="queued",
+                    phase="queued",
+                    started_at=time.time() - 30,
+                )
+                _MCP_JOBS[job.id] = job
+                _MCP_ORDER.append(job.id)
+                with mock.patch(
+                    "images.jobs.launch_mcp_image_job", new=mock.AsyncMock()
+                ) as launch:
+                    resumed = await resume_persisted_jobs()
+                self.assertEqual(resumed, 1)
+                launch.assert_awaited()
+                await reset_mcp_image_jobs_for_tests()
 
     async def test_mixed_chat_removed_from_phrase_switch(self):
         import common.phrase_switch as ps

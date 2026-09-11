@@ -54,6 +54,10 @@ RESTART_ABANDON_REASON = "TabbyAPI restarted before this job finished."
 CODING_ABANDON_REASON = (
     "Left unused while another chat started writing."
 )
+STALE_ABANDON_REASON = (
+    "Left unused after the API restarted. Ask again if you still want that picture."
+)
+STALE_JOB_S = 20 * 60
 
 
 @dataclass
@@ -473,9 +477,9 @@ def _job_from_persist(data: dict) -> Optional[McpImageJob]:
     if not items:
         return None
     try:
-        started_at = float(data.get("started_at") or 0) or time.time()
+        started_at = float(data.get("started_at") or 0)
     except (TypeError, ValueError):
-        started_at = time.time()
+        started_at = 0.0
     job = McpImageJob(
         id=job_id,
         items=items,
@@ -608,16 +612,49 @@ def _requeue_unfinished_items(job: McpImageJob) -> None:
     job.client_saved = False
 
 
+def job_is_stale(job, *, now: Optional[float] = None) -> bool:
+    """True when a leftover job is too old to steal the GPU on the next boot."""
+    started = float(getattr(job, "started_at", 0) or 0)
+    if started <= 0:
+        return True
+    return (time.time() if now is None else now) - started > STALE_JOB_S
+
+
+def abandon_stale_job(
+    job: Optional[McpImageJob],
+    reason: str = STALE_ABANDON_REASON,
+) -> bool:
+    """Drop a leftover queued/running job so a new LLM turn can keep the GPU."""
+    global _MCP_TASK, _MCP_JOB_ID
+    if job is None or not job_is_stale(job):
+        return False
+    if str(getattr(job, "status", "") or "") not in ("queued", "running", "coding"):
+        return False
+    _mark_job_abandoned(job, reason)
+    if _MCP_JOB_ID == job.id:
+        task = _MCP_TASK
+        _MCP_TASK = None
+        _MCP_JOB_ID = None
+        if task is not None and not task.done():
+            task.cancel()
+    _persist_jobs()
+    return True
+
+
 def _maybe_revive_restarted_job(job: McpImageJob) -> McpImageJob:
     """Keep unfinished Comfy work after an API bounce; honor explicit cancels.
 
     A coding job cannot resume the LLM write after this process died. Leave
     it abandoned so the next Code message is a new turn, not a ghost generate.
+    Stale leftovers stay abandoned so switching to Gemma does not start Comfy.
     """
+    if job.status == "done":
+        return job
     if job.status == "coding":
         _mark_job_abandoned(job, RESTART_ABANDON_REASON)
         return job
-    if job.status == "done":
+    if job_is_stale(job) and job.status in ("queued", "running"):
+        _mark_job_abandoned(job, STALE_ABANDON_REASON)
         return job
     if job.status == "error":
         if not _is_restart_abandon(job):
@@ -632,7 +669,13 @@ def _maybe_revive_restarted_job(job: McpImageJob) -> McpImageJob:
             job.phase = "done"
             job.error = ""
             return job
+        if job_is_stale(job):
+            _mark_job_abandoned(job, STALE_ABANDON_REASON)
+            return job
         _requeue_unfinished_items(job)
+        return job
+    if job_is_stale(job):
+        _mark_job_abandoned(job, STALE_ABANDON_REASON)
         return job
     _requeue_unfinished_items(job)
     return job
@@ -650,6 +693,10 @@ def _drop_dead_jobs() -> None:
         if job.status not in ("queued", "running"):
             continue
         if live_id and job.id == live_id:
+            continue
+        if job_is_stale(job):
+            _mark_job_abandoned(job, STALE_ABANDON_REASON)
+            changed = True
             continue
         _requeue_unfinished_items(job)
         changed = True
@@ -738,9 +785,14 @@ async def resume_persisted_jobs() -> int:
             continue
         if job.status not in ("queued", "running"):
             continue
+        if job_is_stale(job):
+            _mark_job_abandoned(job, STALE_ABANDON_REASON)
+            continue
         ready += 1
         if first is None:
             first = job
+    if ready == 0:
+        _persist_jobs()
     if first is not None and not _worker_is_alive():
         await launch_mcp_image_job(first)
     return ready

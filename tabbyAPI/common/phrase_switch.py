@@ -165,6 +165,9 @@ CHAT_QUESTION_RE = re.compile(
     r"|(?:can|could|would|should|will)\s+you\s+(?:explain|tell|help|show me how)\b"
     r")"
 )
+CHAT_FOLLOWUP_RE = re.compile(
+    r"(?is)^\s*(?:please\s+)?(?:retry|try again|continue|again)[\s!.?]*$"
+)
 
 
 def llm_not_ready_text(*, console: bool = False) -> str:
@@ -1508,15 +1511,19 @@ def looks_like_chat_not_image(text: str) -> bool:
         return False
     if raw.lower().startswith("qwen-image:"):
         return False
-    if IMAGE_NOUN_RE.search(raw) and not CHAT_QUESTION_RE.match(raw):
+    if CHAT_FOLLOWUP_RE.match(raw) or CHAT_OPENER_RE.match(raw):
+        return True
+    if IMAGE_NOUN_RE.search(raw):
         return False
-    return bool(CHAT_OPENER_RE.match(raw))
+    return False
 
 
 def turn_needs_image_classify(text: str) -> bool:
     """True when mixed-plan classify should run. Plain chat skips that extra generate."""
     raw = (text or "").strip()
     if not raw:
+        return False
+    if looks_like_chat_not_image(raw) and not IMAGE_GEN_RE.match(raw):
         return False
     if IMAGE_GEN_RE.match(raw) or IMAGE_COUNT_RE.match(raw):
         return True
@@ -1543,13 +1550,24 @@ def comfy_chat_suggest_text() -> str:
 def should_yield_comfy_to_llm(data: ChatCompletionRequest) -> bool:
     """True when Comfy owns the GPU but this turn needs the coding model."""
     try:
-        from images.jobs import active_mcp_image_job
+        from images.jobs import abandon_stale_job, active_mcp_image_job, job_is_stale
+        from images.paths import job_ids_from_text
 
         busy = active_mcp_image_job()
     except Exception:
         busy = None
     if busy and busy.status in ("queued", "running"):
-        return False
+        blob = "\n".join(
+            _content_text(getattr(message, "content", None))
+            for message in (data.messages or [])
+        )
+        owns = str(getattr(busy, "id", "") or "") in set(job_ids_from_text(blob))
+        if owns:
+            return False
+        if job_is_stale(busy):
+            abandon_stale_job(busy)
+        else:
+            return False
     if last_role(data) in ("tool", "function"):
         return True
     return requested_image_prompt(data) is None
@@ -1693,6 +1711,10 @@ async def llm_not_ready_response(
             "Wait for the download curl in the chat that started that job.",
         )
     if busy and busy.status == "coding":
+        return text_response(
+            data, llm_loading_text(last_llm_profile_name(), console=console)
+        )
+    if not gpu_is_comfy():
         return text_response(
             data, llm_loading_text(last_llm_profile_name(), console=console)
         )

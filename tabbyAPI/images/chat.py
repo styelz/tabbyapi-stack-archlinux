@@ -1631,6 +1631,7 @@ async def handle(
         IMAGE_GEN_RE,
         border_edit_prompt,
         last_user_text,
+        looks_like_chat_not_image,
         refuses_new_images,
         requested_image_prompt,
         text_response,
@@ -1675,6 +1676,14 @@ async def handle(
         )
 
     if job and job.status == "coding" and llm_ready:
+        ask = last_user_text(data) or ""
+        if (
+            last_role(data) == "user"
+            and looks_like_chat_not_image(ask)
+            and not IMAGE_GEN_RE.match(ask)
+            and not _explicit_new_rasters(data)
+        ):
+            return None
         if workspace:
             bound_owner, bound_chat = workspace
             if bound_owner and (not job.owner or job.owner == bound_owner):

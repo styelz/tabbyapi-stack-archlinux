@@ -463,6 +463,71 @@ class NotReadyWaitTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(slept, [])
         self.assertIn("still loading", result.choices[0].message.content.lower())
 
+        slept.clear()
+        with (
+            mock.patch("common.phrase_switch.asyncio.sleep", side_effect=fake_sleep),
+            mock.patch("common.phrase_switch.switch_in_progress", return_value=False),
+            mock.patch("common.phrase_switch.gpu_is_comfy", return_value=False),
+            mock.patch(
+                "common.phrase_switch.last_llm_profile_name", return_value="gemma26"
+            ),
+            mock.patch("images.jobs.active_mcp_image_job", return_value=None),
+        ):
+            result = await llm_not_ready_response(data, console=True)
+        self.assertEqual(slept, [])
+        self.assertIn("still loading", result.choices[0].message.content.lower())
+        self.assertNotIn("coding model is not loaded", result.choices[0].message.content.lower())
+
+
+class YieldComfyTests(unittest.TestCase):
+    def test_foreign_stale_job_does_not_block_yield(self):
+        from common.phrase_switch import should_yield_comfy_to_llm
+        from endpoints.OAI.types.chat_completion import (
+            ChatCompletionMessage,
+            ChatCompletionRequest,
+        )
+
+        data = ChatCompletionRequest(
+            messages=[
+                ChatCompletionMessage(
+                    role="user",
+                    content="Create a simple landing page with a logo and a header photo",
+                )
+            ]
+        )
+        busy = mock.Mock(id="old-job", status="running", started_at=0)
+        with (
+            mock.patch("images.jobs.active_mcp_image_job", return_value=busy),
+            mock.patch("images.jobs.job_is_stale", return_value=True),
+            mock.patch("images.jobs.abandon_stale_job", return_value=True) as abandon,
+        ):
+            self.assertTrue(should_yield_comfy_to_llm(data))
+        abandon.assert_called_once()
+
+    def test_same_chat_running_job_does_not_yield(self):
+        from common.phrase_switch import should_yield_comfy_to_llm
+        from endpoints.OAI.types.chat_completion import (
+            ChatCompletionMessage,
+            ChatCompletionRequest,
+        )
+
+        data = ChatCompletionRequest(
+            messages=[
+                ChatCompletionMessage(
+                    role="assistant",
+                    content="tabby-image-job: c7a39c70-53af-4e60-a498-8327a35a75d0",
+                ),
+                ChatCompletionMessage(role="user", content="retry"),
+            ]
+        )
+        busy = mock.Mock(
+            id="c7a39c70-53af-4e60-a498-8327a35a75d0",
+            status="running",
+            started_at=1,
+        )
+        with mock.patch("images.jobs.active_mcp_image_job", return_value=busy):
+            self.assertFalse(should_yield_comfy_to_llm(data))
+
 
 if __name__ == "__main__":
     unittest.main()

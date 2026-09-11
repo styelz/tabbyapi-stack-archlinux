@@ -122,6 +122,8 @@ class ClassifySkipTests(unittest.TestCase):
 
         self.assertFalse(turn_needs_image_classify("Reply with the single word ping."))
         self.assertFalse(turn_needs_image_classify("hello"))
+        self.assertFalse(turn_needs_image_classify("Did you create the images?"))
+        self.assertFalse(turn_needs_image_classify("retry"))
 
     def test_image_and_code_need_classify(self):
         from common.phrase_switch import turn_needs_image_classify
@@ -129,6 +131,27 @@ class ClassifySkipTests(unittest.TestCase):
         self.assertTrue(turn_needs_image_classify("generate an image of a cat"))
         self.assertTrue(turn_needs_image_classify("Create a website with a logo"))
         self.assertTrue(turn_needs_image_classify("qwen-image: a cafe logo"))
+
+    def test_followup_questions_are_chat_not_comfy_prompts(self):
+        from common.phrase_switch import looks_like_chat_not_image, requested_image_prompt
+
+        for text in (
+            "retry",
+            "Did you create the images?",
+            "Why is there no logo?",
+            "what happened to the header photo",
+        ):
+            self.assertTrue(looks_like_chat_not_image(text), text)
+            self.assertIsNone(requested_image_prompt(_user(text)))
+
+    def test_landing_page_ask_is_not_a_comfy_prompt(self):
+        from common.phrase_switch import requested_image_prompt
+
+        self.assertIsNone(
+            requested_image_prompt(
+                _user("Create a simple landing page with a logo and a header photo")
+            )
+        )
 
 
 class CodeReplyHintTests(unittest.TestCase):
@@ -1356,6 +1379,78 @@ class ChatHoldTests(unittest.IsolatedAsyncioTestCase):
                 data,
                 "https://gpu.example/v1",
                 llm_ready=True,
+                code=True,
+                owner="pbp",
+                chat_id="ws-page",
+            )
+        self.assertIsNone(response)
+        start.assert_not_called()
+        launch.assert_not_awaited()
+
+    async def test_question_followup_on_coding_job_stays_on_llm(self):
+        job = _job(
+            id="abc-123",
+            status="coding",
+            code_turns=1,
+            owner="pbp",
+            chat_id="ws-page",
+            items=[
+                SimpleNamespace(
+                    prompt="logo",
+                    output_path="images/logo.png",
+                    urls=[],
+                    status="queued",
+                )
+            ],
+        )
+        data = ChatCompletionRequest(
+            messages=[
+                ChatCompletionMessage(
+                    role="user",
+                    content="Create a simple landing page with a logo and a header photo",
+                ),
+                ChatCompletionMessage(
+                    role="assistant",
+                    content="tabby-image-job: abc-123\nwriting the page",
+                ),
+                ChatCompletionMessage(
+                    role="user",
+                    content="Did you create the images?",
+                ),
+            ]
+        )
+        with (
+            mock.patch("images.chat.get_mcp_image_job", return_value=job),
+            mock.patch("images.chat._write_site_code", new=mock.AsyncMock()) as write,
+            mock.patch("images.chat.launch_mcp_image_job", new=mock.AsyncMock()) as launch,
+            mock.patch("images.chat.start_mcp_image_job", new=mock.AsyncMock()) as start,
+        ):
+            response = await handle(
+                data,
+                "https://gpu.example/v1",
+                llm_ready=True,
+                code=True,
+                owner="pbp",
+                chat_id="ws-page",
+            )
+        self.assertIsNone(response)
+        write.assert_not_awaited()
+        start.assert_not_called()
+        launch.assert_not_awaited()
+
+    async def test_retry_while_comfy_does_not_start_a_job(self):
+        data = _user("retry")
+        with (
+            mock.patch("images.chat.active_mcp_image_job", return_value=None),
+            mock.patch("images.chat.get_mcp_image_job", return_value=None),
+            mock.patch("images.chat.start_mcp_image_job", new=mock.AsyncMock()) as start,
+            mock.patch("images.chat.launch_mcp_image_job", new=mock.AsyncMock()) as launch,
+        ):
+            response = await handle(
+                data,
+                "https://gpu.example/v1",
+                llm_ready=False,
+                gpu_is_comfy=True,
                 code=True,
                 owner="pbp",
                 chat_id="ws-page",
