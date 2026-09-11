@@ -47,6 +47,17 @@ class ThinkingOnlyProfileTests(unittest.TestCase):
             self.assertTrue(phrase_switch.profile_is_thinking_only("glm41"))
 
 
+class ProfileParsesToolsTests(unittest.TestCase):
+    def test_coding_profiles_parse_tools(self):
+        self.assertTrue(phrase_switch.profile_parses_tools("qwen"))
+        self.assertTrue(phrase_switch.profile_parses_tools("gemma26"))
+        self.assertFalse(phrase_switch.profile_parses_tools("glm"))
+
+    def test_profile_map_exposes_tool_format(self):
+        entry = phrase_switch.profile_map().get("gemma26") or {}
+        self.assertEqual(entry.get("tool_format"), "gemma4")
+
+
 class ThinkingOnlyUiWiringTests(unittest.TestCase):
     def test_status_and_chat_expose_the_alert(self):
         root = Path(__file__).resolve().parents[1]

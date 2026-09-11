@@ -25,6 +25,7 @@ _HOP = {
 }
 
 _DEFAULT_CLIENT: Optional[httpx.AsyncClient] = None
+GENERATE_ONLY_HEADER = "x-tabby-generate-only"
 
 
 def get_client() -> httpx.AsyncClient:
@@ -143,3 +144,58 @@ async def forward_chat(body: bytes, *, client: Optional[httpx.AsyncClient] = Non
         headers=out_headers,
         media_type=backend.headers.get("content-type"),
     )
+
+
+def _generate_headers(*, stream: bool) -> dict[str, str]:
+    key = ensure_backend_key()
+    return {
+        "authorization": f"Bearer {key}",
+        "x-api-key": key,
+        GENERATE_ONLY_HEADER: "1",
+        "content-type": "application/json",
+        "accept": "text/event-stream" if stream else "application/json",
+    }
+
+
+async def generate_chat(
+    payload: dict,
+    *,
+    client: Optional[httpx.AsyncClient] = None,
+) -> dict:
+    """Non-streaming completion on Tabby, skipping public image intercepts."""
+    http = client or get_client()
+    body = dict(payload or {})
+    body["stream"] = False
+    response = await http.post(
+        "/v1/chat/completions",
+        headers=_generate_headers(stream=False),
+        json=body,
+    )
+    response.raise_for_status()
+    data = response.json()
+    if not isinstance(data, dict):
+        raise RuntimeError("Backend chat completion returned a non-object.")
+    return data
+
+
+async def generate_chat_stream(
+    payload: dict,
+    *,
+    client: Optional[httpx.AsyncClient] = None,
+):
+    """Streaming completion on Tabby, skipping public image intercepts."""
+    http = client or get_client()
+    body = dict(payload or {})
+    body["stream"] = True
+    req = http.build_request(
+        "POST",
+        "/v1/chat/completions",
+        headers=_generate_headers(stream=True),
+        json=body,
+    )
+    backend = await http.send(req, stream=True)
+    try:
+        async for line in backend.aiter_lines():
+            yield line
+    finally:
+        await backend.aclose()

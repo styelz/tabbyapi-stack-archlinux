@@ -331,6 +331,24 @@ class SidecarInterceptTests(unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual(calls, ["wait", "proxy", "release"])
 
+    async def test_generate_chat_sends_generate_only_header(self):
+        seen = {}
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            seen["header"] = request.headers.get("x-tabby-generate-only")
+            seen["stream"] = json.loads(request.content).get("stream")
+            return httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": "plan"}}]},
+            )
+
+        transport = httpx.MockTransport(handler)
+        client = httpx.AsyncClient(transport=transport, base_url="http://tabby.test")
+        raw = await proxy_mod.generate_chat({"messages": []}, client=client)
+        self.assertEqual(seen["header"], "1")
+        self.assertFalse(seen["stream"])
+        self.assertEqual(raw["choices"][0]["message"]["content"], "plan")
+
 
 class SidecarModelStatusTests(unittest.TestCase):
     def test_uses_backend_http_when_configured(self):
@@ -366,6 +384,14 @@ class SidecarModelStatusTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("forward_chat", src)
         self.assertIn("is_sidecar_process", src)
+        self.assertIn("generate_only", src)
+
+    def test_backend_generate_only_skips_image_intercept(self):
+        router = Path(__file__).resolve().parents[1].joinpath(
+            "endpoints/OAI/router.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("x-tabby-generate-only", router)
+        self.assertIn("generate_only=True", router)
 
     def test_jobs_load_profile_uses_backend_when_sidecar(self):
         src = Path(__file__).resolve().parents[1].joinpath("images/jobs.py").read_text(

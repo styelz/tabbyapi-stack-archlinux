@@ -475,6 +475,19 @@ class UpgradeMissingNamedDestsTests(unittest.TestCase):
         self.assertEqual(_plan_asset_dests(ask), [])
         self.assertEqual(_named_image_dests(ask), [])
 
+    def test_partial_generate_plan_gains_missing_header(self):
+        ask = "Create a simple landing page with a logo and a header photo"
+        plan = ImageTurnPlan(
+            action="generate",
+            items=[{"prompt": "logo", "output_path": "images/logo.png"}],
+            from_model=True,
+        )
+        upgraded = _upgrade_missing_named_dests(plan, ask, [])
+        dests = [row.get("output_path") for row in upgraded.items]
+        self.assertEqual(upgraded.action, "generate")
+        self.assertIn("images/logo.png", dests)
+        self.assertIn("images/header.png", dests)
+
 
 class CurlFromLivingFilesTests(unittest.TestCase):
     def test_curl_lists_only_files_that_exist(self):
@@ -1745,6 +1758,58 @@ class LiveCodeStreamTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(flight.streamed_live)
         self.assertEqual(response.choices[0].message.content, "writing the page")
         self.assertIn("writing ", flight.assembled)
+
+    async def test_write_site_code_uses_backend_on_sidecar(self):
+        from images.chat import _write_site_code
+
+        async def fake_generate(payload, **_k):
+            return {
+                "id": "chatcmpl-test",
+                "object": "chat.completion",
+                "created": 1,
+                "model": "gpt-4o",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "via backend"},
+                        "finish_reason": "stop",
+                    }
+                ],
+            }
+
+        with (
+            mock.patch("common.model.container", None),
+            mock.patch("sidecar.settings.is_sidecar_process", return_value=True),
+            mock.patch("sidecar.proxy.generate_chat", new=fake_generate),
+            mock.patch("ui.flight.publish_console_status", new=mock.AsyncMock()),
+            mock.patch("ui.flight.current_console_flight", return_value=None),
+        ):
+            response = await _write_site_code(_user("Create a landing page"), None)
+        self.assertEqual(response.choices[0].message.content, "via backend")
+
+    async def test_coding_followup_launches_when_page_ready_and_write_skipped(self):
+        from images.chat import _write_page_then_maybe_launch
+
+        job = _job(id="abc-123", status="coding", owner="pbp", chat_id="ws-page")
+        data = _user("Create a simple landing page with a logo and a header photo")
+        with (
+            mock.patch("images.chat._write_site_code", new=mock.AsyncMock(return_value=None)),
+            mock.patch("images.chat._workspace_page_ready", return_value=True),
+            mock.patch("images.chat._page_blocking_comfy", return_value=False),
+        ):
+            response, launch = await _write_page_then_maybe_launch(data, job, None)
+        self.assertIsNone(response)
+        self.assertTrue(launch)
+
+    def test_profile_writes_files_without_container(self):
+        from images.chat import _profile_writes_files
+
+        with (
+            mock.patch("common.model.container", None),
+            mock.patch("common.phrase_switch.profile_is_thinking_only", return_value=False),
+            mock.patch("common.phrase_switch.profile_parses_tools", return_value=True),
+        ):
+            self.assertTrue(_profile_writes_files())
 
 
 if __name__ == "__main__":

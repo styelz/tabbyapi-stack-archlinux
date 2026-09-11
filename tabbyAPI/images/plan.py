@@ -343,6 +343,48 @@ def _plan_from_model_text(spec: str, raw: str) -> ImageTurnPlan | None:
     return ImageTurnPlan(action="generate", items=items, from_model=True)
 
 
+async def _llm_json_via_backend(system: str, user: str) -> str:
+    try:
+        from sidecar.settings import is_sidecar_process
+
+        if not is_sidecar_process():
+            return ""
+        from sidecar.proxy import generate_chat
+        from endpoints.OAI.types.chat_completion import (
+            ChatCompletionMessage,
+            ChatCompletionRequest,
+        )
+    except Exception:
+        return ""
+    request = ChatCompletionRequest(
+        messages=[
+            ChatCompletionMessage(role="system", content=system),
+            ChatCompletionMessage(role="user", content=(user or "")[:6000]),
+        ],
+        max_tokens=800,
+        temperature=0.1,
+        json_schema=MIXED_PLAN_SCHEMA,
+        stream=False,
+    )
+    try:
+        raw = await asyncio.wait_for(
+            generate_chat(request.model_dump(mode="json", exclude_none=True)),
+            timeout=LLM_PLAN_TIMEOUT_S,
+        )
+    except Exception as exc:
+        from common.logger import xlogger
+
+        xlogger.warning(f"Mixed image classify via backend failed: {exc}")
+        return ""
+    choices = raw.get("choices") if isinstance(raw, dict) else None
+    if not isinstance(choices, list) or not choices:
+        return ""
+    message = choices[0].get("message") if isinstance(choices[0], dict) else None
+    if not isinstance(message, dict):
+        return ""
+    return str(message.get("content") or message.get("text") or "")
+
+
 async def _llm_json(system: str, user: str, disconnect_handler=None) -> str:
     try:
         from common import model as model_mod
@@ -355,7 +397,7 @@ async def _llm_json(system: str, user: str, disconnect_handler=None) -> str:
         return ""
     container = getattr(model_mod, "container", None)
     if not container or not getattr(container, "loaded", False):
-        return ""
+        return await _llm_json_via_backend(system, user)
     if getattr(container, "prompt_template", None) is None:
         return ""
     request = ChatCompletionRequest(

@@ -45,6 +45,7 @@ async def run_chat_completion_turn(
     chat_id: str | None = None,
     agent: str = "agent",
     code: bool = False,
+    generate_only: bool = False,
 ):
     """Image intercept, then one generate. Callers own phrase-switch and StackGate."""
     sidecar = False
@@ -61,7 +62,11 @@ async def run_chat_completion_turn(
     else:
         llm_ready = bool(model.container and getattr(model.container, "loaded", False))
     await disconnect_handler.poll()
-    image_response = await handle_image_chat(
+    if generate_only:
+        sidecar = False
+        image_response = None
+    else:
+        image_response = await handle_image_chat(
         data,
         api_base,
         source_image=source_image,

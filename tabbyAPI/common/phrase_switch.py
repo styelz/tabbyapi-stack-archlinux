@@ -427,6 +427,7 @@ def profile_map() -> dict[str, dict]:
             "cache_size": model_cfg.get("cache_size"),
             "vision": bool(model_cfg.get("vision")),
             "thinking_only": data.get("thinking_only"),
+            "tool_format": model_cfg.get("tool_format"),
         }
         mapping[alias] = entry
         if folder:
@@ -1035,6 +1036,19 @@ def container_parses_tools() -> bool:
         or getattr(container, "harmony", False)
         or getattr(container, "muse_glimmer", False)
     )
+
+
+def profile_parses_tools(alias: Optional[str] = None) -> bool:
+    """True when this profile's YAML can parse Code file tools."""
+    if profile_is_thinking_only(alias):
+        return False
+    key = str(alias or last_llm_profile_name() or "").strip().lower()
+    entry = profile_map().get(key) or {}
+    if str(entry.get("tool_format") or "").strip():
+        return True
+    if bool(entry.get("harmony") or entry.get("muse_glimmer")):
+        return True
+    return key in {"qwen", "qwen35", "qwen36", "gemma", "gemma26"}
 
 
 def tools_without_format_response(data: ChatCompletionRequest):

@@ -595,6 +595,25 @@ def abandon_foreign_coding_job(
     return True
 
 
+def bind_job_workspace(job: Optional[McpImageJob], owner: str = "", chat_id: str = "") -> bool:
+    """Attach a leftover coding job to the Code workspace that owns this turn."""
+    if job is None:
+        return False
+    owner_name = str(owner or "").strip()
+    chat_name = str(chat_id or "").strip()
+    changed = False
+    if owner_name and not str(getattr(job, "owner", "") or "").strip():
+        job.owner = owner_name
+        changed = True
+    if chat_name and not str(getattr(job, "chat_id", "") or "").strip():
+        job.chat_id = chat_name
+        changed = True
+    if changed:
+        _persist_jobs()
+        _signal(job)
+    return changed
+
+
 def _is_restart_abandon(job: McpImageJob) -> bool:
     return (job.error or "").startswith(RESTART_ABANDON_REASON)
 

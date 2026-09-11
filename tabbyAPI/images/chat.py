@@ -19,6 +19,7 @@ from sse_starlette import EventSourceResponse, ServerSentEvent
 from images.jobs import (
     abandon_foreign_coding_job,
     active_mcp_image_job,
+    bind_job_workspace,
     copy_job_to_workspace,
     get_mcp_image_job,
     launch_mcp_image_job,
@@ -223,9 +224,29 @@ def _upgrade_missing_named_dests(
     chat_id: str | None = None,
 ) -> ImageTurnPlan:
     """Scratch leftovers are not reuse when images/logo or header is still missing."""
-    if plan.action == "generate" and plan.items:
-        return plan
     named = list(dict.fromkeys(_named_image_dests(ask) + _plan_asset_dests(ask)))
+    if plan.action == "generate" and plan.items:
+        have = [
+            str(row.get("output_path") or "").strip()
+            for row in plan.items
+            if str(row.get("output_path") or "").strip()
+        ]
+        extra = [
+            dest
+            for dest in named
+            if not _dest_exists(dest, have + existing)
+            and not _gpu_dest_ready(dest, existing, owner, chat_id)
+        ]
+        if not extra:
+            return plan
+        more = plan_from_extracted(ask, [{"filename": dest} for dest in extra])
+        if not more:
+            return plan
+        return ImageTurnPlan(
+            action="generate",
+            items=list(plan.items) + more,
+            from_model=plan.from_model,
+        )
     if not named:
         return plan
     missing = [
@@ -853,19 +874,27 @@ def _page_blocking_comfy(job, data=None) -> bool:
     return True
 
 
-def _should_launch_mixed_render(code_response, job, data=None) -> bool:
+def _should_launch_mixed_render(
+    code_response, job, data=None, *, allow_empty: bool = False
+) -> bool:
     """Comfy only after a real code pass, and after a page workspace has files."""
-    if code_response is None:
+    if code_response is None and not allow_empty:
         return False
     return not _page_blocking_comfy(job, data)
 
 
 def _profile_writes_files() -> bool:
-    from common.phrase_switch import container_parses_tools, profile_is_thinking_only
+    from common.phrase_switch import (
+        container_parses_tools,
+        profile_is_thinking_only,
+        profile_parses_tools,
+    )
 
     if profile_is_thinking_only():
         return False
-    return container_parses_tools()
+    if container_parses_tools():
+        return True
+    return profile_parses_tools()
 
 
 def _keep_writing_page(code_response, job, data=None) -> bool:
@@ -899,6 +928,10 @@ async def _write_page_then_maybe_launch(data, job, disconnect_handler):
     note_coding_progress(job)
     code_response = await _write_site_code(data, disconnect_handler)
     if code_response is None:
+        if _workspace_page_ready(job, data):
+            return None, _should_launch_mixed_render(
+                None, job, data, allow_empty=True
+            )
         return None, False
     if _keep_writing_page(code_response, job, data):
         return code_response, False
@@ -1144,6 +1177,51 @@ def _response_from_stream_payloads(payloads: list[dict], model_name: str):
     )
 
 
+async def _write_site_code_via_backend(data: ChatCompletionRequest):
+    """Sidecar has no in-process model; generate on the localhost Tabby backend."""
+    try:
+        from sidecar.settings import is_sidecar_process
+
+        if not is_sidecar_process():
+            return None
+        from sidecar.proxy import generate_chat, generate_chat_stream
+    except Exception:
+        return None
+    from common.assistant_text import strip_response_apologies
+    from endpoints.OAI.types.chat_completion import ChatCompletionResponse
+    from ui.flight import current_console_flight, publish_console_status
+
+    await publish_console_status("Writing the page")
+    flight = current_console_flight()
+    payload = data.model_dump(mode="json", exclude_none=True)
+    try:
+        if flight is None:
+            raw = await generate_chat(payload)
+            response = ChatCompletionResponse.model_validate(raw)
+            return strip_response_apologies(response)
+        payloads: list[dict] = []
+        async for line in generate_chat_stream(payload):
+            text = str(line or "").strip()
+            if text.startswith("data:"):
+                text = text[5:].strip()
+            if not text or text == "[DONE]" or not text.startswith("{"):
+                continue
+            try:
+                chunk = json.loads(text)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(chunk, dict):
+                continue
+            await flight.publish(text)
+            flight.streamed_live = True
+            payloads.append(chunk)
+        response = _response_from_stream_payloads(payloads, str(payload.get("model") or "gpt-4o"))
+        return strip_response_apologies(response)
+    except Exception as exc:
+        xlogger.warning(f"Mixed chat code pass via backend failed: {exc}")
+        return None
+
+
 async def _write_site_code(data: ChatCompletionRequest, disconnect_handler):
     """One coding completion while the LLM is still loaded. None if it cannot run."""
     from common import model
@@ -1158,6 +1236,9 @@ async def _write_site_code(data: ChatCompletionRequest, disconnect_handler):
 
     container = getattr(model, "container", None)
     if not container or not getattr(container, "loaded", False):
+        via_backend = await _write_site_code_via_backend(data)
+        if via_backend is not None:
+            return via_backend
         xlogger.info("Mixed chat code pass skipped: no loaded model")
         return None
     if getattr(container, "prompt_template", None) is None:
@@ -1642,6 +1723,8 @@ async def handle(
     workspace = (owner, chat_id) if code and owner and chat_id else None
     job_id = job_id_from_history(data)
     job = get_mcp_image_job(job_id) if job_id else None
+    if workspace:
+        bind_job_workspace(job, owner or "", chat_id or "")
     if workspace and (job is None or str(getattr(job, "status", "") or "") in ("done", "error")):
         busy = active_mcp_image_job()
         if (

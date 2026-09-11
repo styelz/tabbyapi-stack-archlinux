@@ -129,6 +129,16 @@ async def chat_completion_request(
 
     api_base = public_api_base(request)
     materialize_pasted_images(data)
+    if (request.headers.get("x-tabby-generate-only") or "").strip() == "1":
+        disconnect_handler = DisconnectHandler(request, "/v1/chat/completions")
+        return await run_chat_completion_turn(
+            request,
+            data,
+            disconnect_handler,
+            api_base=api_base,
+            source_image=latest_turn_image(data),
+            generate_only=True,
+        )
     early = handle_if_requested(data, api_base=api_base, defer_switch=True)
     if early is not None:
         return early
