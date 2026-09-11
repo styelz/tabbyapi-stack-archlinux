@@ -140,12 +140,52 @@ class TsctlTests(unittest.TestCase):
         self.assertIn("--config", flags)
         self.assertIn("--dry-run", flags)
 
-    def test_menu_actions_use_plain_tags(self):
-        tags = [tag for tag, _label in self.tsctl.MENU_ACTIONS]
-        self.assertEqual(tags, ["start", "stop", "restart", "status", "backup", "restore"])
-        for tag in tags:
+    def test_menu_groups_use_plain_tags(self):
+        groups = [tag for tag, *_ in self.tsctl.MENU_GROUPS]
+        self.assertEqual(groups, ["service", "inference", "server", "host", "data", "help"])
+        service = [tag for tag, *_ in self.tsctl.SERVICE_ACTIONS]
+        self.assertEqual(service, ["start", "stop", "restart", "status"])
+        backup = [tag for tag, *_ in self.tsctl.BACKUP_ACTIONS]
+        self.assertEqual(backup, ["backup", "restore"])
+        for tag in groups + service + backup:
             self.assertFalse(tag.startswith("_"))
             self.assertFalse(tag.endswith("_"))
+
+    def test_menu_groups_cover_every_section(self):
+        payload = {
+            "tabby": [
+                {"name": name, "fields": []}
+                for name in (
+                    "network",
+                    "logging",
+                    "model",
+                    "draft_model",
+                    "lora",
+                    "embeddings",
+                    "sampling",
+                    "memory",
+                    "developer",
+                    "future_section",
+                )
+            ],
+            "screensaver": {"name": "screensaver", "fields": []},
+            "updates": {"name": "updates", "fields": []},
+            "gpu": {"name": "gpu", "fields": []},
+            "system": {"name": "system", "fields": []},
+        }
+        grouped = self.tsctl._grouped_sections(payload)
+        names = lambda tag: [section["name"] for section in grouped[tag]]
+        self.assertEqual(
+            names("inference"),
+            ["model", "draft_model", "lora", "embeddings", "sampling", "memory"],
+        )
+        self.assertEqual(names("server"), ["network", "logging", "developer", "future_section"])
+        self.assertEqual(names("host"), ["gpu", "screensaver", "updates", "system"])
+        self.assertEqual(names("service"), [])
+        self.assertEqual(names("data"), [])
+        shown = [section["name"] for tag in grouped for section in grouped[tag]]
+        expected = [section["name"] for section in self.tsctl._sections(payload)]
+        self.assertEqual(sorted(shown), sorted(expected))
 
     def test_complete_lists_api_unit_commands(self):
         payload = {"tabby": [], "screensaver": {}, "gpu": {}, "system": {}}

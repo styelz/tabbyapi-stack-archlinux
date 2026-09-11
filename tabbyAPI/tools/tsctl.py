@@ -24,14 +24,54 @@ from ui.settings import (  # noqa: E402
 )
 
 GPU_PROFILE_NAMES = ("auto", "quiet", "balanced", "performance", "custom")
-MENU_ACTIONS = (
-    ("start", "Start TabbyAPI"),
-    ("stop", "Stop TabbyAPI"),
-    ("restart", "Restart TabbyAPI"),
-    ("status", "TabbyAPI unit status"),
-    ("backup", "Backup models and stack data"),
-    ("restore", "Restore a stack backup"),
+
+# Interactive menu layout. Each group is (tag, title, blurb, member tags).
+# Members are service actions, backup actions, or settings section names.
+# Sections not listed here fall into "server" (config.yml) or "host" (tabby.env).
+SERVICE_ACTIONS = (
+    ("start", "Start TabbyAPI", "systemctl --user start tabbyapi"),
+    ("stop", "Stop TabbyAPI", "systemctl --user stop tabbyapi"),
+    ("restart", "Restart TabbyAPI", "Reloads the last model; ~50 seconds"),
+    ("status", "Unit status", "active / enabled state of tabbyapi"),
 )
+BACKUP_ACTIONS = (
+    ("backup", "Backup", "Copy model weights and optional stack data to a folder"),
+    ("restore", "Restore", "Restore a stack backup folder onto this host"),
+)
+MENU_GROUPS = (
+    ("service", "Service", "Start, stop, restart TabbyAPI; unit status", tuple(tag for tag, *_ in SERVICE_ACTIONS)),
+    (
+        "inference",
+        "Model and inference",
+        "config.yml: model load, draft, LoRA, sampling",
+        ("model", "draft_model", "lora", "embeddings", "sampling", "memory"),
+    ),
+    ("server", "Server", "config.yml: network, logging, developer", ("network", "logging", "developer")),
+    ("host", "Host", "tabby.env: GPU, screensaver, updates, system", ("gpu", "screensaver", "updates", "system")),
+    ("data", "Backup and restore", "Model weights and stack data, to/from a folder", tuple(tag for tag, *_ in BACKUP_ACTIONS)),
+    ("help", "Help", "Command-line usage", ()),
+)
+SECTION_INFO = {
+    "model": ("Model", "Load settings: context, cache, tool format, reasoning"),
+    "draft_model": ("Draft model", "Speculative decoding"),
+    "lora": ("LoRA", "Adapter directory and loaded loras"),
+    "embeddings": ("Embeddings", "CPU embedding model"),
+    "sampling": ("Sampling", "Sampler override preset"),
+    "memory": ("Memory", "System RAM caches and CUDA allocator"),
+    "network": ("Network", "Host, port, auth, API servers"),
+    "logging": ("Logging", "Prompt, request and generation logs"),
+    "developer": ("Developer", "Experimental flags"),
+    "gpu": ("GPU", "Fan profile, power limit, persistence, live sensors"),
+    "screensaver": ("Screensaver", "TTY kiosk and idle timeouts"),
+    "updates": ("Updates", "Auto-update timer"),
+    "system": ("System", "ComfyUI, SSH tunnel, log level, tokens"),
+}
+# Sections with a "status" action in the menu and what it shows.
+SECTION_STATUS = {
+    "gpu": "Live temperature, fan and power; tabby-gpu unit",
+    "screensaver": "tabby-saver unit state",
+    "updates": "tabbyapi-auto-update.timer state",
+}
 
 USAGE = """\
 tsctl — tabbyapi-stack settings
@@ -369,167 +409,292 @@ def tui() -> int:
     return repl()
 
 
+def _menu_size(count: int, extra: int = 8, max_rows: int = 16) -> tuple[str, str, str]:
+    rows = max(1, min(count, max_rows))
+    return str(rows + extra), "76", str(rows)
+
+
+def _capture(func, *args) -> str:
+    """Run a CLI printer and return what it wrote, for a msgbox."""
+    import io
+    from contextlib import redirect_stderr, redirect_stdout
+
+    out = io.StringIO()
+    err = io.StringIO()
+    try:
+        with redirect_stdout(out), redirect_stderr(err):
+            func(*args)
+    except SettingsError as exc:
+        err.write(f"{exc}\n")
+    return (out.getvalue() + err.getvalue()).strip()
+
+
+def _section_title(section: dict[str, Any]) -> str:
+    name = str(section["name"])
+    if name in SECTION_INFO:
+        return SECTION_INFO[name][0]
+    label = str(section.get("label") or name).replace("_", " ")
+    return label[:1].upper() + label[1:]
+
+
+def _section_blurb(section: dict[str, Any]) -> str:
+    name = str(section["name"])
+    if name in SECTION_INFO:
+        return SECTION_INFO[name][1]
+    return str(section.get("description") or "").split(".", 1)[0][:56]
+
+
+def _grouped_sections(data: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    """Map group tag -> sections in menu order; unknown sections fall back."""
+    by_name = {str(section["name"]): section for section in _sections(data)}
+    tabby_names = {str(section["name"]) for section in data.get("tabby") or []}
+    groups: dict[str, list[dict[str, Any]]] = {tag: [] for tag, *_ in MENU_GROUPS}
+    claimed: set[str] = set()
+    for tag, _title, _blurb, members in MENU_GROUPS:
+        for member in members:
+            section = by_name.get(member)
+            if section is not None:
+                groups[tag].append(section)
+                claimed.add(member)
+    for name, section in by_name.items():
+        if name in claimed:
+            continue
+        groups["server" if name in tabby_names else "host"].append(section)
+    return groups
+
+
+def _field_row(field: dict[str, Any], width: int = 50) -> list[str]:
+    name = str(field["name"])
+    value = format_value(field.get("value"))
+    if not value:
+        value = "(blank)" if field.get("kind") != "bool" else "false"
+    label = str(field.get("label") or "")
+    if label and label.lower() != name.replace("_", " ").lower():
+        item = f"{value[:22]:<22}  {label}"
+    else:
+        item = value
+    return [name, item[:width]]
+
+
 def tui_dialog() -> int:
     while True:
-        data = load_settings()
-        sections = _sections(data)
         items: list[str] = []
-        for tag, label in MENU_ACTIONS:
-            items.extend([tag, label])
-        for section in sections:
-            items.extend([str(section["name"]), str(section.get("label") or section["name"])[:40]])
+        for tag, title, blurb, _members in MENU_GROUPS:
+            items.extend([tag, f"{title:<20} {blurb}"])
+        height, width, rows = _menu_size(len(MENU_GROUPS))
         code, choice = run_dialog(
             [
                 "--title",
                 "tsctl",
                 "--no-tags",
                 "--menu",
-                "Pick a section. Esc quits.",
-                "20",
-                "72",
-                "12",
+                "Pick a category. Esc goes back; Esc here quits.",
+                height,
+                width,
+                rows,
                 *items,
             ]
         )
         if code != 0 or not choice:
             return 0
-        if choice in ("backup", "restore"):
-            dialog_stack_backup(choice)
-            continue
-        if choice in ("start", "stop", "restart", "status"):
-            import io
-            from contextlib import redirect_stderr, redirect_stdout
+        if choice == "help":
+            run_dialog(["--title", "tsctl help", "--msgbox", USAGE, "0", "0"])
+        elif choice == "service":
+            dialog_service()
+        elif choice == "data":
+            dialog_backup_menu()
+        else:
+            dialog_group(choice)
+    return 0
 
-            buf = io.StringIO()
-            err = io.StringIO()
-            with redirect_stdout(buf), redirect_stderr(err):
-                api_unit(choice)
-            note = (buf.getvalue() + err.getvalue()).strip() or "ok"
-            run_dialog(["--msgbox", note, "10", "70"])
-            continue
-        section = find_section(choice, data)
-        while True:
-            fields = list(section.get("fields") or [])
-            rows: list[str] = []
-            for field in fields:
-                rows.extend(
-                    [
-                        str(field["name"]),
-                        f"{format_value(field.get('value'))}"[:42],
-                    ]
-                )
-            extra = []
-            if section["name"] == "screensaver":
-                extra = ["enable", "Turn unit on", "disable", "Turn unit off"]
-            elif section["name"] == "updates":
-                extra = ["enable", "Turn timer on", "disable", "Turn timer off"]
-            elif section["name"] == "gpu":
-                extra = [
-                    "status",
-                    "Live sensors",
-                    "auto",
-                    "Driver fan-stop",
-                    "quiet",
-                    "Slow curve / lower TDP",
-                    "balanced",
-                    "Normal curve",
-                    "performance",
-                    "Aggressive curve",
-                    "custom",
-                    "Use Fan speed %",
-                ]
-            prompt = str(section.get("description") or "Edit a setting")
+
+def dialog_service() -> int:
+    while True:
+        items: list[str] = []
+        for tag, title, blurb in SERVICE_ACTIONS:
+            items.extend([tag, f"{title:<18} {blurb}"])
+        height, width, rows = _menu_size(len(SERVICE_ACTIONS))
+        code, choice = run_dialog(
+            [
+                "--title",
+                "Service",
+                "--no-tags",
+                "--menu",
+                "TabbyAPI user unit (systemd --user).",
+                height,
+                width,
+                rows,
+                *items,
+            ]
+        )
+        if code != 0 or not choice:
+            return 0
+        if choice in ("start", "stop", "restart"):
+            run_dialog(["--infobox", f"{choice.capitalize()}ing TabbyAPI…", "3", "40"])
+        note = _capture(api_unit, choice) or "ok"
+        run_dialog(["--title", "Service", "--msgbox", note, "0", "0"])
+    return 0
+
+
+def dialog_backup_menu() -> int:
+    while True:
+        items: list[str] = []
+        for tag, title, blurb in BACKUP_ACTIONS:
+            items.extend([tag, f"{title:<10} {blurb}"])
+        height, width, rows = _menu_size(len(BACKUP_ACTIONS))
+        code, choice = run_dialog(
+            [
+                "--title",
+                "Backup and restore",
+                "--no-tags",
+                "--menu",
+                "Model weights always go into a backup; config, users and chats are optional.",
+                height,
+                width,
+                rows,
+                *items,
+            ]
+        )
+        if code != 0 or not choice:
+            return 0
+        dialog_stack_backup(choice)
+    return 0
+
+
+def dialog_group(group_tag: str) -> int:
+    title = next((name for tag, name, *_ in MENU_GROUPS if tag == group_tag), group_tag)
+    blurb = next((text for tag, _name, text, *_ in MENU_GROUPS if tag == group_tag), "")
+    while True:
+        data = load_settings()
+        sections = _grouped_sections(data).get(group_tag) or []
+        if not sections:
+            run_dialog(["--msgbox", f"No settings in {title}.", "6", "50"])
+            return 0
+        items: list[str] = []
+        for section in sections:
+            items.extend([str(section["name"]), f"{_section_title(section):<14} {_section_blurb(section)}"])
+        height, width, rows = _menu_size(len(sections))
+        code, choice = run_dialog(
+            [
+                "--title",
+                title,
+                "--no-tags",
+                "--menu",
+                blurb or "Pick a section.",
+                height,
+                width,
+                rows,
+                *items,
+            ]
+        )
+        if code != 0 or not choice:
+            return 0
+        dialog_section(choice)
+    return 0
+
+
+def dialog_section(name: str) -> int:
+    data = load_settings()
+    section = find_section(name, data)
+    while True:
+        fields = list(section.get("fields") or [])
+        rows: list[str] = []
+        status_blurb = SECTION_STATUS.get(str(section["name"]))
+        if status_blurb:
+            rows.extend(["status", status_blurb])
+        tag_width = max((len(str(field["name"])) for field in fields), default=6)
+        item_width = max(24, 68 - tag_width)
+        for field in fields:
+            rows.extend(_field_row(field, item_width))
+        prompt = str(section.get("description") or "Pick a setting to change it.")
+        height, width, count = _menu_size(len(rows) // 2)
+        code, key = run_dialog(
+            [
+                "--title",
+                _section_title(section),
+                "--menu",
+                prompt,
+                height,
+                width,
+                count,
+                *rows,
+            ]
+        )
+        if code != 0 or not key:
+            return 0
+        if status_blurb and key == "status":
+            shower = {"gpu": gpu_status, "screensaver": saver_status, "updates": updates_status}[str(section["name"])]
+            note = _capture(shower) or "No status."
             if section["name"] == "gpu":
-                prompt = "Fan profile and power. Status shows live temperature and fans."
-            code, key = run_dialog(
-                [
-                    "--title",
-                    str(section.get("label") or section["name"]),
-                    "--menu",
-                    prompt,
-                    "22",
-                    "74",
-                    "14",
-                    *extra,
-                    *rows,
-                ]
-            )
-            if code != 0 or not key:
-                break
-            if key in ("enable", "disable"):
-                body = save_settings({section["name"]: {"enabled": key == "enable"}})
-                run_dialog(["--msgbox", str(body.get("reload_warning") or "ok"), "8", "60"])
-                data = load_settings()
-                section = find_section(str(section["name"]), data)
-                continue
-            if section["name"] == "gpu" and key == "status":
                 from common.gpu_control import format_status
 
-                run_dialog(["--msgbox", format_status() or "No GPU", "14", "70"])
+                live = format_status()
+                if live:
+                    note = f"{note}\n\n{live}"
+            run_dialog(["--title", f"{_section_title(section)} status", "--msgbox", note, "0", "0"])
+            continue
+        field = field_by_name(section, key)
+        if field.get("kind") == "select" and field.get("choices"):
+            items: list[str] = []
+            for choice in field["choices"]:
+                items.extend([str(choice), str(choice)])
+            code, value = run_dialog(
+                [
+                    "--title",
+                    str(field.get("label") or field["name"]),
+                    "--no-tags",
+                    "--menu",
+                    str(field.get("description") or field["name"]),
+                    "16",
+                    "70",
+                    "8",
+                    *items,
+                ]
+            )
+        elif field.get("kind") == "bool":
+            yes_args = ["--title", str(field.get("label") or field["name"])]
+            if not field.get("value"):
+                yes_args.append("--defaultno")
+            code, _ignored = run_dialog(
+                [
+                    *yes_args,
+                    "--yes-label",
+                    "On",
+                    "--no-label",
+                    "Off",
+                    "--yesno",
+                    str(field.get("description") or field["name"]),
+                    "10",
+                    "70",
+                ]
+            )
+            if code not in (0, 1):
                 continue
-            if section["name"] == "gpu" and key in GPU_PROFILE_NAMES:
-                body = save_settings({"gpu": {"profile": key}})
-                run_dialog(["--msgbox", str(body.get("reload_warning") or "ok"), "10", "70"])
-                data = load_settings()
-                section = find_section("gpu", data)
-                continue
-            field = field_by_name(section, key)
-            if field.get("kind") == "select" and field.get("choices"):
-                items: list[str] = []
-                for choice in field["choices"]:
-                    items.extend([str(choice), str(choice)])
-                code, value = run_dialog(
-                    [
-                        "--title",
-                        str(field.get("label") or field["name"]),
-                        "--menu",
-                        str(field.get("description") or field["name"]),
-                        "16",
-                        "70",
-                        "8",
-                        *items,
-                    ]
-                )
-            elif field.get("kind") == "bool":
-                yes_args = ["--title", str(field.get("label") or field["name"])]
-                if not field.get("value"):
-                    yes_args.append("--defaultno")
-                code, _ignored = run_dialog(
-                    [
-                        *yes_args,
-                        "--yesno",
-                        str(field.get("description") or field["name"]),
-                        "10",
-                        "70",
-                    ]
-                )
-                if code not in (0, 1):
-                    continue
-                value = "true" if code == 0 else "false"
-                code = 0
-            else:
-                code, value = run_dialog(
-                    [
-                        "--title",
-                        str(field.get("label") or field["name"]),
-                        "--inputbox",
-                        str(field.get("description") or field["name"]),
-                        "12",
-                        "70",
-                        format_value(field.get("value")),
-                    ]
-                )
-            if code != 0:
-                continue
-            try:
-                body = apply_sets(str(section["name"]), [(str(field["name"]), value)])
-            except (SettingsError, ValueError) as exc:
-                run_dialog(["--msgbox", str(exc), "8", "60"])
-                continue
-            note = str(body.get("reload_warning") or "Saved.")
-            run_dialog(["--msgbox", note, "8", "60"])
-            data = load_settings()
-            section = find_section(str(section["name"]), data)
+            value = "true" if code == 0 else "false"
+            code = 0
+        else:
+            code, value = run_dialog(
+                [
+                    "--title",
+                    str(field.get("label") or field["name"]),
+                    "--inputbox",
+                    str(field.get("description") or field["name"]),
+                    "12",
+                    "70",
+                    format_value(field.get("value")),
+                ]
+            )
+        if code != 0:
+            continue
+        try:
+            body = apply_sets(str(section["name"]), [(str(field["name"]), value)])
+        except (SettingsError, ValueError) as exc:
+            run_dialog(["--msgbox", str(exc), "8", "60"])
+            continue
+        note = str(body.get("reload_warning") or "Saved.")
+        run_dialog(["--msgbox", note, "0", "0"])
+        data = load_settings()
+        section = find_section(str(section["name"]), data)
     return 0
 
 
