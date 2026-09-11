@@ -104,3 +104,42 @@ async def forward(
         headers=out_headers,
         media_type=backend.headers.get("content-type"),
     )
+
+
+async def forward_chat(body: bytes, *, client: Optional[httpx.AsyncClient] = None) -> Response:
+    """POST /v1/chat/completions at Tabby. Console jobs have no inbound FastAPI Request."""
+    http = client or get_client()
+    key = ensure_backend_key()
+    headers = {
+        "authorization": f"Bearer {key}",
+        "x-api-key": key,
+        "content-type": "application/json",
+        "accept": "text/event-stream",
+    }
+    req = http.build_request(
+        "POST",
+        "/v1/chat/completions",
+        headers=headers,
+        content=body,
+    )
+    backend = await http.send(req, stream=True)
+    excluded = {"content-encoding", "content-length", "transfer-encoding", "connection"}
+    out_headers = {
+        name: value
+        for name, value in backend.headers.items()
+        if name.lower() not in excluded
+    }
+
+    async def chunks() -> Iterable[bytes]:
+        try:
+            async for chunk in backend.aiter_raw():
+                yield chunk
+        finally:
+            await backend.aclose()
+
+    return StreamingResponse(
+        chunks(),
+        status_code=backend.status_code,
+        headers=out_headers,
+        media_type=backend.headers.get("content-type"),
+    )

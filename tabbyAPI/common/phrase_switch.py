@@ -1000,7 +1000,16 @@ def container_parses_tools() -> bool:
 
 def tools_without_format_response(data: ChatCompletionRequest):
     """Honest reply when the client sent tools but this profile cannot parse them."""
-    if not request_has_tools(data) or container_parses_tools():
+    if not request_has_tools(data):
+        return None
+    try:
+        from sidecar.settings import is_sidecar_process
+
+        if is_sidecar_process():
+            return None
+    except Exception:
+        pass
+    if container_parses_tools():
         return None
     return text_response(data, NO_TOOL_FORMAT_HINT)
 

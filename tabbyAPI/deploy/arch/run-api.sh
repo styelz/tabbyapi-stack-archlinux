@@ -4,7 +4,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 STACK="$(cd "$ROOT/.." && pwd)"
-export PYTHONPATH="$STACK${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH="$STACK:$ROOT${PYTHONPATH:+:$PYTHONPATH}"
 PY="$ROOT/venv/bin/python"
 ENV_FILE="$ROOT/deploy/arch/tabby.env"
 # shellcheck source=load-env.sh

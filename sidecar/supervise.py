@@ -28,7 +28,7 @@ FAST_CRASH_SEC = 90
 FAST_CRASH_LIMIT = 3
 
 
-def child_env() -> dict[str, str]:
+def child_env(role: str = "") -> dict[str, str]:
     env = os.environ.copy()
     key = ensure_backend_key()
     env["TABBY_BACKEND_KEY"] = key
@@ -38,7 +38,9 @@ def child_env() -> dict[str, str]:
     env["TABBY_BACKEND_HOST"] = backend_host()
     env["TABBY_BACKEND_PORT"] = str(backend_port())
     env["TABBY_BACKEND_DIR"] = str(backend_dir())
-    parts = [str(STACK_ROOT)]
+    if role:
+        env["TABBY_PROCESS"] = role
+    parts = [str(STACK_ROOT), str(TABBY_DIR)]
     existing = env.get("PYTHONPATH")
     if existing:
         parts.append(existing)
@@ -77,7 +79,8 @@ def _terminate(proc: Optional[subprocess.Popen]) -> None:
 def run(python: Optional[str] = None) -> int:
     """Supervise Tabby (and the sidecar when enabled)."""
     py = python or sys.executable
-    env = child_env()
+    env = child_env("tabby")
+    side_env = child_env("sidecar")
 
     try:
         from common.gpu_mode import start_comfy_journal_forwarder
@@ -162,7 +165,7 @@ def run(python: Optional[str] = None) -> int:
                 side = subprocess.Popen(
                     sidecar_command(py),
                     cwd=str(STACK_ROOT),
-                    env=env,
+                    env=side_env,
                 )
             time.sleep(0.4)
     finally:

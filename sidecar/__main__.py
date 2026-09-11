@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 
 import uvicorn
 
@@ -24,6 +25,7 @@ async def _serve() -> None:
 
 
 def main() -> None:
+    os.environ["TABBY_PROCESS"] = "sidecar"
     asyncio.run(_serve())
 
 

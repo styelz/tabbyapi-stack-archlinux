@@ -129,6 +129,14 @@ class McpImageJob:
 
 
 def loaded_tabby_name() -> Optional[str]:
+    try:
+        from sidecar.settings import is_sidecar_process
+        from sidecar.model_status import loaded_model_id
+
+        if is_sidecar_process():
+            return loaded_model_id()
+    except Exception:
+        pass
     if model.container and getattr(model.container, "model_dir", None):
         if getattr(model.container, "loaded", False):
             return model.container.model_dir.name
@@ -161,6 +169,30 @@ def _is_load_error(event) -> bool:
 async def ensure_comfy() -> None:
     """Unload any LLM and make sure ComfyUI owns the GPU."""
     from common.phrase_switch import clear_switch_lock, set_switch_lock
+    from sidecar.settings import is_sidecar_process
+
+    if is_sidecar_process():
+        from sidecar.model_status import unload_backend
+
+        if comfy_up() and not loaded_tabby_name():
+            write_mode("comfy")
+            return
+        set_switch_lock("comfy")
+        started = time.time()
+        was_up = comfy_up()
+        try:
+            await asyncio.to_thread(unload_backend)
+            write_mode("comfy")
+            await asyncio.to_thread(start_comfy_if_needed)
+            if not comfy_up():
+                raise RuntimeError("ComfyUI did not start")
+        finally:
+            clear_switch_lock()
+        if not was_up:
+            from common.switch_times import record_ready
+
+            record_ready("comfy", time.time() - started)
+        return
 
     if comfy_up() and not loaded_tabby_name():
         write_mode("comfy")
@@ -195,7 +227,11 @@ async def _load_profile(profile_name: str) -> None:
     if not model_name:
         raise RuntimeError(f"Profile {profile_name} has no model_name")
 
-    model_path = Path(config.model.model_dir) / model_name
+    tabby_root = Path(__file__).resolve().parent.parent
+    model_dir = Path(config.model.model_dir)
+    if not model_dir.is_absolute():
+        model_dir = tabby_root / model_dir
+    model_path = model_dir / model_name
     if not model_path.exists():
         raise RuntimeError(f"Model folder missing: {model_path}")
 
@@ -203,6 +239,20 @@ async def _load_profile(profile_name: str) -> None:
     for key in LOAD_FIELDS:
         if key in model_cfg and model_cfg[key] is not None:
             setattr(load_data, key, model_cfg[key])
+    sidecar = False
+    try:
+        from sidecar.settings import is_sidecar_process
+
+        sidecar = is_sidecar_process()
+    except Exception:
+        sidecar = False
+    if sidecar:
+        from sidecar.model_status import load_backend_model
+
+        await asyncio.to_thread(
+            load_backend_model, load_data.model_dump(exclude_none=True)
+        )
+        return
     async for event in stream_model_load(load_data, model_path):
         if _is_load_error(event):
             raise RuntimeError(event)

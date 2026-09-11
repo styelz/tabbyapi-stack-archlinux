@@ -809,7 +809,10 @@ input:focus, textarea:focus { outline: 0.125rem solid var(--focus-ring); border-
 .context-usage-est[hidden] { display: none; }
 .gpu-menu { position: relative; }
 .gpu-menu .user-menu-panel {
+  left: 0;
+  right: auto;
   min-width: 16rem;
+  max-width: min(22rem, calc(100vw - 1.25rem));
   max-height: min(24rem, calc(100vh - 5rem));
   overflow: auto;
 }

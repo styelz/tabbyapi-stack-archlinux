@@ -1,3 +1,4 @@
+import os
 import unittest
 from unittest import mock
 
@@ -36,6 +37,9 @@ class UiAuthTests(unittest.TestCase):
         self.assertIn("ui.pam_check", cmd)
         self.assertEqual(cmd[-1], "tabby")
         self.assertEqual(args.kwargs["input"], b"secret")
+        self.assertEqual(args.kwargs["cwd"], str(auth.ROOT))
+        pythonpath = args.kwargs["env"]["PYTHONPATH"].split(os.pathsep)
+        self.assertEqual(pythonpath[0], str(auth.ROOT))
 
     def test_pam_helper_failure_is_false(self):
         completed = mock.Mock(returncode=1)

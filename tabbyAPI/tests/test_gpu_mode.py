@@ -251,6 +251,19 @@ class GpuModeTests(unittest.TestCase):
                 public_api_base(_EnvWrong()), "https://git.example.com/openai/v1"
             )
 
+        class _Referer:
+            headers = {
+                "host": "git.example.com",
+                "x-forwarded-proto": "https",
+                "referer": "https://git.example.com/openai/v1/ui/",
+            }
+            url = None
+            scope = {}
+
+        self.assertEqual(
+            public_api_base(_Referer()), "https://git.example.com/openai/v1"
+        )
+
     def test_recent_generated_files_skips_latest_alias(self):
         with temp_generated_dir(["generated-20260101-000001.png", "generated-latest.png"]):
             names = [path.name for path in recent_generated_files(window_sec=86400)]

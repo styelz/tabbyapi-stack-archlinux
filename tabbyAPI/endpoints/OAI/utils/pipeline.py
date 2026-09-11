@@ -47,7 +47,19 @@ async def run_chat_completion_turn(
     code: bool = False,
 ):
     """Image intercept, then one generate. Callers own phrase-switch and StackGate."""
-    llm_ready = bool(model.container and getattr(model.container, "loaded", False))
+    sidecar = False
+    try:
+        from sidecar.settings import is_sidecar_process
+
+        sidecar = is_sidecar_process()
+    except Exception:
+        sidecar = False
+    if sidecar:
+        from sidecar.model_status import llm_is_ready as remote_ready
+
+        llm_ready = remote_ready()
+    else:
+        llm_ready = bool(model.container and getattr(model.container, "loaded", False))
     await disconnect_handler.poll()
     image_response = await handle_image_chat(
         data,
@@ -70,6 +82,17 @@ async def run_chat_completion_turn(
         if should_yield_comfy_to_llm(data):
             return await yield_comfy_to_llm_response(data, console=console)
         return await comfy_idle_response(data, api_base=api_base)
+
+    if sidecar:
+        import json
+
+        from sidecar.proxy import forward_chat
+
+        refused = tools_without_format_response(data)
+        if refused is not None:
+            return refused
+        payload = data.model_dump(mode="json", exclude_none=True)
+        return await forward_chat(json.dumps(payload).encode("utf-8"))
 
     async with load_lock:
         if data.model:

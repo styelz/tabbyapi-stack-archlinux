@@ -109,6 +109,18 @@ def stack_username() -> str:
         return os.environ.get("USER") or os.environ.get("LOGNAME") or ""
 
 
+def _pam_helper_env() -> dict[str, str]:
+    """Sidecar cwd is the stack root; `-m ui.pam_check` needs tabbyAPI on PYTHONPATH."""
+    env = os.environ.copy()
+    tabby = str(ROOT)
+    existing = env.get("PYTHONPATH", "")
+    parts = [tabby]
+    if existing:
+        parts.append(existing)
+    env["PYTHONPATH"] = os.pathsep.join(parts)
+    return env
+
+
 def _pam_authenticate(username: str, password: str) -> bool:
     """Ask a throwaway helper process. Crash there must not kill TabbyAPI."""
     try:
@@ -119,6 +131,8 @@ def _pam_authenticate(username: str, password: str) -> bool:
             stderr=subprocess.DEVNULL,
             timeout=PAM_CHECK_TIMEOUT_S,
             check=False,
+            env=_pam_helper_env(),
+            cwd=str(ROOT),
         )
     except (OSError, subprocess.TimeoutExpired):
         return False

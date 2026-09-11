@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 from sidecar.paths import STACK_ROOT, TABBY_DIR, VENDOR_DIR, ensure_import_path
@@ -49,6 +50,19 @@ def uses_vanilla_backend() -> bool:
 
 def sidecar_enabled() -> bool:
     return os.environ.get("TABBY_SIDECAR", "1") != "0"
+
+
+def is_sidecar_process() -> bool:
+    """True in the public 5000 process. Tabby on 5001 must stay local."""
+    role = (os.environ.get("TABBY_PROCESS") or "").strip().lower()
+    if role == "sidecar":
+        return True
+    if role == "tabby":
+        return False
+    cmd = " ".join(sys.argv).replace("\\", "/").lower()
+    if "-m sidecar" in cmd or "/sidecar/__main__.py" in cmd:
+        return True
+    return "sidecar" in cmd and "__main__.py" in cmd
 
 
 def key_path() -> Path:

@@ -275,7 +275,8 @@ async def _pump_message_tool_calls(flight: ConsoleFlight, data, message) -> None
 async def _pump_console_result(
     flight: ConsoleFlight, result, data: ChatCompletionRequest
 ) -> None:
-    if isinstance(result, EventSourceResponse):
+    iterator = getattr(result, "body_iterator", None)
+    if iterator is not None:
         async for item in _iter_sse(result):
             await flight.publish(item)
         return

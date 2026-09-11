@@ -606,10 +606,9 @@ async def unload_sampler_override():
 
 
 def _loaded_tabby_name() -> Optional[str]:
-    if model.container and getattr(model.container, "model_dir", None):
-        if getattr(model.container, "loaded", False):
-            return model.container.model_dir.name
-    return None
+    from endpoints.core.image_jobs import loaded_tabby_name
+
+    return loaded_tabby_name()
 
 
 @router.get("/v1/gpu/mode", dependencies=[Depends(check_api_key)])

@@ -154,6 +154,18 @@ class SidecarProxyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cmd[5], "5001")
         self.assertEqual(sidecar_command("python"), ["python", "-m", "sidecar"])
 
+    def test_child_env_puts_tabbyapi_on_pythonpath(self):
+        from sidecar.paths import STACK_ROOT, TABBY_DIR
+        from sidecar.supervise import child_env
+
+        with mock.patch("sidecar.supervise.ensure_backend_key", return_value="k"):
+            with mock.patch("sidecar.supervise.write_backend_tokens"):
+                env = child_env("sidecar")
+        parts = env["PYTHONPATH"].split(os.pathsep)
+        self.assertEqual(parts[0], str(STACK_ROOT))
+        self.assertEqual(parts[1], str(TABBY_DIR))
+        self.assertEqual(env["TABBY_PROCESS"], "sidecar")
+
 
 class SidecarAuthEdgeTests(unittest.TestCase):
     def test_linux_password_is_accepted_then_backend_key_is_sent(self):
@@ -339,6 +351,29 @@ class SidecarModelStatusTests(unittest.TestCase):
         self.assertEqual(card["max_seq_len"], 8)
         self.assertFalse(model_status.llm_jobs_active())
 
+    def test_is_sidecar_process_respects_env(self):
+        from sidecar.settings import is_sidecar_process
+
+        os.environ["TABBY_PROCESS"] = "sidecar"
+        self.addCleanup(lambda: os.environ.pop("TABBY_PROCESS", None))
+        self.assertTrue(is_sidecar_process())
+        os.environ["TABBY_PROCESS"] = "tabby"
+        self.assertFalse(is_sidecar_process())
+
+    def test_pipeline_forwards_console_chat_when_sidecar(self):
+        src = Path(__file__).resolve().parents[1].joinpath(
+            "endpoints/OAI/utils/pipeline.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("forward_chat", src)
+        self.assertIn("is_sidecar_process", src)
+
+    def test_jobs_load_profile_uses_backend_when_sidecar(self):
+        src = Path(__file__).resolve().parents[1].joinpath("images/jobs.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("load_backend_model", src)
+        self.assertIn("unload_backend", src)
+
 
 class SidecarBackendDirTests(unittest.TestCase):
     def test_override_points_at_vanilla_tree(self):
@@ -396,6 +431,7 @@ class SidecarScriptsTests(unittest.TestCase):
             "deploy/arch/run-api.sh"
         ).read_text(encoding="utf-8")
         self.assertIn("PYTHONPATH=", text)
+        self.assertIn("$STACK:$ROOT", text)
         self.assertIn("watch_api.py", text)
 
     def test_watch_api_uses_supervise(self):

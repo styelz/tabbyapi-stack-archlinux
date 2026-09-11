@@ -42,6 +42,85 @@ def _get_json(path: str, timeout: float = 2.0) -> tuple[int, Any]:
         return status, None
 
 
+def _admin_headers() -> dict[str, str]:
+    key = ensure_backend_key()
+    return {
+        "Authorization": f"Bearer {key}",
+        "X-API-Key": key,
+        "X-Admin-Key": key,
+    }
+
+
+def loaded_model_id() -> str | None:
+    card = model_card()
+    name = str(card.get("id") or "").strip()
+    return name or None
+
+
+def unload_backend() -> None:
+    """POST /v1/model/unload on Tabby. 503 means already empty."""
+    if not loaded_model_id():
+        return
+    url = backend_url().rstrip("/") + "/v1/model/unload"
+    req = urllib.request.Request(url, method="POST", headers=_admin_headers())
+    try:
+        urllib.request.urlopen(req, timeout=180).read()
+    except urllib.error.HTTPError as exc:
+        if exc.code == 503:
+            return
+        raise RuntimeError(exc.read().decode("utf-8", "replace") or str(exc)) from exc
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(str(exc)) from exc
+
+
+def load_backend_model(payload: dict[str, Any]) -> None:
+    """POST /v1/model/load on Tabby and wait for the SSE finished event."""
+    wanted = str((payload or {}).get("model_name") or "").strip()
+    if not wanted:
+        raise RuntimeError("A model name was not provided for load.")
+    current = loaded_model_id()
+    if current == wanted:
+        return
+    if current:
+        unload_backend()
+    url = backend_url().rstrip("/") + "/v1/model/load"
+    body = json.dumps(payload).encode("utf-8")
+    headers = _admin_headers()
+    headers["Content-Type"] = "application/json"
+    headers["Accept"] = "text/event-stream"
+    req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+    finished = False
+    error = None
+    try:
+        with urllib.request.urlopen(req, timeout=600) as resp:
+            for raw in resp:
+                line = raw.decode("utf-8", "replace").strip()
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if not data or data == "[DONE]":
+                    continue
+                try:
+                    event = json.loads(data)
+                except ValueError:
+                    continue
+                if not isinstance(event, dict):
+                    continue
+                if event.get("error"):
+                    error = event["error"]
+                    break
+                if event.get("status") == "finished":
+                    finished = True
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(exc.read().decode("utf-8", "replace") or str(exc)) from exc
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(str(exc)) from exc
+    if error:
+        raise RuntimeError(str(error))
+    if not finished:
+        raise RuntimeError("Load stream ended before the model finished loading.")
+
+
 def llm_is_ready() -> bool:
     if _backend_configured():
         status, payload = _get_json("/v1/model")

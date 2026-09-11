@@ -118,8 +118,6 @@ def _v1_base(proto: str, host: str, path: str) -> str:
     proto = str(proto or "").strip().rstrip(":/")
     host = str(host or "").strip()
     path = str(path or "").strip()
-    if not proto or not host:
-        return ""
     if path and "://" in path:
         parsed = urlparse(path)
         path = parsed.path or ""
@@ -127,6 +125,8 @@ def _v1_base(proto: str, host: str, path: str) -> str:
             host = parsed.netloc
         if parsed.scheme:
             proto = parsed.scheme
+    if not proto or not host:
+        return ""
     if not path.startswith("/"):
         path = f"/{path}" if path else ""
     marker = path.find("/v1/")
@@ -184,6 +184,11 @@ def _public_base_from_request(request) -> str:
         return _v1_base(proto, host, prefix)
     if root_path:
         return _v1_base(proto, host, root_path)
+    referer = _header(headers, "referer")
+    if referer and "/v1" in referer:
+        derived = _v1_base(proto, host, referer)
+        if derived:
+            return derived
     if proto and host:
         return f"{proto}://{host}/v1"
     return ""

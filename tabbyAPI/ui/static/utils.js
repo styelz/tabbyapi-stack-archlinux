@@ -9,6 +9,13 @@
     return MARKER;
   }
 
+  /** Public /v1 prefix, including a reverse-proxy path such as /openai/v1. */
+  function v1Base() {
+    const ui = uiBase();
+    if (ui.endsWith("/ui")) return ui.slice(0, -3) || "/v1";
+    return "/v1";
+  }
+
   function uiPath(suffix) {
     const base = uiBase();
     const part = String(suffix || "").replace(/^\/+/, "");
@@ -27,7 +34,35 @@
     if (value.startsWith(MARKER)) return uiBase() + value.slice(MARKER.length);
     if (value.startsWith("/ui/")) return uiBase() + value.slice(3);
     if (value === "/ui") return `${uiBase()}/`;
+    if (value.includes("/v1/images/") || value.startsWith("/v1/images/")) {
+      return rewriteV1Url(value);
+    }
     return value;
+  }
+
+  /** Keep /v1/images links on the same reverse-proxy prefix as this UI. */
+  function rewriteV1Url(url) {
+    const value = String(url || "");
+    if (!value) return value;
+    const prefix = v1Base();
+    const apply = (pathname, search, hash, origin) => {
+      const marker = pathname.indexOf("/v1");
+      if (marker < 0) return "";
+      const after = pathname.slice(marker + 3);
+      if (after && after[0] !== "/") return "";
+      const nextPath = prefix + after;
+      return (origin || "") + nextPath + (search || "") + (hash || "");
+    };
+    if (value.startsWith("/")) {
+      return apply(value, "", "", "") || value;
+    }
+    try {
+      const parsed = new URL(value, window.location.href);
+      const rebuilt = apply(parsed.pathname, parsed.search, parsed.hash, parsed.origin);
+      return rebuilt || value;
+    } catch (_) {
+      return value;
+    }
   }
 
   function apiUrl(path) {

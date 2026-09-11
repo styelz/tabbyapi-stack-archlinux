@@ -63,7 +63,13 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
     def test_loaded_name_requires_a_ready_container(self):
         with mock.patch("images.jobs.model") as model_mod:
             model_mod.container = None
-            self.assertIsNone(loaded_tabby_name())
+            with mock.patch("sidecar.settings.is_sidecar_process", return_value=False):
+                self.assertIsNone(loaded_tabby_name())
+
+    def test_loaded_name_uses_backend_when_sidecar(self):
+        with mock.patch("sidecar.settings.is_sidecar_process", return_value=True):
+            with mock.patch("sidecar.model_status.loaded_model_id", return_value="Qwen3.5-9B"):
+                self.assertEqual(loaded_tabby_name(), "Qwen3.5-9B")
 
     def test_batch_wait_adds_renders_not_extra_llm_reloads(self):
         from common.phrase_switch import image_job_wait_seconds
