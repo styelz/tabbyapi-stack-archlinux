@@ -371,18 +371,32 @@ function mountModels(root) {
       : data.compatible
         ? ""
         : '<p class="muted">This may not be an EXL2/EXL3 snapshot. Download only if you know it will load.</p>';
+    const revs = data.revisions || [];
+    const sized = revs.filter((rev) => rev.fits === true || rev.fits === false);
+    const tight = revs.filter((rev) => rev.fits === false);
+    const vramGb = Number(data.vram_gb) || 0;
     const headBadges = [];
     if (data.compatible) headBadges.push('<span class="models-badge is-on">Compatible</span>');
+    if (sized.length && tight.length === sized.length) {
+      const badge = tight[0].vram_badge || (vramGb ? `won't fit ${vramGb} GB` : "");
+      if (badge) headBadges.push(`<span class="models-badge is-warn">${TabbyUI.escapeHtml(badge)}</span>`);
+    }
     if (data.gated) headBadges.push('<span class="models-badge is-warn">gated</span>');
-    const revs = (data.revisions || [])
+    const vramNote = tight.length && vramGb
+      ? `<p class="muted">This GPU has ${vramGb} GB. Revisions larger than that will not load.</p>`
+      : "";
+    const revRows = revs
       .map((rev) => {
         const name = TabbyUI.escapeHtml(rev.name);
         const size = rev.size_bytes != null ? TabbyUI.formatBytes(rev.size_bytes) : "size unknown";
         const files = rev.files ? `${rev.files} files` : "";
         const disabled = data.gguf_only ? "disabled" : "";
+        const vramBadge = rev.vram_badge
+          ? `<div class="models-sub"><span class="models-badge is-warn">${TabbyUI.escapeHtml(rev.vram_badge)}</span></div>`
+          : "";
         return `<tr>
           <td><code>${name}</code>${files ? `<div class="muted models-sub">${files}</div>` : ""}</td>
-          <td class="num">${TabbyUI.escapeHtml(size)}</td>
+          <td class="num">${TabbyUI.escapeHtml(size)}${vramBadge}</td>
           <td class="models-actions">
             <button type="button" class="btn primary" data-hf="${id}" data-rev="${name}" data-size="${rev.size_bytes || ""}" ${disabled}>Download</button>
           </td>
@@ -398,6 +412,7 @@ function mountModels(root) {
         <button type="button" class="btn" id="models-repo-close">Close</button>
       </div>
       ${note}
+      ${vramNote}
       <label class="models-alias-field">
         <span>Short name</span>
         <input id="models-hf-alias" type="text" maxlength="32" placeholder="qwen38" autocomplete="off" spellcheck="false" value="${TabbyUI.escapeHtml(hfAlias)}" />
@@ -405,7 +420,7 @@ function mountModels(root) {
       <p class="muted models-alias-hint">Used for <code>switch to qwen38</code> and the model dropdown. Letters, digits, and hyphens.</p>
       <table class="models-table models-repo-table">
         <thead><tr><th>Revision</th><th class="num">Size</th><th></th></tr></thead>
-        <tbody>${revs || '<tr><td colspan="3" class="muted">No branches listed.</td></tr>'}</tbody>
+        <tbody>${revRows || '<tr><td colspan="3" class="muted">No branches listed.</td></tr>'}</tbody>
       </table>
     `;
   }

@@ -15,6 +15,7 @@ from ui.models import (
     hf_folder_name,
     inspect_repo,
     is_gguf_only,
+    revision_vram_fit,
     job_is_visible,
     job_state,
     library_state,
@@ -186,12 +187,49 @@ class ParseAndFilterTests(unittest.TestCase):
                 ("turboderp/Qwen3.5-9B-exl3", "4.00bpw"): (20, 2),
             },
         )
-        payload = inspect_repo("turboderp/Qwen3.5-9B-exl3", hf_api=api)
+        payload = inspect_repo(
+            "turboderp/Qwen3.5-9B-exl3",
+            hf_api=api,
+            gpu={"vram_mib": 12288, "label": "RTX 4070 Ti 12 GB"},
+        )
         names = [row["name"] for row in payload["revisions"]]
         self.assertIn("4.00bpw", names)
         self.assertIn("main", names)
         self.assertNotIn("docs", names)
         self.assertTrue(payload["compatible"])
+        self.assertEqual(payload["vram_gb"], 12)
+
+    def test_revision_vram_fit_uses_file_size(self):
+        over = revision_vram_fit(22 * 1024**3, 12288)
+        self.assertFalse(over["fits"])
+        self.assertEqual(over["vram_badge"], "won't fit 12 GB")
+        ok = revision_vram_fit(9 * 1024**3, 12288)
+        self.assertTrue(ok["fits"])
+        self.assertEqual(ok["vram_badge"], "")
+        self.assertIsNone(revision_vram_fit(None, 12288)["fits"])
+        self.assertIsNone(revision_vram_fit(22 * 1024**3, 0)["fits"])
+
+    def test_inspect_repo_flags_revision_over_vram(self):
+        repo = "malaiwah/Qwen3.8-27B-EXL3-K5K6-hydrated"
+        api = FakeApi(
+            info=FakeModel(repo, ["exl3"]),
+            refs=["main", "2.00bpw"],
+            sizes={
+                (repo, "main"): (22 * 1024**3, 3),
+                (repo, "2.00bpw"): (9 * 1024**3, 1),
+            },
+        )
+        payload = inspect_repo(
+            repo,
+            hf_api=api,
+            gpu={"vram_mib": 12288, "label": "RTX 4070 Ti 12 GB"},
+        )
+        by_name = {row["name"]: row for row in payload["revisions"]}
+        self.assertEqual(payload["vram_gb"], 12)
+        self.assertFalse(by_name["main"]["fits"])
+        self.assertEqual(by_name["main"]["vram_badge"], "won't fit 12 GB")
+        self.assertTrue(by_name["2.00bpw"]["fits"])
+        self.assertEqual(by_name["2.00bpw"]["vram_badge"], "")
 
 
 class LibraryAndDeleteTests(unittest.TestCase):

@@ -509,7 +509,32 @@ def _revision_size(api, repo_id: str, revision: str) -> tuple[int | None, int]:
     return (total if known else None, files)
 
 
-def inspect_repo(repo_id: str, revision: str | None = None, hf_api=None) -> dict:
+def gpu_vram_gb(vram_mib: int) -> int:
+    return max(1, int(round(int(vram_mib) / 1024.0))) if vram_mib else 0
+
+
+def revision_vram_fit(size_bytes: int | None, vram_mib: int) -> dict:
+    """On-disk EXL snapshot vs this GPU. File size stands in for resident weights."""
+    need_mib = 0
+    if size_bytes is not None and int(size_bytes) > 0:
+        need_mib = int(round(int(size_bytes) / (1024 * 1024)))
+    if vram_mib <= 0 or need_mib <= 0:
+        return {"fits": None, "need_mib": need_mib, "vram_badge": ""}
+    if need_mib > int(vram_mib):
+        return {
+            "fits": False,
+            "need_mib": need_mib,
+            "vram_badge": f"won't fit {gpu_vram_gb(vram_mib)} GB",
+        }
+    return {"fits": True, "need_mib": need_mib, "vram_badge": ""}
+
+
+def inspect_repo(
+    repo_id: str,
+    revision: str | None = None,
+    hf_api=None,
+    gpu: dict | None = None,
+) -> dict:
     parsed = parse_repo_id(repo_id)
     if not parsed:
         text = str(repo_id or "").strip()
@@ -517,6 +542,11 @@ def inspect_repo(repo_id: str, revision: str | None = None, hf_api=None) -> dict
     if not parsed:
         raise ModelsError("repo id is required")
     api = hf_api or _hf_api()
+    if gpu is None:
+        from common.switch_times import detect_gpu
+
+        gpu = detect_gpu()
+    vram_mib = int((gpu or {}).get("vram_mib") or 0)
     try:
         info = api.model_info(parsed, revision=revision or None)
         refs = api.list_repo_refs(parsed)
@@ -548,7 +578,14 @@ def inspect_repo(repo_id: str, revision: str | None = None, hf_api=None) -> dict
             size_bytes, files = _revision_size(api, parsed, name)
         except Exception:
             size_bytes, files = None, 0
-        revisions.append({"name": name, "size_bytes": size_bytes, "files": files})
+        revisions.append(
+            {
+                "name": name,
+                "size_bytes": size_bytes,
+                "files": files,
+                **revision_vram_fit(size_bytes, vram_mib),
+            }
+        )
 
     compatible = is_exllama_compatible(parsed, tags) and not is_gguf_only(parsed, tags)
     return {
@@ -560,6 +597,8 @@ def inspect_repo(repo_id: str, revision: str | None = None, hf_api=None) -> dict
         "gated": bool(getattr(info, "gated", False)),
         "private": bool(getattr(info, "private", False)),
         "revisions": revisions,
+        "vram_mib": vram_mib,
+        "vram_gb": gpu_vram_gb(vram_mib),
         "folder_name": hf_folder_name(parsed, revision or (chosen[0] if chosen else "main")),
         "has_token": bool(hf_token()),
     }

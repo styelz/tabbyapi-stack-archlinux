@@ -5183,9 +5183,12 @@ tr.models-group td {
   min-width: 0;
   flex-wrap: wrap;
 }
+.models-repo-title .models-hit-badges { flex-wrap: wrap; }
 /* Reserve room for the repo Download button so it stays in its own column
    instead of overflowing left over the Size cell. */
 .models-repo-table td.models-actions { width: 8rem; }
+.models-repo-table td.num { white-space: normal; }
+.models-repo-table td.num .models-badge { white-space: nowrap; }
 .models-repo {
   display: flex;
   flex-direction: column;
