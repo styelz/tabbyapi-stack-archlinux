@@ -163,6 +163,7 @@ class ProfileDefaultMatrixTests(unittest.TestCase):
         self.assertEqual(model["answer_start_token"], "<answer>")
         self.assertEqual(model["start_in_reasoning"], "always")
         self.assertNotIn("tool_format", model)
+        self.assertTrue(data["thinking_only"])
 
 
 class DisableProfileVisionTests(unittest.TestCase):

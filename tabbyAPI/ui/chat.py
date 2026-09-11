@@ -392,6 +392,30 @@ async def run_console_chat(request: Request, body: dict[str, Any], username: str
     switched = handle_if_requested(data, api_base=api_base, defer_switch=True)
     if switched is not None:
         return switched
+    if code and agent == "agent":
+        from common.phrase_switch import (
+            is_restart_request,
+            profile_is_thinking_only,
+            requested_profile,
+            switch_token,
+        )
+
+        if (
+            profile_is_thinking_only()
+            and not requested_profile(data)
+            and not switch_token(data)
+            and not is_restart_request(data)
+        ):
+            raise HTTPException(
+                409,
+                {
+                    "thinking_only": True,
+                    "message": (
+                        "This is a thinking chat model. It cannot write Code files. "
+                        "Switch to qwen or gemma to edit the project."
+                    ),
+                },
+            )
 
     kind = "code" if code else "chat"
     gate = StackGate(

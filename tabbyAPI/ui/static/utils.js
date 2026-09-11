@@ -1301,6 +1301,65 @@
     return progress;
   }
 
+  function alertModal({ title, text, ok = "OK" } = {}) {
+    return new Promise((resolve) => {
+      const wrap = document.createElement("div");
+      wrap.className = "dialog-modal";
+      wrap.setAttribute("role", "dialog");
+      wrap.setAttribute("aria-modal", "true");
+      wrap.innerHTML =
+        '<div class="dialog-card">' +
+        "<h2></h2>" +
+        '<pre class="dialog-text"></pre>' +
+        '<div class="dialog-actions">' +
+        '<button type="button" class="btn primary dialog-yes"></button>' +
+        "</div></div>";
+      wrap.querySelector("h2").textContent = title || "Notice";
+      wrap.querySelector(".dialog-text").textContent = text || "";
+      wrap.querySelector(".dialog-yes").textContent = ok;
+      const finish = () => {
+        document.removeEventListener("keydown", onKey);
+        wrap.remove();
+        resolve(true);
+      };
+      const onKey = (ev) => {
+        if (ev.key === "Escape" || ev.key === "Enter") {
+          ev.preventDefault();
+          finish();
+        }
+      };
+      wrap.querySelector(".dialog-yes").addEventListener("click", finish);
+      wrap.addEventListener("click", (ev) => {
+        if (ev.target === wrap) finish();
+      });
+      document.addEventListener("keydown", onKey);
+      document.body.appendChild(wrap);
+      wrap.querySelector(".dialog-yes").focus();
+    });
+  }
+
+  function thinkingOnlyStatus(data) {
+    const status = data || window.TabbyUI.lastGpuStatus || {};
+    if (status.thinking_only) return true;
+    const profile = String(status.profile || "").trim().toLowerCase();
+    const map = status.profile_thinking_only || {};
+    return Boolean(profile && map[profile]);
+  }
+
+  function alertThinkingOnlyWrite(data) {
+    const status = data || window.TabbyUI.lastGpuStatus || {};
+    const profile = String(status.profile || "").trim();
+    const pretty = profilePrettyName(profile, status) || profile || "This model";
+    return alertModal({
+      title: "Thinking model",
+      text:
+        pretty +
+        " is a thinking chat model. It cannot write Code files.\n" +
+        "Switch to qwen or gemma to edit the project.",
+      ok: "OK",
+    });
+  }
+
   function confirmModal({ title, text, yes = "Restart", no = "Skip", other = "" } = {}) {
     return new Promise((resolve) => {
       const wrap = document.createElement("div");
@@ -1876,6 +1935,9 @@
     inputMenuItems,
     hideContextMenu,
     showContextMenu,
+    alertModal,
+    thinkingOnlyStatus,
+    alertThinkingOnlyWrite,
     confirmModal,
     promptModal,
     progressModal,

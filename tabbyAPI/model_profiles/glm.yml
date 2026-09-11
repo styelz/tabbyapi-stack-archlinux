@@ -1,4 +1,5 @@
 pretty: GLM-4.1V-9B-Thinking - think (vision off on 12 GB)
+thinking_only: true
 model:
   model_name: GLM-4.1V-9B-Thinking-exl3-4.00bpw
   max_seq_len: 65536

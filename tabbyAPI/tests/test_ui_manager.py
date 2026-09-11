@@ -402,3 +402,5 @@ class UiManagerTests(unittest.TestCase):
         src = Path(manager.__file__).read_text(encoding="utf-8")
         self.assertIn("profile_ready", src)
         self.assertIn("folder_for_choice", src)
+        self.assertIn("thinking_only", src)
+        self.assertIn("profile_thinking_only", src)

@@ -7689,12 +7689,18 @@ function mountChat(root) {
       : BUILD_PROMPT;
     setCodeAgent("agent");
     hidePopovers();
-    startChecklistBuild(store.activeId);
-    runLoop(prompt, { hidden: true }).catch((err) => {
-      addBubble("assistant", `Error: ${tabbyNetworkErrorMessage(err)}`);
-      finishChecklistBuild({ chatId: store.activeId, stopped: true });
-      persist();
-    });
+    void (async () => {
+      if (await blockThinkingOnlyWrite(prompt, "agent")) {
+        finishChecklistBuild({ chatId: store.activeId, stopped: true });
+        return;
+      }
+      startChecklistBuild(store.activeId);
+      runLoop(prompt, { hidden: true }).catch((err) => {
+        addBubble("assistant", `Error: ${tabbyNetworkErrorMessage(err)}`);
+        finishChecklistBuild({ chatId: store.activeId, stopped: true });
+        persist();
+      });
+    })();
   }
 
   function parsePlanChecklist(text) {
@@ -9730,6 +9736,19 @@ function mountChat(root) {
     watchLogChild(row);
     if (stick !== false) stickLog(true);
     return row;
+  }
+
+  function isCodeWriteAttempt(text, agent) {
+    if (normalizeAgent(agent) !== "agent") return false;
+    const activity = activityFromPrompt(text, agent);
+    return activity.kind !== "switch" && activity.kind !== "restart" && activity.kind !== "cmd";
+  }
+
+  async function blockThinkingOnlyWrite(text, agent) {
+    if (!isCodeWriteAttempt(text, agent)) return false;
+    if (!TabbyUI.thinkingOnlyStatus(TabbyUI.lastGpuStatus)) return false;
+    await TabbyUI.alertThinkingOnlyWrite(TabbyUI.lastGpuStatus);
+    return true;
   }
 
   function activityFromPrompt(text, agent) {
@@ -12533,6 +12552,16 @@ function mountChat(root) {
           } else {
             data = await response.text().catch(() => "");
           }
+          const detail = data && typeof data === "object" ? (data.detail || data) : {};
+          if (response.status === 409 && detail && detail.thinking_only) {
+            poll.stop();
+            if (working.discard) working.discard();
+            finishChecklistBuild({ chatId, stopped: true });
+            persist();
+            await TabbyUI.alertThinkingOnlyWrite(TabbyUI.lastGpuStatus);
+            stopKind = "stop";
+            return;
+          }
           const msg = TabbyUI.httpErrorMessage
             ? TabbyUI.httpErrorMessage(response, data)
             : (unavailable ? `API unavailable (${response.status})` : "Chat failed");
@@ -12993,6 +13022,15 @@ function mountChat(root) {
       }
       while (next) {
         stopKind = "";
+        const writeAgent = (sendOpts && sendOpts.agent) || codeAgent;
+        const flightChat = store.chats.find((item) => item.id === flightChatId);
+        if (chatMode(flightChat) === "code" && await blockThinkingOnlyWrite(next, writeAgent)) {
+          if (!isBuildPromptText(next) && store.activeId === flightChatId && !input.value.trim()) {
+            input.value = next;
+          }
+          stopKind = "stop";
+          break;
+        }
         const missing = TabbyUI.missingProfileToken(next, TabbyUI.lastGpuStatus);
         if (missing) {
           const result = await TabbyUI.offerMissingModelDownload(missing, TabbyUI.lastGpuStatus, {

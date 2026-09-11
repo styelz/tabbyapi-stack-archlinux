@@ -1150,20 +1150,26 @@ def profile_defaults_from_config(
     if choice["vision_offload"]:
         model["vision_offload"] = True
     _apply_family_model_defaults(folder.name, model)
-    return {
+    data = {
         "pretty": pretty_name,
         "model": model,
         "sampling": {"override_preset": "safe_defaults"},
     }
+    if _thinking_only_folder(folder.name):
+        data["thinking_only"] = True
+    return data
+
+
+def _thinking_only_folder(folder_name: str) -> bool:
+    name = str(folder_name or "").lower()
+    if "glm" not in name:
+        return False
+    return "thinking" in name or "4.1" in name or "41v" in name
 
 
 def _apply_family_model_defaults(folder_name: str, model: dict) -> None:
     """Fill shipped-profile tokens that a Hugging Face download would omit."""
-    name = str(folder_name or "").lower()
-    if "glm" not in name:
-        return
-    thinking = "thinking" in name or "4.1" in name or "41v" in name
-    if not thinking:
+    if not _thinking_only_folder(folder_name):
         return
     model.setdefault("reasoning", True)
     model.setdefault("reasoning_start_token", "<think>")

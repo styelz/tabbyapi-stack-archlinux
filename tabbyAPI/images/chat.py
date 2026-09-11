@@ -860,8 +860,10 @@ def _should_launch_mixed_render(code_response, job, data=None) -> bool:
 
 
 def _profile_writes_files() -> bool:
-    from common.phrase_switch import container_parses_tools
+    from common.phrase_switch import container_parses_tools, profile_is_thinking_only
 
+    if profile_is_thinking_only():
+        return False
     return container_parses_tools()
 
 

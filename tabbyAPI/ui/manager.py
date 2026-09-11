@@ -312,6 +312,8 @@ async def stack_status(request=None, username: str = "") -> dict[str, Any]:
     from common.phrase_switch import (
         last_llm_profile_name,
         profile_alias_for_model,
+        profile_is_thinking_only,
+        profile_thinking_only_map,
         profile_ui_labels,
         switch_lock_held,
         switch_lock_name,
@@ -368,6 +370,8 @@ async def stack_status(request=None, username: str = "") -> dict[str, Any]:
         "profiles": names,
         "profile_labels": profile_ui_labels(names),
         "profile_ready": profile_ready,
+        "thinking_only": profile_is_thinking_only(profile),
+        "profile_thinking_only": profile_thinking_only_map(names),
         "model": _model_card(),
         "health": {"healthy": healthy, "issues": issue_text},
         "units": {

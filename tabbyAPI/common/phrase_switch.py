@@ -423,11 +423,47 @@ def profile_map() -> dict[str, dict]:
             "max_seq_len": model_cfg.get("max_seq_len"),
             "cache_size": model_cfg.get("cache_size"),
             "vision": bool(model_cfg.get("vision")),
+            "thinking_only": data.get("thinking_only"),
         }
         mapping[alias] = entry
         if folder:
             mapping[folder.lower()] = entry
     return mapping
+
+
+def thinking_only_name(*parts: str) -> bool:
+    """True for shipped/download names that are chat-think, not coding agents."""
+    blob = " ".join(str(part or "") for part in parts).lower()
+    if "thinking chat only" in blob or "thinking-only" in blob:
+        return True
+    if "glm" in blob and ("thinking" in blob or "4.1" in blob or "41v" in blob):
+        return True
+    return False
+
+
+def profile_is_thinking_only(alias: Optional[str] = None) -> bool:
+    """True when this profile cannot drive Code file tools."""
+    key = str(alias or "").strip().lower()
+    if not key:
+        key = str(last_llm_profile_name() or "").strip().lower()
+    mapping = profile_map()
+    entry = mapping.get(key) or {}
+    flag = entry.get("thinking_only")
+    if flag is True:
+        return True
+    if flag is False:
+        return False
+    if key == "glm":
+        return True
+    return thinking_only_name(key, entry.get("pretty"), entry.get("folder"), current_folder())
+
+
+def profile_thinking_only_map(names: Optional[list[str]] = None) -> dict[str, bool]:
+    if names is None:
+        from select_model import available_profiles
+
+        names = available_profiles()
+    return {name: profile_is_thinking_only(name) for name in names}
 
 
 def profile_alias_for_model(folder: Optional[str]) -> Optional[str]:

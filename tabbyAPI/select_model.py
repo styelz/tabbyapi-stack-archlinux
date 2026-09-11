@@ -21,7 +21,7 @@ def available_profiles() -> list[str]:
     return sorted(path.stem for path in PROFILES_DIR.glob("*.yml"))
 
 
-PROFILE_META_KEYS = frozenset({"pretty", "local"})
+PROFILE_META_KEYS = frozenset({"pretty", "local", "thinking_only"})
 
 
 def profile_aliases() -> dict[str, str]:
