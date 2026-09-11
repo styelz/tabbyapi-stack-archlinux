@@ -66,6 +66,22 @@ function tabbyImageRenderLabel(text) {
   );
 }
 
+function tabbyImageDestClass(title, index) {
+  const text = String(title || "").trim();
+  if (/^Reloading the coding model/i.test(text) || /^Rendered\b/i.test(text)) {
+    return "is-done";
+  }
+  const render = /Rendering image (\d+) of (\d+)/i.exec(text);
+  if (!render) {
+    if (/^Rendering in Comfy/i.test(text) && Number(index) === 0) return "is-current";
+    return "";
+  }
+  const current = Math.max(0, Number(render[1]) - 1);
+  if (index < current) return "is-done";
+  if (index === current) return "is-current";
+  return "";
+}
+
 function tabbyImageProgressNote(label) {
   const text = String(label || "").trim();
   if (/^Starting Comfy/i.test(text)) {
@@ -10183,13 +10199,10 @@ function mountChat(root) {
       imageProgressLabel.textContent = title;
       imageProgressNote.textContent = detail && detail !== title ? detail : tabbyImageProgressNote(title);
       const dests = rasterDestsFromTrace();
-      const render = /Rendering image (\d+) of (\d+)/i.exec(title);
-      const current = render ? Math.max(0, Number(render[1]) - 1) : 0;
       imageProgressDests.replaceChildren();
       dests.forEach((path, index) => {
         const row = document.createElement("li");
-        if (render && index === current) row.className = "is-current";
-        else if (render && index < current) row.className = "is-done";
+        row.className = tabbyImageDestClass(title, index);
         row.textContent = path;
         imageProgressDests.appendChild(row);
       });

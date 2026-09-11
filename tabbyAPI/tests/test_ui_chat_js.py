@@ -365,6 +365,11 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
         self.assertIn("btn.dataset.modeHint = target", self.src)
         self.assertIn('note: "Preparing the GPU."', self.src)
         self.assertIn("function tabbyImageRenderLabel(text)", self.src)
+        self.assertIn("function tabbyImageDestClass(title, index)", self.src)
+        self.assertIn('row.className = tabbyImageDestClass(title, index)', self.src)
+        dest_fn = self.src.split("function tabbyImageDestClass")[1].split("function tabbyImageProgressNote")[0]
+        self.assertIn('return "is-done"', dest_fn)
+        self.assertIn("Reloading the coding model", dest_fn)
         self.assertIn("function beginImageHold(", self.src)
         self.assertIn("think-image-progress", self.src)
         self.assertIn("imageHoldActive", self.src)
