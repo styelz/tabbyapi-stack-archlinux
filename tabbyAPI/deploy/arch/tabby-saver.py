@@ -52,15 +52,31 @@ EV_KEY = 0x01
 EV_REL = 0x02
 EV_ABS = 0x03
 _GETTY_COMMS = frozenset({"agetty", "getty", "mingetty", "login", "(sd-pam)", "systemd"})
+# Click or key drops the field. Motion only peeks the HUD — a wireless
+# mouse or HOTAS axis twitch must not tear down the 4K present path.
 _DISMISS_EVENT_NAMES = (
     "KEYDOWN",
     "KEYUP",
-    "MOUSEMOTION",
     "MOUSEBUTTONDOWN",
     "MOUSEBUTTONUP",
     "JOYBUTTONDOWN",
-    "JOYAXISMOTION",
-    "JOYHATMOTION",
+)
+_IGNORE_INPUT_NAMES = (
+    "stick",
+    "throttle",
+    "joystick",
+    "gamepad",
+    "hotas",
+    "flight",
+    "yubi",
+    "speaker",
+    "headphone",
+    "hdmi",
+    "microphone",
+    "front mic",
+    "rear mic",
+    "line out",
+    "pcm=",
 )
 HUD_IDLE_HOLD_S = 300.0
 HUD_IDLE_FADE_S = 12.0
@@ -2877,7 +2893,13 @@ def tty_nr(name: str) -> int:
 
 
 def evdev_is_activity(ev_type: int) -> bool:
-    return ev_type in (EV_KEY, EV_REL, EV_ABS)
+    """Keyboard/mouse only. EV_ABS is joysticks and rest-jitter on analog axes."""
+    return ev_type in (EV_KEY, EV_REL)
+
+
+def evdev_keep_device(name: str) -> bool:
+    text = (name or "").lower()
+    return not any(token in text for token in _IGNORE_INPUT_NAMES)
 
 
 def idle_wait_s(
@@ -3030,15 +3052,13 @@ def field_input_action(
     hud_alpha: float = 1.0,
     hud_hold_s: float = HUD_IDLE_HOLD_S,
 ) -> str | None:
-    """Peek the idle clock on mouse move when it has faded; otherwise dismiss."""
+    """Mouse move peeks the clock. Key or click dismisses."""
+    del idle_quiet, hud_alpha
     if (
         not windowed
-        and idle_quiet
-        and float(hud_hold_s) > 0.0
-        and hud_alpha <= HUD_IDLE_HIDE_ALPHA
         and event.type == getattr(pygame_mod, "MOUSEMOTION", None)
     ):
-        return "peek"
+        return "peek" if float(hud_hold_s) > 0.0 else "dismiss"
     return is_dismiss_event(event, pygame_mod, windowed)
 
 
@@ -3050,16 +3070,12 @@ def watch_field_action(
     hud_hold_s: float = HUD_IDLE_HOLD_S,
 ) -> str | None:
     """Same peek/dismiss rules as pygame events, for evdev while SDL is dummy."""
-    if kind not in {"key", "motion"}:
-        return None
-    if (
-        idle_quiet
-        and float(hud_hold_s) > 0.0
-        and hud_alpha <= HUD_IDLE_HIDE_ALPHA
-        and kind == "motion"
-    ):
-        return "peek"
-    return "dismiss"
+    del idle_quiet, hud_alpha
+    if kind == "motion":
+        return "peek" if float(hud_hold_s) > 0.0 else "dismiss"
+    if kind == "key":
+        return "dismiss"
+    return None
 
 
 def apply_peek_grace(grace_until: float, now: float) -> float:
@@ -3101,6 +3117,13 @@ class InputWatch:
     def _open_devices(self) -> list[int]:
         fds: list[int] = []
         for path in sorted(glob.glob("/dev/input/event*")):
+            name_path = Path("/sys/class/input") / Path(path).name / "device" / "name"
+            try:
+                name = name_path.read_text(encoding="ascii", errors="replace")
+            except OSError:
+                name = ""
+            if not evdev_keep_device(name):
+                continue
             try:
                 fds.append(os.open(path, os.O_RDONLY | os.O_NONBLOCK))
             except OSError:
@@ -3218,6 +3241,10 @@ def _init_display(windowed: bool):
             "tabby-saver: pygame is missing. On Arch: sudo pacman -S --needed python-pygame python-numpy"
         ) from exc
     pygame.init()
+    try:
+        pygame.joystick.quit()
+    except Exception:
+        pass
     _SLEEP_CACHE.clear()
     _SLEEP_SURF_CACHE.clear()
     _HUD_LAYER_CACHE.clear()
@@ -3313,6 +3340,7 @@ def run_visible_field(
                     grace_until = apply_peek_grace(grace_until, now)
                     continue
                 if action == "dismiss" and now >= grace_until:
+                    print("tabby-saver: field dismissed (key or click)", file=sys.stderr)
                     return "dismiss"
             if watch is not None and now >= grace_until and watch.last() >= grace_until:
                 quiet = idle_hud_quiet(scene) if scene else False
@@ -3331,6 +3359,7 @@ def run_visible_field(
                     follow.wake_idle_hud(now)
                     grace_until = apply_peek_grace(grace_until, now)
                 elif action == "dismiss":
+                    print("tabby-saver: field dismissed (evdev key)", file=sys.stderr)
                     return "dismiss"
             dt = now - prev
             prev = now
@@ -3401,6 +3430,7 @@ def main(argv: list[str] | None = None) -> int:
         while True:
             if show:
                 activate_vt(saver_nr, args.saver_tty)
+                print("tabby-saver: showing field on", args.saver_tty, file=sys.stderr)
                 try:
                     action = run_visible_field(args, bus, follow, watch=watch)
                 except Exception as exc:

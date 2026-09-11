@@ -1448,7 +1448,14 @@ class SaverKioskSceneTests(unittest.TestCase):
         self.assertEqual(self.kiosk.tty_nr("tty8"), 8)
         self.assertEqual(self.kiosk.tty_nr("/dev/tty1"), 1)
         self.assertTrue(self.kiosk.evdev_is_activity(self.kiosk.EV_KEY))
+        self.assertTrue(self.kiosk.evdev_is_activity(self.kiosk.EV_REL))
+        self.assertFalse(self.kiosk.evdev_is_activity(self.kiosk.EV_ABS))
         self.assertFalse(self.kiosk.evdev_is_activity(0))
+        self.assertTrue(self.kiosk.evdev_keep_device("Logitech Wireless Mouse"))
+        self.assertTrue(self.kiosk.evdev_keep_device("Logitech Wireless Keyboard PID:4023"))
+        self.assertFalse(self.kiosk.evdev_keep_device("Mad Catz Saitek Pro Flight X-56 Rhino Stick"))
+        self.assertFalse(self.kiosk.evdev_keep_device("Mad Catz Saitek Pro Flight X-56 Rhino Throttle"))
+        self.assertFalse(self.kiosk.evdev_keep_device("HDA NVidia HDMI/DP,pcm=3"))
 
     def test_kiosk_key_dismisses_window_esc_quits(self):
         pygame = SimpleNamespace(
@@ -1463,7 +1470,7 @@ class SaverKioskSceneTests(unittest.TestCase):
         esc = SimpleNamespace(type=768, key=27)
         mouse = SimpleNamespace(type=1024, key=0)
         self.assertEqual(self.kiosk.is_dismiss_event(key, pygame, False), "dismiss")
-        self.assertEqual(self.kiosk.is_dismiss_event(mouse, pygame, False), "dismiss")
+        self.assertIsNone(self.kiosk.is_dismiss_event(mouse, pygame, False))
         self.assertEqual(self.kiosk.is_dismiss_event(esc, pygame, True), "quit")
         self.assertIsNone(self.kiosk.is_dismiss_event(key, pygame, True))
 
@@ -1483,11 +1490,11 @@ class SaverKioskSceneTests(unittest.TestCase):
         action = self.kiosk.field_input_action
         self.assertEqual(
             action(mouse, pygame, False, idle_quiet=True, hud_alpha=1.0),
-            "dismiss",
+            "peek",
         )
         self.assertEqual(
             action(mouse, pygame, False, idle_quiet=True, hud_alpha=0.5),
-            "dismiss",
+            "peek",
         )
         self.assertEqual(
             action(mouse, pygame, False, idle_quiet=True, hud_alpha=0.0),
@@ -1629,7 +1636,7 @@ class SaverKioskSceneTests(unittest.TestCase):
 
     def test_watch_field_action_peeks_motion_when_hud_hidden(self):
         action = self.kiosk.watch_field_action
-        self.assertEqual(action("motion", idle_quiet=True, hud_alpha=1.0), "dismiss")
+        self.assertEqual(action("motion", idle_quiet=True, hud_alpha=1.0), "peek")
         self.assertEqual(action("motion", idle_quiet=True, hud_alpha=0.0), "peek")
         self.assertEqual(action("key", idle_quiet=True, hud_alpha=0.0), "dismiss")
         self.assertIsNone(action("other"))
