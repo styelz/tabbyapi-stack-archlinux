@@ -48,7 +48,6 @@ function mountModels(root) {
             </div>
             <button class="btn primary" type="submit">Search</button>
           </form>
-          <div id="models-repo" class="models-repo" hidden></div>
           <div id="models-results" class="models-results"></div>
         </section>
       </div>
@@ -68,7 +67,6 @@ function mountModels(root) {
   const libBody = root.querySelector("#models-lib-body");
   const libEmpty = root.querySelector("#models-lib-empty");
   const resultsEl = root.querySelector("#models-results");
-  const repoEl = root.querySelector("#models-repo");
   const searchForm = root.querySelector("#models-search-form");
   const queryInput = root.querySelector("#models-q");
   let format = "exl3";
@@ -79,6 +77,7 @@ function mountModels(root) {
   let paintedJobId = "";
   let loading = false;
   let hfAlias = "";
+  let repoSeq = 0;
   const JOB_DONE_TTL_MS = 90 * 1000;
   const JOB_DONE_HIDE_MS = 8 * 1000;
   const JOB_DISMISS_KEY = "tabby-models-dismissed-job";
@@ -344,27 +343,68 @@ function mountModels(root) {
         if (row.likes) meta.push(`${Number(row.likes).toLocaleString()} likes`);
         const updated = timeAgo(row.last_modified);
         if (updated) meta.push(`updated ${updated}`);
-        return `<button type="button" class="models-hit" data-repo="${id}">
-          <span class="models-hit-top">
-            <strong>${id}</strong>
-            <span class="models-hit-badges">${badges.join("")}</span>
-          </span>
-          <span class="muted models-hit-meta">${TabbyUI.escapeHtml(meta.join(" · "))}</span>
-          <span class="models-hit-cta">View files &amp; sizes →</span>
-        </button>`;
+        return `<article class="models-hit" data-repo="${id}">
+          <button type="button" class="models-hit-toggle" data-repo="${id}" aria-expanded="false">
+            <span class="models-hit-top">
+              <strong>${id}</strong>
+              <span class="models-hit-badges">${badges.join("")}</span>
+            </span>
+            <span class="muted models-hit-meta">${TabbyUI.escapeHtml(meta.join(" · "))}</span>
+            <span class="models-hit-cta">View files &amp; sizes →</span>
+          </button>
+          <div class="models-repo" hidden></div>
+        </article>`;
       })
       .join("");
   }
 
-  function paintRepo(data) {
-    const prevAlias = repoEl.querySelector("#models-hf-alias");
+  function hitRepoSlot(hit) {
+    return hit && hit.querySelector ? hit.querySelector(".models-repo") : null;
+  }
+
+  function rememberAliasFrom(scope) {
+    if (!scope || !scope.querySelector) return;
+    const prevAlias = scope.querySelector("#models-hf-alias");
     if (prevAlias) hfAlias = String(prevAlias.value || "").trim();
-    if (!data) {
-      repoEl.hidden = true;
-      repoEl.innerHTML = "";
+  }
+
+  function setHitOpen(hit, open) {
+    if (!hit) return;
+    hit.classList.toggle("is-open", open);
+    const toggle = hit.querySelector(".models-hit-toggle");
+    if (toggle) toggle.setAttribute("aria-expanded", open ? "true" : "false");
+    const cta = hit.querySelector(".models-hit-cta");
+    if (cta) cta.innerHTML = open ? "Hide files &amp; sizes" : "View files &amp; sizes →";
+  }
+
+  function closeRepo(hit) {
+    repoSeq += 1;
+    const hits = hit
+      ? [hit]
+      : Array.from(resultsEl.querySelectorAll(".models-hit.is-open"));
+    hits.forEach((el) => {
+      rememberAliasFrom(el);
+      setHitOpen(el, false);
+      const slot = hitRepoSlot(el);
+      if (!slot) return;
+      slot.hidden = true;
+      slot.innerHTML = "";
+    });
+  }
+
+  function paintRepo(data, hit) {
+    rememberAliasFrom(resultsEl);
+    if (!data || !hit || !hit.isConnected) {
+      closeRepo(hit || null);
       return;
     }
-    repoEl.hidden = false;
+    resultsEl.querySelectorAll(".models-hit.is-open").forEach((el) => {
+      if (el !== hit) closeRepo(el);
+    });
+    const slot = hitRepoSlot(hit);
+    if (!slot) return;
+    setHitOpen(hit, true);
+    slot.hidden = false;
     const id = TabbyUI.escapeHtml(data.id);
     const note = data.gguf_only
       ? '<p class="error">This repo looks like GGUF. Tabby needs EXL2/EXL3.</p>'
@@ -403,13 +443,13 @@ function mountModels(root) {
         </tr>`;
       })
       .join("");
-    repoEl.innerHTML = `
+    slot.innerHTML = `
       <div class="models-repo-head">
         <div class="models-repo-title">
           <strong>${id}</strong>
           <span class="models-hit-badges">${headBadges.join("")}</span>
         </div>
-        <button type="button" class="btn" id="models-repo-close">Close</button>
+        <button type="button" class="btn" data-repo-close>Close</button>
       </div>
       ${note}
       ${vramNote}
@@ -481,10 +521,33 @@ function mountModels(root) {
     startPoll();
   }
 
-  async function openRepo(repoId) {
+  function findHit(repoId) {
+    const id = String(repoId || "");
+    return Array.from(resultsEl.querySelectorAll(".models-hit[data-repo]")).find(
+      (el) => el.getAttribute("data-repo") === id
+    ) || null;
+  }
+
+  async function openRepo(repoId, hit) {
     showError("");
+    const target = hit && hit.isConnected ? hit : findHit(repoId);
+    if (!target) return;
+    if (target.classList.contains("is-open") && hitRepoSlot(target) && hitRepoSlot(target).querySelector(".models-repo-head")) {
+      closeRepo(target);
+      return;
+    }
+    resultsEl.querySelectorAll(".models-hit.is-open").forEach((el) => {
+      if (el !== target) closeRepo(el);
+    });
+    const slot = hitRepoSlot(target);
+    if (!slot) return;
+    const seq = ++repoSeq;
+    setHitOpen(target, true);
+    slot.hidden = false;
+    slot.innerHTML = `<p class="muted">Loading files…</p>`;
     const data = await TabbyUI.api(`models/repo?id=${encodeURIComponent(repoId)}`);
-    paintRepo(data);
+    if (seq !== repoSeq || !target.isConnected) return;
+    paintRepo(data, target);
   }
 
   libBody.addEventListener("click", async (event) => {
@@ -548,34 +611,34 @@ function mountModels(root) {
   });
 
   resultsEl.addEventListener("click", async (event) => {
-    const hit = event.target.closest("[data-repo]");
-    if (!hit) return;
-    try {
-      await openRepo(hit.getAttribute("data-repo"));
-    } catch (exc) {
-      showError(exc.message || String(exc));
-    }
-  });
-
-  repoEl.addEventListener("click", async (event) => {
-    if (event.target.closest("#models-repo-close")) {
-      paintRepo(null);
+    if (event.target.closest("[data-repo-close]")) {
+      closeRepo(event.target.closest(".models-hit"));
       return;
     }
-    const btn = event.target.closest("[data-hf]");
-    if (!btn) return;
-    const size = btn.getAttribute("data-size");
-    const aliasInput = repoEl.querySelector("#models-hf-alias");
-    if (aliasInput) hfAlias = String(aliasInput.value || "").trim();
+    const download = event.target.closest("[data-hf]");
+    if (download) {
+      const size = download.getAttribute("data-size");
+      rememberAliasFrom(resultsEl);
+      try {
+        await beginDownload({
+          kind: "hf",
+          repo_id: download.getAttribute("data-hf"),
+          revision: download.getAttribute("data-rev"),
+          size_bytes: size ? Number(size) : null,
+          alias: hfAlias || null,
+        });
+      } catch (exc) {
+        showError(exc.message || String(exc));
+      }
+      return;
+    }
+    const toggle = event.target.closest(".models-hit-toggle");
+    if (!toggle) return;
+    const hit = toggle.closest(".models-hit");
     try {
-      await beginDownload({
-        kind: "hf",
-        repo_id: btn.getAttribute("data-hf"),
-        revision: btn.getAttribute("data-rev"),
-        size_bytes: size ? Number(size) : null,
-        alias: hfAlias || null,
-      });
+      await openRepo(toggle.getAttribute("data-repo"), hit);
     } catch (exc) {
+      closeRepo(hit);
       showError(exc.message || String(exc));
     }
   });
@@ -592,7 +655,9 @@ function mountModels(root) {
       );
       paintResults(data);
       const exact = data.results && data.results.length === 1 && /[\/]/.test(q);
-      if (exact && data.results[0].id) await openRepo(data.results[0].id);
+      if (exact && data.results[0].id) {
+        await openRepo(data.results[0].id, findHit(data.results[0].id));
+      }
     } catch (exc) {
       resultsEl.innerHTML = "";
       showError(exc.message || String(exc));

@@ -23,6 +23,14 @@ class ModelsJobBannerTests(unittest.TestCase):
         self.assertNotIn('showOk(data.job.message || "Download finished")', self.src)
         self.assertNotIn('showOk(job.message || "Download finished")', self.src)
 
+    def test_search_repo_opens_in_clicked_hit(self):
+        self.assertNotIn('id="models-repo"', self.src)
+        self.assertIn("function findHit(repoId)", self.src)
+        self.assertIn("paintRepo(data, target)", self.src)
+        self.assertIn("class=\"models-hit-toggle\"", self.src)
+        self.assertIn("data-repo-close", self.src)
+        self.assertNotIn('id="models-repo-close"', self.src)
+
     def test_download_and_library_expose_short_names(self):
         self.assertIn('id="models-hf-alias"', self.src)
         self.assertIn("Short name", self.src)
