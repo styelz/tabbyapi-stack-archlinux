@@ -368,6 +368,42 @@ class SidecarInterceptTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("dry_multiplier", seen["body"])
         self.assertEqual(seen["client"], "llama-client")
 
+    async def test_forward_llm_chat_uses_forward_chat_for_console_standin(self):
+        from types import SimpleNamespace
+
+        seen = {}
+
+        async def fake_forward(*_a, **_k):
+            raise AssertionError("console stand-in must not use request.forward")
+
+        async def fake_forward_chat(body, client=None):
+            seen["body"] = json.loads(body.decode("utf-8"))
+            seen["client"] = client
+            return {"ok": True}
+
+        proxy = SimpleNamespace(
+            state=SimpleNamespace(id="console"),
+            is_disconnected=lambda: False,
+        )
+        with (
+            mock.patch("sidecar.proxy.llm_forward_client", return_value=(True, "llama-client")),
+            mock.patch("sidecar.proxy.forward", new=fake_forward),
+            mock.patch("sidecar.proxy.forward_chat", new=fake_forward_chat),
+        ):
+            result = await proxy_mod.forward_llm_chat(
+                {
+                    "messages": [{"role": "user", "content": "hello?"}],
+                    "model": "qwen",
+                    "dry_multiplier": 1.5,
+                },
+                request=proxy,
+            )
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(seen["body"]["model"], "gpt-4o")
+        self.assertEqual(seen["body"]["messages"][0]["content"], "hello?")
+        self.assertNotIn("dry_multiplier", seen["body"])
+        self.assertEqual(seen["client"], "llama-client")
+
     async def test_ui_pipeline_llama_mode_forwards_to_llama(self):
         from endpoints.OAI.types.chat_completion import ChatCompletionRequest
         from endpoints.OAI.utils.pipeline import run_chat_completion_turn

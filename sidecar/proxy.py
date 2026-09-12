@@ -172,6 +172,11 @@ def _rewrite_llama_stream(result: StreamingResponse) -> StreamingResponse:
     )
 
 
+def _is_http_request(request: Optional[Request]) -> bool:
+    """True for a Starlette/FastAPI request. Console flights pass a stand-in."""
+    return request is not None and getattr(request, "url", None) is not None
+
+
 async def forward_llm_chat(
     payload: dict,
     *,
@@ -186,16 +191,17 @@ async def forward_llm_chat(
     llama, llama_client = llm_forward_client()
     body = adapt_chat_payload(payload) if llama else dict(payload or {})
     raw = json.dumps(body).encode("utf-8")
-    send = forward_fn or forward
-    if request is not None:
+    client = llama_client if llama else None
+    if _is_http_request(request):
+        send = forward_fn or forward
         result = await send(
             request,
             path="/v1/chat/completions",
             body=raw,
-            client=llama_client if llama else None,
+            client=client,
         )
     else:
-        result = await forward_chat(raw, client=llama_client if llama else None)
+        result = await forward_chat(raw, client=client)
     if llama and isinstance(result, StreamingResponse):
         return _rewrite_llama_stream(result)
     return result
