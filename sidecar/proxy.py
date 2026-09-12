@@ -140,6 +140,7 @@ def _rewrite_llama_stream(result: StreamingResponse) -> StreamingResponse:
 
     async def _rewrite():
         in_think = False
+        state: dict = {}
         try:
             async for chunk in upstream:
                 text = (
@@ -151,7 +152,7 @@ def _rewrite_llama_stream(result: StreamingResponse) -> StreamingResponse:
                 for line in text.splitlines(keepends=True):
                     if line.startswith("data:"):
                         rewritten, in_think = rewrite_sse_line(
-                            line.rstrip("\n"), in_think=in_think
+                            line.rstrip("\n"), in_think=in_think, state=state
                         )
                         out_parts.append(
                             rewritten + ("\n" if line.endswith("\n") else "")
@@ -263,7 +264,7 @@ async def generate_chat(
     client: Optional[httpx.AsyncClient] = None,
 ) -> dict:
     """Non-streaming completion on Tabby or llama-server, skipping public image intercepts."""
-    from sidecar.llama_adapter import adapt_chat_payload
+    from sidecar.llama_adapter import adapt_chat_payload, cut_completion_stops
 
     llama = False
     if client is None:
@@ -282,6 +283,8 @@ async def generate_chat(
     data = response.json()
     if not isinstance(data, dict):
         raise RuntimeError("Backend chat completion returned a non-object.")
+    if llama:
+        return cut_completion_stops(data)
     return data
 
 
@@ -309,10 +312,11 @@ async def generate_chat_stream(
     )
     backend = await http.send(req, stream=True)
     in_think = False
+    state: dict = {}
     try:
         async for line in backend.aiter_lines():
             if llama and line.startswith("data:"):
-                line, in_think = rewrite_sse_line(line, in_think=in_think)
+                line, in_think = rewrite_sse_line(line, in_think=in_think, state=state)
             yield line
     finally:
         await backend.aclose()

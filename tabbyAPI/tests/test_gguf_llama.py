@@ -26,12 +26,65 @@ class LlamaAdapterTests(unittest.TestCase):
                 "dry_multiplier": 1.5,
                 "dry_sequence_breakers": [],
                 "tools": [{"type": "function", "function": {"name": "grep"}}],
-            }
+            },
+            caps={},
         )
         self.assertEqual(body["model"], "gpt-4o")
         self.assertNotIn("dry_multiplier", body)
         self.assertNotIn("dry_sequence_breakers", body)
         self.assertEqual(body["tools"][0]["function"]["name"], "grep")
+        self.assertIn("<|im_end|>", body["stop"])
+
+    def test_adapt_chat_payload_stops_chatml_and_fim(self):
+        body = adapt_chat_payload(
+            {"messages": [{"role": "user", "content": "hello?"}]},
+            caps={},
+        )
+        self.assertIn("<|im_end|>", body["stop"])
+        self.assertIn("<|fim_start|>", body["stop"])
+        self.assertIn("<｜end▁of▁sentence｜>", body["stop"])
+
+    def test_adapt_chat_payload_keeps_client_stop(self):
+        body = adapt_chat_payload(
+            {
+                "messages": [{"role": "user", "content": "hi"}],
+                "stop": ["CUSTOM"],
+            },
+            caps={},
+        )
+        self.assertEqual(body["stop"][0], "CUSTOM")
+        self.assertIn("<|im_end|>", body["stop"])
+
+    def test_adapt_chat_payload_strips_tools_when_gguf_cannot(self):
+        from sidecar.llama_adapter import NO_TOOLS_SYSTEM
+
+        body = adapt_chat_payload(
+            {
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "Use the file tools (Grep, Glob, Write) to edit files.",
+                    },
+                    {"role": "user", "content": "hello?"},
+                    {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [{"id": "1", "function": {"name": "Write"}}],
+                    },
+                    {"role": "tool", "content": "wrote it", "tool_call_id": "1"},
+                ],
+                "tools": [{"type": "function", "function": {"name": "Write"}}],
+                "tool_choice": "auto",
+            },
+            caps={"supports_tools": False, "eos_token": "<｜end▁of▁sentence｜>"},
+        )
+        self.assertNotIn("tools", body)
+        self.assertNotIn("tool_choice", body)
+        self.assertEqual(body["messages"][0]["content"], NO_TOOLS_SYSTEM)
+        self.assertNotIn("tool_calls", body["messages"][2])
+        self.assertEqual(body["messages"][3]["role"], "user")
+        self.assertIn("wrote it", body["messages"][3]["content"])
+        self.assertIn("<｜end▁of▁sentence｜>", body["stop"])
 
     def test_adapt_chat_payload_drops_idle_top_logprobs(self):
         body = adapt_chat_payload(
@@ -40,7 +93,8 @@ class LlamaAdapterTests(unittest.TestCase):
                 "messages": [{"role": "user", "content": "hi"}],
                 "logprobs": 0,
                 "top_logprobs": 0,
-            }
+            },
+            caps={},
         )
         self.assertNotIn("logprobs", body)
         self.assertNotIn("top_logprobs", body)
@@ -52,7 +106,8 @@ class LlamaAdapterTests(unittest.TestCase):
                 "messages": [{"role": "user", "content": "hi"}],
                 "logprobs": True,
                 "top_logprobs": 5,
-            }
+            },
+            caps={},
         )
         self.assertTrue(body["logprobs"])
         self.assertEqual(body["top_logprobs"], 5)
@@ -76,6 +131,26 @@ class LlamaAdapterTests(unittest.TestCase):
         event = json.loads(line[5:].strip())
         delta = event["choices"][0]["delta"]
         self.assertEqual(delta["content"], "hello")
+
+    def test_rewrite_sse_cuts_chatml_continuation(self):
+        state = {}
+        line, in_think = rewrite_sse_line(
+            'data: {"choices":[{"delta":{"content":"Hello.<|im_end|>\\n<|im_start|>user\\nmore"}}]}',
+            in_think=False,
+            state=state,
+        )
+        self.assertFalse(in_think)
+        self.assertTrue(state.get("stopped"))
+        event = json.loads(line[5:].strip())
+        self.assertEqual(event["choices"][0]["delta"]["content"], "Hello.")
+
+        line, _ = rewrite_sse_line(
+            'data: {"choices":[{"delta":{"content":"<|im_start|>assistant\\nfake"}}]}',
+            in_think=False,
+            state=state,
+        )
+        event = json.loads(line[5:].strip())
+        self.assertEqual(event["choices"][0]["delta"]["content"], "")
 
 
 class LlamaRuntimeTests(unittest.TestCase):
