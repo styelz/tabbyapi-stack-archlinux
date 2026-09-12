@@ -368,6 +368,45 @@ class SidecarInterceptTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("dry_multiplier", seen["body"])
         self.assertEqual(seen["client"], "llama-client")
 
+    async def test_ui_pipeline_llama_mode_forwards_to_llama(self):
+        from endpoints.OAI.types.chat_completion import ChatCompletionRequest
+        from endpoints.OAI.utils.pipeline import run_chat_completion_turn
+
+        seen = {}
+
+        async def fake_forward(payload, request=None, forward_fn=None):
+            seen["payload"] = payload
+            seen["request"] = request
+            return {"ok": True, "via": "llama"}
+
+        handler = mock.Mock()
+        handler.poll = mock.AsyncMock()
+        request = self._request()
+        data = ChatCompletionRequest(
+            messages=[{"role": "user", "content": "hello?"}],
+            stream=False,
+        )
+        with (
+            mock.patch("sidecar.settings.is_sidecar_process", return_value=True),
+            mock.patch("sidecar.model_status.llm_is_ready", return_value=True),
+            mock.patch(
+                "endpoints.OAI.utils.pipeline.handle_image_chat",
+                new=mock.AsyncMock(return_value=None),
+            ),
+            mock.patch("endpoints.OAI.utils.pipeline.gpu_is_comfy", return_value=False),
+            mock.patch("sidecar.proxy.forward_llm_chat", new=fake_forward),
+        ):
+            result = await run_chat_completion_turn(
+                request,
+                data,
+                handler,
+                api_base="http://x/v1",
+                console=True,
+            )
+        self.assertEqual(result, {"ok": True, "via": "llama"})
+        self.assertEqual(seen["payload"]["messages"][0]["content"], "hello?")
+        self.assertIs(seen["request"], request)
+
     async def test_generate_chat_sends_generate_only_header(self):
         seen = {}
 
@@ -419,7 +458,7 @@ class SidecarModelStatusTests(unittest.TestCase):
         src = Path(__file__).resolve().parents[1].joinpath(
             "endpoints/OAI/utils/pipeline.py"
         ).read_text(encoding="utf-8")
-        self.assertIn("forward_chat", src)
+        self.assertIn("forward_llm_chat", src)
         self.assertIn("is_sidecar_process", src)
         self.assertIn("generate_only", src)
 

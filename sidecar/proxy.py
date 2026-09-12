@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Iterable, Optional
+from typing import Any, Callable, Iterable, Optional
 
 import httpx
 from fastapi import Request
@@ -116,6 +116,91 @@ async def forward(
     )
 
 
+def llm_forward_client() -> tuple[bool, Optional[httpx.AsyncClient]]:
+    """True plus a llama-server client when GGUF owns the GPU."""
+    from sidecar.settings import chat_backend_url, llama_url
+
+    target = chat_backend_url()
+    llama = False
+    try:
+        from common.phrase_switch import gpu_is_llama
+
+        llama = gpu_is_llama()
+    except Exception:
+        llama = target.rstrip("/") == llama_url().rstrip("/")
+    if not llama:
+        return False, None
+    return True, get_client(llama_url())
+
+
+def _rewrite_llama_stream(result: StreamingResponse) -> StreamingResponse:
+    from sidecar.llama_adapter import rewrite_sse_line
+
+    upstream = result.body_iterator
+
+    async def _rewrite():
+        in_think = False
+        try:
+            async for chunk in upstream:
+                text = (
+                    chunk.decode("utf-8", "replace")
+                    if isinstance(chunk, bytes)
+                    else str(chunk)
+                )
+                out_parts = []
+                for line in text.splitlines(keepends=True):
+                    if line.startswith("data:"):
+                        rewritten, in_think = rewrite_sse_line(
+                            line.rstrip("\n"), in_think=in_think
+                        )
+                        out_parts.append(
+                            rewritten + ("\n" if line.endswith("\n") else "")
+                        )
+                    else:
+                        out_parts.append(line)
+                yield "".join(out_parts).encode("utf-8")
+        finally:
+            closer = getattr(upstream, "aclose", None)
+            if closer is not None:
+                await closer()
+
+    return StreamingResponse(
+        _rewrite(),
+        status_code=result.status_code,
+        headers=dict(result.headers),
+        media_type=result.media_type,
+    )
+
+
+async def forward_llm_chat(
+    payload: dict,
+    *,
+    request: Optional[Request] = None,
+    forward_fn: Optional[Callable[..., Any]] = None,
+) -> Response:
+    """POST /v1/chat/completions at Tabby, or llama-server when GGUF is loaded."""
+    import json
+
+    from sidecar.llama_adapter import adapt_chat_payload
+
+    llama, llama_client = llm_forward_client()
+    body = adapt_chat_payload(payload) if llama else dict(payload or {})
+    raw = json.dumps(body).encode("utf-8")
+    send = forward_fn or forward
+    if request is not None:
+        result = await send(
+            request,
+            path="/v1/chat/completions",
+            body=raw,
+            client=llama_client if llama else None,
+        )
+    else:
+        result = await forward_chat(raw, client=llama_client if llama else None)
+    if llama and isinstance(result, StreamingResponse):
+        return _rewrite_llama_stream(result)
+    return result
+
+
 async def forward_chat(body: bytes, *, client: Optional[httpx.AsyncClient] = None) -> Response:
     """POST /v1/chat/completions at Tabby. Console jobs have no inbound FastAPI Request."""
     http = client or get_client()
@@ -171,9 +256,16 @@ async def generate_chat(
     *,
     client: Optional[httpx.AsyncClient] = None,
 ) -> dict:
-    """Non-streaming completion on Tabby, skipping public image intercepts."""
+    """Non-streaming completion on Tabby or llama-server, skipping public image intercepts."""
+    from sidecar.llama_adapter import adapt_chat_payload
+
+    llama = False
+    if client is None:
+        llama, llama_client = llm_forward_client()
+        if llama:
+            client = llama_client
     http = client or get_client()
-    body = dict(payload or {})
+    body = adapt_chat_payload(payload) if llama else dict(payload or {})
     body["stream"] = False
     response = await http.post(
         "/v1/chat/completions",
@@ -192,9 +284,16 @@ async def generate_chat_stream(
     *,
     client: Optional[httpx.AsyncClient] = None,
 ):
-    """Streaming completion on Tabby, skipping public image intercepts."""
+    """Streaming completion on Tabby or llama-server, skipping public image intercepts."""
+    from sidecar.llama_adapter import adapt_chat_payload, rewrite_sse_line
+
+    llama = False
+    if client is None:
+        llama, llama_client = llm_forward_client()
+        if llama:
+            client = llama_client
     http = client or get_client()
-    body = dict(payload or {})
+    body = adapt_chat_payload(payload) if llama else dict(payload or {})
     body["stream"] = True
     req = http.build_request(
         "POST",
@@ -203,8 +302,11 @@ async def generate_chat_stream(
         json=body,
     )
     backend = await http.send(req, stream=True)
+    in_think = False
     try:
         async for line in backend.aiter_lines():
+            if llama and line.startswith("data:"):
+                line, in_think = rewrite_sse_line(line, in_think=in_think)
             yield line
     finally:
         await backend.aclose()

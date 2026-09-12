@@ -89,15 +89,13 @@ async def run_chat_completion_turn(
         return await comfy_idle_response(data, api_base=api_base)
 
     if sidecar:
-        import json
-
-        from sidecar.proxy import forward_chat
+        from sidecar.proxy import forward_llm_chat
 
         refused = tools_without_format_response(data)
         if refused is not None:
             return refused
         payload = data.model_dump(mode="json", exclude_none=True)
-        return await forward_chat(json.dumps(payload).encode("utf-8"))
+        return await forward_llm_chat(payload, request=request)
 
     async with load_lock:
         if data.model:
