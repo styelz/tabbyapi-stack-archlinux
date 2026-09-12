@@ -422,7 +422,7 @@ async def saver_state() -> dict[str, Any]:
     stack_status blocks the event loop on nvidia-smi (up to 5s), which is why
     the field used to sit idle for several seconds after a chat started.
     """
-    from common.gpu_mode import read_mode
+    from common.gpu_mode import llama_up, read_mode
     from common.live_decode import snapshot as decode_snapshot
     from common.phrase_switch import (
         last_llm_profile_name,
@@ -431,19 +431,27 @@ async def saver_state() -> dict[str, Any]:
         switch_lock_name,
     )
     from images.jobs import active_mcp_image_job, loaded_tabby_name
-    from select_model import last_profile
+    from select_model import last_llama_profile, last_profile
     from ui.flight import iter_live_flights
     from ui.manager import _host_live, cached_nvidia_stats, ensure_gpu_cache
     from ui.occupancy import snapshot as stack_queue_snapshot
 
     mode = read_mode()
     tabby = loaded_tabby_name()
-    gpu_mode = "llm" if tabby else (mode.get("mode") or "llm")
+    llama = llama_up()
+    gpu_mode = mode.get("mode") or "llm"
+    if llama:
+        gpu_mode = "llama"
+    elif tabby:
+        gpu_mode = "llm"
     lock_name = switch_lock_name()
     lock_held = switch_lock_held()
     restarting = lock_held and lock_name == "restart"
     switching = lock_held and not restarting
-    profile = profile_alias_for_model(tabby) or last_llm_profile_name() or last_profile()
+    if gpu_mode == "llama":
+        profile = last_llama_profile() or last_profile()
+    else:
+        profile = profile_alias_for_model(tabby) or last_llm_profile_name() or last_profile()
     queue = stack_queue_snapshot("")
     ensure_gpu_cache()
     job = active_mcp_image_job()

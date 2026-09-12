@@ -155,9 +155,9 @@ class LlamaAdapterTests(unittest.TestCase):
 
 class LlamaRuntimeTests(unittest.TestCase):
     def test_ngl_arg_maps_negative_to_fit(self):
-        self.assertEqual(ngl_arg(-1), "999")
+        self.assertEqual(ngl_arg(-1), "auto")
         self.assertEqual(ngl_arg(12), "12")
-        self.assertEqual(ngl_arg("nope"), "999")
+        self.assertEqual(ngl_arg("nope"), "auto")
 
 
 class BackendValidationTests(unittest.TestCase):
@@ -257,6 +257,13 @@ class InstallerLlamaTests(unittest.TestCase):
         self.assertIn("Installing llama.cpp (GGUF)", text)
         self.assertIn("llamacpp.service", text)
         self.assertIn("llama-start.sh", text)
+        self.assertIn("GGML_CUDA", text)
+        self.assertIn("GGML_VULKAN", text)
+        self.assertIn("libggml-cuda.so", text)
+        self.assertIn("libggml-vulkan.so", text)
+        self.assertIn("llama.cpp is CPU-only", text)
+        self.assertIn("vulkan-headers", text)
+        self.assertIn("spirv-headers", text)
         self.assertNotIn("20B-Q4", text)
 
     def test_llama_unit_and_start_script_exist(self):
@@ -266,3 +273,5 @@ class InstallerLlamaTests(unittest.TestCase):
         self.assertTrue(start.is_file())
         self.assertIn("--alias", start.read_text(encoding="utf-8"))
         self.assertIn("gpt-4o", start.read_text(encoding="utf-8"))
+        self.assertIn("auto", start.read_text(encoding="utf-8"))
+        self.assertIn('ngl=auto', start.read_text(encoding="utf-8"))

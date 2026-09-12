@@ -324,6 +324,29 @@ class SaverSanitizeTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("ram_pct", payload["host"])
         self.assertNotIn("load1", payload["host"])
 
+    async def test_saver_state_llama_mode_uses_llama_profile(self):
+        snap = mock.Mock(return_value={"busy": False, "kind": None, "live": False})
+        with (
+            mock.patch("ui.occupancy.snapshot", snap),
+            mock.patch("ui.manager.cached_nvidia_stats", return_value={}),
+            mock.patch("ui.manager.ensure_gpu_cache"),
+            mock.patch("common.live_decode.snapshot", return_value={"tokens": 0, "stage": "idle"}),
+            mock.patch("images.jobs.active_mcp_image_job", return_value=None),
+            mock.patch("ui.flight.iter_live_flights", return_value=[]),
+            mock.patch("common.phrase_switch.switch_lock_held", return_value=False),
+            mock.patch("common.phrase_switch.switch_lock_name", return_value=""),
+            mock.patch("common.gpu_mode.read_mode", return_value={"mode": "llama", "profile": "dsc67b"}),
+            mock.patch("common.gpu_mode.llama_up", return_value=True),
+            mock.patch("images.jobs.loaded_tabby_name", return_value="gpt-4o"),
+            mock.patch("common.phrase_switch.profile_alias_for_model", return_value=None),
+            mock.patch("common.phrase_switch.last_llm_profile_name", return_value="dsc13"),
+            mock.patch("select_model.last_llama_profile", return_value="dsc67b"),
+            mock.patch("select_model.last_profile", return_value="dsc67b"),
+        ):
+            payload = await saver.saver_state()
+        self.assertEqual(payload["gpu_mode"], "llama")
+        self.assertEqual(payload["profile"], "dsc67b")
+
 
 class SaverKioskSceneTests(unittest.TestCase):
     @classmethod

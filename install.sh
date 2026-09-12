@@ -1297,6 +1297,53 @@ try_load_nvidia() {
   nvidia_smi_ok
 }
 
+find_nvcc() {
+  local p
+  if need_cmd nvcc; then
+    command -v nvcc
+    return 0
+  fi
+  for p in /opt/cuda/bin/nvcc /usr/local/cuda/bin/nvcc; do
+    if [[ -x "$p" ]]; then
+      printf '%s\n' "$p"
+      return 0
+    fi
+  done
+  return 1
+}
+
+llama_vulkan_ok() {
+  need_cmd glslc || return 1
+  [[ -e /usr/lib/libvulkan.so || -e /usr/lib/libvulkan.so.1 || -e /usr/lib64/libvulkan.so ]]
+}
+
+llama_server_path() {
+  local p
+  for p in \
+    "${DEST_LLAMA:-}/build/bin/llama-server" \
+    "${DEST_LLAMA:-}/llama-server"
+  do
+    if [[ -n "$p" && -x "$p" ]]; then
+      printf '%s\n' "$p"
+      return 0
+    fi
+  done
+  if need_cmd llama-server; then
+    command -v llama-server
+    return 0
+  fi
+  return 1
+}
+
+llama_has_gpu_backend() {
+  local bin="${1:-}" dir
+  [[ -n "$bin" && -x "$bin" ]] || return 1
+  dir="$(dirname "$bin")"
+  [[ -e "$dir/libggml-cuda.so" || -e "$dir/libggml-cuda.so.0" || \
+     -e "$dir/libggml-hip.so" || -e "$dir/libggml-hip.so.0" || \
+     -e "$dir/libggml-vulkan.so" || -e "$dir/libggml-vulkan.so.0" ]]
+}
+
 write_resume_env() {
   local f="$1"
   mkdir -p "$(dirname "$f")"
@@ -3444,6 +3491,10 @@ PACKAGES=(
   # Screensaver deps: always install so Settings / tsctl enable works later.
   python-pygame
   python-numpy
+  # llama.cpp GPU: CUDA when nvcc exists, otherwise Vulkan (nvidia-utils ICD).
+  vulkan-headers
+  spirv-headers
+  shaderc
 )
 
 ensure_sudo
@@ -3691,21 +3742,45 @@ if [[ -d "$DEST_COMFY/venv/Scripts" ]]; then
 fi
 
 progress 28 "Installing llama.cpp (GGUF)"
-if ! command -v llama-server >/dev/null 2>&1 && [[ ! -x "$DEST_LLAMA/build/bin/llama-server" && ! -x "$DEST_LLAMA/llama-server" ]]; then
-  if [[ ! -d "$DEST_LLAMA/.git" ]]; then
-    if llama_bundle=$(tsos_bundle llama.cpp 2>/dev/null); then
-      run_quiet git clone "$llama_bundle" "$DEST_LLAMA" || true
-    else
-      run_quiet git clone --depth 1 https://github.com/ggml-org/llama.cpp.git "$DEST_LLAMA" || true
+if [[ ! -d "$DEST_LLAMA/.git" ]]; then
+  if llama_bundle=$(tsos_bundle llama.cpp 2>/dev/null); then
+    run_quiet git clone "$llama_bundle" "$DEST_LLAMA" || true
+  else
+    run_quiet git clone --depth 1 https://github.com/ggml-org/llama.cpp.git "$DEST_LLAMA" || true
+  fi
+fi
+llama_bin="$(llama_server_path || true)"
+llama_need_build=0
+if [[ -z "$llama_bin" ]]; then
+  llama_need_build=1
+elif ! llama_has_gpu_backend "$llama_bin"; then
+  if find_nvcc >/dev/null || llama_vulkan_ok; then
+    echo "llama.cpp is CPU-only; rebuilding with GPU (CUDA and/or Vulkan)." >> "$INSTALL_LOG"
+    llama_need_build=1
+  fi
+fi
+if [[ "$llama_need_build" -eq 1 && -f "$DEST_LLAMA/CMakeLists.txt" ]] && need_cmd cmake; then
+  llama_was_up=0
+  if need_cmd systemctl && systemctl --user is-active --quiet llamacpp 2>/dev/null; then
+    llama_was_up=1
+    echo "Stopping llama-server so llama.cpp can rebuild with GPU." >> "$INSTALL_LOG"
+    systemctl --user stop llamacpp >>"$INSTALL_LOG" 2>&1 || true
+  fi
+  cmake_args=(-S "$DEST_LLAMA" -B "$DEST_LLAMA/build" -DCMAKE_BUILD_TYPE=Release)
+  llama_nvcc="$(find_nvcc || true)"
+  if [[ -n "$llama_nvcc" ]]; then
+    cmake_args+=(-DGGML_CUDA=ON)
+    if ! need_cmd nvcc; then
+      cmake_args+=(-DCMAKE_CUDA_COMPILER="$llama_nvcc")
     fi
   fi
-  if [[ -f "$DEST_LLAMA/CMakeLists.txt" ]] && command -v cmake >/dev/null 2>&1; then
-    cmake_args=(-S "$DEST_LLAMA" -B "$DEST_LLAMA/build" -DCMAKE_BUILD_TYPE=Release)
-    if command -v nvcc >/dev/null 2>&1; then
-      cmake_args+=(-DGGML_CUDA=ON)
-    fi
-    run_quiet cmake "${cmake_args[@]}" || true
-    run_quiet cmake --build "$DEST_LLAMA/build" --config Release -j"$(nproc 2>/dev/null || echo 2)" --target llama-server || true
+  if llama_vulkan_ok; then
+    cmake_args+=(-DGGML_VULKAN=ON)
+  fi
+  run_quiet cmake "${cmake_args[@]}" || true
+  run_quiet cmake --build "$DEST_LLAMA/build" --config Release -j"$(nproc 2>/dev/null || echo 2)" --target llama-server || true
+  if [[ "$llama_was_up" -eq 1 ]]; then
+    systemctl --user start llamacpp >>"$INSTALL_LOG" 2>&1 || true
   fi
 fi
 chmod +x "$DEST_TABBY/deploy/arch/llama-start.sh" 2>/dev/null || true

@@ -91,7 +91,9 @@ def ngl_arg(n_gpu_layers: Any) -> str:
     except (TypeError, ValueError):
         value = -1
     if value < 0:
-        return "999"
+        # llama.cpp --fit only adjusts ngl when it is unset/auto. An explicit
+        # 999 ("all layers") pins VRAM and OOMs a 32k KV cache on 12 GB cards.
+        return "auto"
     return str(value)
 
 

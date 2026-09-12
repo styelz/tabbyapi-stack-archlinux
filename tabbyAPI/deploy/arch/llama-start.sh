@@ -40,8 +40,14 @@ ARGS=(
   --jinja
   -m "$LLAMA_MODEL"
   -c "${LLAMA_CTX:-32768}"
-  -ngl "${LLAMA_NGL:-999}"
 )
+# -1 / empty / 999 used to mean "all layers". llama.cpp now treats an explicit
+# ngl as pinned, which disables --fit and OOMs a 32k KV cache on 12 GB.
+ngl="${LLAMA_NGL:-auto}"
+if [[ -z "$ngl" || "$ngl" == "-1" || "$ngl" == "999" ]]; then
+  ngl=auto
+fi
+ARGS+=(-ngl "$ngl")
 if [[ -n "${LLAMA_MMPROJ:-}" ]]; then
   ARGS+=(--mmproj "$LLAMA_MMPROJ")
 fi
