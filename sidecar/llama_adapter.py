@@ -13,7 +13,10 @@ EXL_ONLY_KEYS = {
     "dry_base",
     "dry_allowed_length",
     "dry_range",
+    "dry_sequence_breakers",
     "repetition_decay",
+    "adaptive_target",
+    "adaptive_decay",
     "token_healing",
     "banned_strings",
     "loop_detect_window",
@@ -32,12 +35,27 @@ EXL_ONLY_KEYS = {
 }
 
 
+def _truthy_logprobs(value: Any) -> bool:
+    if value is True:
+        return True
+    try:
+        return int(value) > 0
+    except (TypeError, ValueError):
+        return False
+
+
 def adapt_chat_payload(payload: dict[str, Any]) -> dict[str, Any]:
     body = dict(payload or {})
     body["model"] = "gpt-4o"
     for key in list(body):
         if key in EXL_ONLY_KEYS:
             body.pop(key, None)
+    # llama.cpp 400s on top_logprobs unless logprobs is true, including 0.
+    if not _truthy_logprobs(body.get("logprobs")):
+        body.pop("logprobs", None)
+        body.pop("top_logprobs", None)
+    elif not _truthy_logprobs(body.get("top_logprobs")):
+        body.pop("top_logprobs", None)
     grammar = payload.get("grammar_string") if payload else None
     schema = payload.get("json_schema") if payload else None
     if schema and not body.get("response_format"):

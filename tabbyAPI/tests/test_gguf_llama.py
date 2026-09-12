@@ -24,12 +24,38 @@ class LlamaAdapterTests(unittest.TestCase):
                 "model": "qwen",
                 "messages": [{"role": "user", "content": "hi"}],
                 "dry_multiplier": 1.5,
+                "dry_sequence_breakers": [],
                 "tools": [{"type": "function", "function": {"name": "grep"}}],
             }
         )
         self.assertEqual(body["model"], "gpt-4o")
         self.assertNotIn("dry_multiplier", body)
+        self.assertNotIn("dry_sequence_breakers", body)
         self.assertEqual(body["tools"][0]["function"]["name"], "grep")
+
+    def test_adapt_chat_payload_drops_idle_top_logprobs(self):
+        body = adapt_chat_payload(
+            {
+                "model": "qwen",
+                "messages": [{"role": "user", "content": "hi"}],
+                "logprobs": 0,
+                "top_logprobs": 0,
+            }
+        )
+        self.assertNotIn("logprobs", body)
+        self.assertNotIn("top_logprobs", body)
+
+    def test_adapt_chat_payload_keeps_requested_logprobs(self):
+        body = adapt_chat_payload(
+            {
+                "model": "qwen",
+                "messages": [{"role": "user", "content": "hi"}],
+                "logprobs": True,
+                "top_logprobs": 5,
+            }
+        )
+        self.assertTrue(body["logprobs"])
+        self.assertEqual(body["top_logprobs"], 5)
 
     def test_rewrite_sse_maps_think_tags(self):
         line, in_think = rewrite_sse_line(

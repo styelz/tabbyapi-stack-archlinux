@@ -366,6 +366,7 @@ class SidecarInterceptTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(seen["path"], "/v1/chat/completions")
         self.assertEqual(seen["body"]["model"], "gpt-4o")
         self.assertNotIn("dry_multiplier", seen["body"])
+        self.assertNotIn("top_logprobs", seen["body"])
         self.assertEqual(seen["client"], "llama-client")
 
     async def test_forward_llm_chat_uses_forward_chat_for_console_standin(self):
