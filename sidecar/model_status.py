@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import threading
+import time
 import urllib.error
 import urllib.request
 from typing import Any
@@ -13,6 +15,13 @@ from sidecar.paths import ensure_import_path
 from sidecar.settings import backend_url
 
 ensure_import_path()
+
+# Status + screensaver used to GET /v1/model several times a second. The card
+# only changes on load/unload; TTL plus mode/lock epoch covers switches.
+_CACHE_TTL_S = 2.0
+_FAIL_TTL_S = 0.5
+_cache_lock = threading.Lock()
+_model_cache: dict[str, Any] | None = None
 
 
 def _backend_configured() -> bool:
@@ -51,6 +60,51 @@ def _admin_headers() -> dict[str, str]:
     }
 
 
+def invalidate_model_cache() -> None:
+    global _model_cache
+    with _cache_lock:
+        _model_cache = None
+
+
+def _model_epoch() -> tuple[float, float]:
+    mode_m = 0.0
+    lock_m = 0.0
+    try:
+        from common.gpu_mode import STATUS_PATH
+
+        mode_m = STATUS_PATH.stat().st_mtime
+    except OSError:
+        pass
+    try:
+        from common.phrase_switch import LOCK
+
+        if LOCK.exists():
+            lock_m = LOCK.stat().st_mtime
+    except OSError:
+        pass
+    return (mode_m, lock_m)
+
+
+def _cached_backend_model() -> tuple[int, Any]:
+    global _model_cache
+    epoch = _model_epoch()
+    now = time.monotonic()
+    with _cache_lock:
+        cached = _model_cache
+        if cached and cached.get("epoch") == epoch and now < float(cached.get("until") or 0):
+            return int(cached["status"]), cached.get("payload")
+    status, payload = _get_json("/v1/model")
+    ttl = _CACHE_TTL_S if status == 200 else _FAIL_TTL_S
+    with _cache_lock:
+        _model_cache = {
+            "epoch": epoch,
+            "until": now + ttl,
+            "status": status,
+            "payload": payload,
+        }
+    return status, payload
+
+
 def loaded_model_id() -> str | None:
     try:
         from common.gpu_mode import llama_loaded_id, read_mode
@@ -66,6 +120,7 @@ def loaded_model_id() -> str | None:
 
 def unload_backend() -> None:
     """POST /v1/model/unload on Tabby. 503 means already empty."""
+    invalidate_model_cache()
     if not loaded_model_id():
         return
     url = backend_url().rstrip("/") + "/v1/model/unload"
@@ -78,10 +133,13 @@ def unload_backend() -> None:
         raise RuntimeError(exc.read().decode("utf-8", "replace") or str(exc)) from exc
     except (OSError, ValueError) as exc:
         raise RuntimeError(str(exc)) from exc
+    finally:
+        invalidate_model_cache()
 
 
 def load_backend_model(payload: dict[str, Any]) -> None:
     """POST /v1/model/load on Tabby and wait for the SSE finished event."""
+    invalidate_model_cache()
     wanted = str((payload or {}).get("model_name") or "").strip()
     if not wanted:
         raise RuntimeError("A model name was not provided for load.")
@@ -122,6 +180,8 @@ def load_backend_model(payload: dict[str, Any]) -> None:
         raise RuntimeError(exc.read().decode("utf-8", "replace") or str(exc)) from exc
     except (OSError, ValueError) as exc:
         raise RuntimeError(str(exc)) from exc
+    finally:
+        invalidate_model_cache()
     if error:
         raise RuntimeError(str(error))
     if not finished:
@@ -137,7 +197,7 @@ def llm_is_ready() -> bool:
     except Exception:
         pass
     if _backend_configured():
-        status, payload = _get_json("/v1/model")
+        status, payload = _cached_backend_model()
         if status != 200 or not isinstance(payload, dict):
             return False
         return bool(payload.get("id") or payload.get("parameters"))
@@ -164,7 +224,7 @@ def model_card() -> dict[str, Any]:
     except Exception:
         pass
     if _backend_configured():
-        status, payload = _get_json("/v1/model")
+        status, payload = _cached_backend_model()
         if status != 200 or not isinstance(payload, dict):
             return {}
         params = payload.get("parameters") or {}

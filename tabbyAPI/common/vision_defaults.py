@@ -16,6 +16,13 @@ UNKNOWN_VRAM_LARGE_WEIGHT_MIB = 8192
 
 # Match "-27B-" / "_9B_" / "12B" at a boundary, not the "8" in Qwen3.8.
 _PARAM_B_RE = re.compile(r"(?<![0-9.])(\d{1,3})B(?:-|_|\b)", re.IGNORECASE)
+# 2.00bpw 27B still leaves KV room on 12 GB; 3.00bpw does not.
+_LIGHT_BPW_RE = re.compile(r"(?<![0-9])([12](?:\.\d+)?)bpw", re.IGNORECASE)
+TIGHT_KV_TOKENS = 16384
+DEFAULT_AUTOSPLIT_RESERVE_MIB = 384
+TIGHT_AUTOSPLIT_RESERVE_MIB = 768
+TIGHT_WEIGHT_FRACTION = 0.65
+TIGHT_PARAMS_B = 20.0
 
 
 def parse_param_billions(name: str) -> Optional[float]:
@@ -88,3 +95,116 @@ def pretty_with_vision_note(pretty: str, vision: bool, vram_label: str) -> str:
     if vision or "vision off" in text.lower():
         return text
     return f"{text} (vision off on {vram_label})"
+
+
+def looks_light_quant(name: str) -> bool:
+    """True for 2.x bpw names that still leave KV room on a 12 GB card."""
+    match = _LIGHT_BPW_RE.search(name or "")
+    if not match:
+        return False
+    try:
+        return float(match.group(1)) < 2.5
+    except (TypeError, ValueError):
+        return False
+
+
+def needs_tight_kv(
+    *,
+    vram_mib: int = 0,
+    params_b: Optional[float] = None,
+    weight_mib: int = 0,
+    folder_name: str = "",
+) -> bool:
+    """True when a 12 GB card cannot keep a 32k Q4 cache after the weights."""
+    vram = int(vram_mib or 0)
+    if vram <= 0 or vram >= VISION_PROBE_VRAM_MIB:
+        return False
+    weights = int(weight_mib or 0)
+    if weights > 0:
+        return weights > TIGHT_WEIGHT_FRACTION * vram
+    if looks_light_quant(folder_name):
+        return False
+    return params_b is not None and params_b >= TIGHT_PARAMS_B
+
+
+def decide_kv_cache(
+    *,
+    max_seq: int,
+    vram_mib: int = 0,
+    params_b: Optional[float] = None,
+    weight_mib: int = 0,
+    folder_name: str = "",
+) -> dict[str, Any]:
+    """Cache size and autosplit reserve for an auto profile or a clamp."""
+    seq = max(256, int(max_seq or 0) or TIGHT_KV_TOKENS)
+    reserve = DEFAULT_AUTOSPLIT_RESERVE_MIB
+    if needs_tight_kv(
+        vram_mib=vram_mib,
+        params_b=params_b,
+        weight_mib=weight_mib,
+        folder_name=folder_name,
+    ):
+        seq = min(seq, TIGHT_KV_TOKENS)
+        reserve = TIGHT_AUTOSPLIT_RESERVE_MIB
+    return {
+        "max_seq_len": seq,
+        "cache_size": seq,
+        "autosplit_reserve": [reserve],
+    }
+
+
+def clamp_model_kv(
+    model: dict[str, Any],
+    *,
+    vram_mib: int = 0,
+    params_b: Optional[float] = None,
+    weight_mib: int = 0,
+    folder_name: str = "",
+) -> bool:
+    """Shrink an already-written profile's KV on a packed 12 GB load.
+
+    Never raises cache_size or max_seq_len. Bumps autosplit_reserve when
+    the current reserve is below the tight budget.
+    """
+    if not isinstance(model, dict):
+        return False
+    if not needs_tight_kv(
+        vram_mib=vram_mib,
+        params_b=params_b,
+        weight_mib=weight_mib,
+        folder_name=folder_name or str(model.get("model_name") or ""),
+    ):
+        return False
+    try:
+        current_seq = int(model.get("cache_size") or model.get("max_seq_len") or 0)
+    except (TypeError, ValueError):
+        current_seq = 0
+    decided = decide_kv_cache(
+        max_seq=current_seq or TIGHT_KV_TOKENS,
+        vram_mib=vram_mib,
+        params_b=params_b,
+        weight_mib=weight_mib,
+        folder_name=folder_name or str(model.get("model_name") or ""),
+    )
+    changed = False
+    for key in ("cache_size", "max_seq_len"):
+        try:
+            current = int(model.get(key) or 0)
+        except (TypeError, ValueError):
+            current = 0
+        wanted = int(decided[key])
+        if current <= 0 or current > wanted:
+            model[key] = wanted
+            changed = True
+    reserve = model.get("autosplit_reserve")
+    wanted_reserve = decided["autosplit_reserve"]
+    current_reserve = 0.0
+    if isinstance(reserve, list) and reserve:
+        try:
+            current_reserve = float(reserve[0])
+        except (TypeError, ValueError):
+            current_reserve = 0.0
+    if current_reserve < TIGHT_AUTOSPLIT_RESERVE_MIB:
+        model["autosplit_reserve"] = wanted_reserve
+        changed = True
+    return changed

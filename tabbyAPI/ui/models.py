@@ -1124,6 +1124,7 @@ def profile_defaults_from_config(
 ) -> dict:
     from common.switch_times import detect_gpu
     from common.vision_defaults import (
+        decide_kv_cache,
         decide_vision,
         gpu_size_label,
         parse_param_billions,
@@ -1194,14 +1195,21 @@ def profile_defaults_from_config(
         pretty_name = pretty_with_vision_note(
             pretty_name, False, gpu_size_label(int(vram_mib or 0), resolved_gpu)
         )
+    kv = decide_kv_cache(
+        max_seq=max_seq,
+        vram_mib=int(vram_mib or 0),
+        params_b=parse_param_billions(folder.name),
+        weight_mib=weight_mib(folder),
+        folder_name=folder.name,
+    )
     model = {
         "model_name": folder.name,
-        "max_seq_len": max_seq,
-        "cache_size": max_seq,
+        "max_seq_len": kv["max_seq_len"],
+        "cache_size": kv["cache_size"],
         "cache_mode": "Q4",
         "chunk_size": 4096,
         "max_batch_size": 1,
-        "autosplit_reserve": [384],
+        "autosplit_reserve": kv["autosplit_reserve"],
         "vision": choice["vision"],
     }
     if choice["vision_offload"]:

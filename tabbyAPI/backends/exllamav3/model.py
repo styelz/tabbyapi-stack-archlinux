@@ -1174,6 +1174,14 @@ class ExllamaV3Container:
             except Exception:
                 pass
             self.active_job_ids.pop(request_id, None)
+            # GDN prefill scratch stays in the CUDA caching allocator after the
+            # job ends. Classify then Code on a packed 27B needs those blocks
+            # back before the next prefill, or it OOMs with ~400 MiB free.
+            if not self.active_job_ids:
+                try:
+                    reset_cuda_memory()
+                except Exception:
+                    pass
 
     def constrain_generation_output(self, request_id: str, text: str) -> bool:
         """

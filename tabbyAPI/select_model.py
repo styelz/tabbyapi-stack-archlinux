@@ -451,13 +451,35 @@ def apply_profile(name: str):
     if not CONFIG_PATH.exists():
         raise SystemExit(f"Missing {CONFIG_PATH}")
 
-    _, profile = load_yaml(profile_path)
+    prof_yaml, profile = load_yaml(profile_path)
     pretty = profile.get("pretty") or name
     if profile_backend(name, profile) == "llamacpp":
         write_last(name)
         print(f"Using {pretty}")
         print(f"  model: {(profile.get('model') or {}).get('model_name', name)}")
         return profile
+
+    model_cfg = profile.get("model")
+    if isinstance(model_cfg, dict):
+        from common.switch_times import detect_gpu
+        from common.vision_defaults import clamp_model_kv, parse_param_billions, weight_mib
+
+        folder = str(model_cfg.get("model_name") or "")
+        gpu = detect_gpu()
+        weights = weight_mib(ROOT / "models" / folder) if folder else 0
+        if clamp_model_kv(
+            model_cfg,
+            vram_mib=int(gpu.get("vram_mib") or 0),
+            params_b=parse_param_billions(folder),
+            weight_mib=weights,
+            folder_name=folder,
+        ):
+            save_yaml(prof_yaml, profile, profile_path)
+            print(
+                f"  kv: cache_size={model_cfg.get('cache_size')} "
+                f"reserve={model_cfg.get('autosplit_reserve')} "
+                "(12 GB headroom)"
+            )
 
     yaml, config = load_yaml(CONFIG_PATH)
 

@@ -466,6 +466,11 @@ class SidecarInterceptTests(unittest.IsolatedAsyncioTestCase):
 
 
 class SidecarModelStatusTests(unittest.TestCase):
+    def tearDown(self):
+        from sidecar import model_status
+
+        model_status.invalidate_model_cache()
+
     def test_uses_backend_http_when_configured(self):
         os.environ["TABBY_BACKEND_URL"] = "http://tabby.test"
         os.environ["TABBY_BACKEND_KEY"] = "k"
@@ -473,16 +478,48 @@ class SidecarModelStatusTests(unittest.TestCase):
         self.addCleanup(lambda: os.environ.pop("TABBY_BACKEND_KEY", None))
         from sidecar import model_status
 
+        model_status.invalidate_model_cache()
         with mock.patch.object(
             model_status,
             "_get_json",
             return_value=(200, {"id": "qwen", "parameters": {"max_seq_len": 8}}),
-        ):
+        ) as get_json:
             self.assertTrue(model_status.llm_is_ready())
             card = model_status.model_card()
+            self.assertTrue(model_status.llm_is_ready())
+        self.assertEqual(get_json.call_count, 1)
         self.assertEqual(card["id"], "qwen")
         self.assertEqual(card["max_seq_len"], 8)
         self.assertFalse(model_status.llm_jobs_active())
+
+    def test_model_cache_expires(self):
+        os.environ["TABBY_BACKEND_URL"] = "http://tabby.test"
+        os.environ["TABBY_BACKEND_KEY"] = "k"
+        self.addCleanup(lambda: os.environ.pop("TABBY_BACKEND_URL", None))
+        self.addCleanup(lambda: os.environ.pop("TABBY_BACKEND_KEY", None))
+        from sidecar import model_status
+
+        model_status.invalidate_model_cache()
+        clock = {"t": 0.0}
+
+        with (
+            mock.patch.object(model_status, "_model_epoch", return_value=(0.0, 0.0)),
+            mock.patch.object(model_status.time, "monotonic", side_effect=lambda: clock["t"]),
+            mock.patch.object(
+                model_status,
+                "_get_json",
+                side_effect=[
+                    (200, {"id": "qwen", "parameters": {"max_seq_len": 8}}),
+                    (200, {"id": "gemma", "parameters": {"max_seq_len": 16}}),
+                ],
+            ) as get_json,
+        ):
+            self.assertEqual(model_status.model_card()["id"], "qwen")
+            clock["t"] = 1.5
+            self.assertEqual(model_status.model_card()["id"], "qwen")
+            clock["t"] = 2.1
+            self.assertEqual(model_status.model_card()["id"], "gemma")
+        self.assertEqual(get_json.call_count, 2)
 
     def test_is_sidecar_process_respects_env(self):
         from sidecar.settings import is_sidecar_process

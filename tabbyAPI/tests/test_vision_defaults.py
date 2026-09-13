@@ -6,7 +6,10 @@ from types import SimpleNamespace
 from unittest import mock
 
 from common.vision_defaults import (
+    clamp_model_kv,
+    decide_kv_cache,
     decide_vision,
+    needs_tight_kv,
     parse_param_billions,
     pretty_with_vision_note,
     weight_mib,
@@ -124,7 +127,9 @@ class ProfileDefaultMatrixTests(unittest.TestCase):
         self.assertFalse(data["model"]["vision"])
         self.assertNotIn("vision_offload", data["model"])
         self.assertIn("vision off on 12 GB", data["pretty"])
-        self.assertEqual(data["model"]["max_seq_len"], 32768)
+        self.assertEqual(data["model"]["max_seq_len"], 16384)
+        self.assertEqual(data["model"]["cache_size"], 16384)
+        self.assertEqual(data["model"]["autosplit_reserve"], [768])
 
     def test_9b_on_12gb_offloads_vision(self):
         from ui.models import profile_defaults_from_config
@@ -135,6 +140,9 @@ class ProfileDefaultMatrixTests(unittest.TestCase):
         self.assertTrue(data["model"]["vision"])
         self.assertTrue(data["model"]["vision_offload"])
         self.assertNotIn("vision off", data["pretty"])
+        self.assertEqual(data["model"]["max_seq_len"], 32768)
+        self.assertEqual(data["model"]["cache_size"], 32768)
+        self.assertEqual(data["model"]["autosplit_reserve"], [384])
 
     def test_27b_on_24gb_enables_vision(self):
         from ui.models import profile_defaults_from_config
@@ -151,6 +159,9 @@ class ProfileDefaultMatrixTests(unittest.TestCase):
         self.assertNotIn("vision_offload", data["model"])
         self.assertEqual(data["pretty"], "malaiwah/Qwen3.8 main")
         self.assertEqual(data["model"]["tool_format"], "qwen3_5")
+        self.assertEqual(data["model"]["max_seq_len"], 32768)
+        self.assertEqual(data["model"]["cache_size"], 32768)
+        self.assertEqual(data["model"]["autosplit_reserve"], [384])
 
     def test_glm_thinking_download_gets_reasoning_tokens(self):
         from ui.models import profile_defaults_from_config
@@ -278,3 +289,57 @@ class StartupVisionRetryTests(unittest.IsolatedAsyncioTestCase):
         fallback.assert_not_called()
         self.assertEqual(model.load_model.await_count, 2)
         self.assertEqual(model.load_model.await_args_list[1].kwargs.get("vision"), False)
+
+
+class TightKvTests(unittest.TestCase):
+    def test_27b_3bpw_on_12gb_caps_cache(self):
+        self.assertTrue(needs_tight_kv(vram_mib=12288, params_b=27, folder_name="Qwen3.8-27B-exl3-SC_3.00bpw"))
+        kv = decide_kv_cache(
+            max_seq=32768,
+            vram_mib=12288,
+            params_b=27,
+            folder_name="Qwen3.8-27B-exl3-SC_3.00bpw",
+        )
+        self.assertEqual(kv["cache_size"], 16384)
+        self.assertEqual(kv["autosplit_reserve"], [768])
+
+    def test_27b_2bpw_name_keeps_long_cache(self):
+        self.assertFalse(
+            needs_tight_kv(
+                vram_mib=12288,
+                params_b=27,
+                folder_name="Qwen3.6-27B-exl3-2.00bpw",
+            )
+        )
+        kv = decide_kv_cache(
+            max_seq=98304,
+            vram_mib=12288,
+            params_b=27,
+            folder_name="Qwen3.6-27B-exl3-2.00bpw",
+        )
+        self.assertEqual(kv["cache_size"], 98304)
+        self.assertEqual(kv["autosplit_reserve"], [384])
+
+    def test_heavy_weights_on_12gb(self):
+        self.assertTrue(needs_tight_kv(vram_mib=12288, weight_mib=9000))
+        self.assertFalse(needs_tight_kv(vram_mib=12288, weight_mib=5000))
+
+    def test_24gb_or_9b_not_tight(self):
+        self.assertFalse(needs_tight_kv(vram_mib=24576, params_b=27))
+        self.assertFalse(needs_tight_kv(vram_mib=12288, params_b=9))
+
+    def test_clamp_shrinks_32k_not_8k(self):
+        model = {
+            "max_seq_len": 32768,
+            "cache_size": 32768,
+            "autosplit_reserve": [384],
+            "model_name": "Qwen3.8-27B-exl3-SC_3.00bpw",
+        }
+        self.assertTrue(clamp_model_kv(model, vram_mib=12288, params_b=27))
+        self.assertEqual(model["cache_size"], 16384)
+        self.assertEqual(model["max_seq_len"], 16384)
+        self.assertEqual(model["autosplit_reserve"], [768])
+        small = {"max_seq_len": 8192, "cache_size": 8192, "autosplit_reserve": [384]}
+        self.assertTrue(clamp_model_kv(small, vram_mib=12288, params_b=27, folder_name="Qwen3.8-27B"))
+        self.assertEqual(small["cache_size"], 8192)
+        self.assertEqual(small["autosplit_reserve"], [768])
