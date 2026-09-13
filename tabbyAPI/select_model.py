@@ -6,6 +6,7 @@ import argparse
 import json
 import sys
 import time
+from copy import deepcopy
 from pathlib import Path
 
 from ruamel.yaml import YAML
@@ -41,17 +42,38 @@ def profile_aliases() -> dict[str, str]:
     return aliases
 
 
+_yaml_cache: dict[str, tuple[int, int, object]] = {}
+
+
+def reset_yaml_cache_for_tests() -> None:
+    _yaml_cache.clear()
+
+
 def load_yaml(path: Path):
     yaml = YAML()
     yaml.preserve_quotes = True
     yaml.width = 4096
+    path = Path(path)
+    try:
+        stat = path.stat()
+    except OSError:
+        with path.open(encoding="utf-8") as handle:
+            return yaml, yaml.load(handle)
+    key = str(path)
+    hit = _yaml_cache.get(key)
+    if hit and hit[0] == stat.st_mtime_ns and hit[1] == stat.st_size:
+        return yaml, deepcopy(hit[2])
     with path.open(encoding="utf-8") as handle:
-        return yaml, yaml.load(handle)
+        data = yaml.load(handle)
+    _yaml_cache[key] = (stat.st_mtime_ns, stat.st_size, data)
+    return yaml, data
 
 
 def save_yaml(yaml: YAML, data, path: Path):
+    path = Path(path)
     with path.open("w", encoding="utf-8") as handle:
         yaml.dump(data, handle)
+    _yaml_cache.pop(str(path), None)
 
 
 def last_profile() -> str | None:

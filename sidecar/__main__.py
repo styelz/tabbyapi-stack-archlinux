@@ -14,11 +14,14 @@ from sidecar.settings import sidecar_host, sidecar_port
 
 async def _serve() -> None:
     ensure_backend_key()
+    from common.logger import UVICORN_LOG_CONFIG
+
     config = uvicorn.Config(
         create_app(),
         host=sidecar_host(),
         port=sidecar_port(),
         loop=asyncio.get_running_loop(),
+        log_config=UVICORN_LOG_CONFIG,
     )
     server = uvicorn.Server(config)
     await server.serve()

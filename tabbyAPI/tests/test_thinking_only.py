@@ -198,6 +198,18 @@ class ProfileParsesToolsTests(unittest.TestCase):
         entry = phrase_switch.profile_map().get("gemma26") or {}
         self.assertEqual(entry.get("tool_format"), "gemma4")
 
+    def test_profile_map_rereads_only_when_profiles_change(self):
+        phrase_switch.reset_profile_map_cache()
+        first = phrase_switch.profile_map()
+        with mock.patch.object(phrase_switch, "_load_yaml", side_effect=AssertionError("disk")):
+            second = phrase_switch.profile_map()
+        self.assertIs(first, second)
+        phrase_switch.reset_profile_map_cache()
+        with mock.patch.object(phrase_switch, "_load_yaml", return_value={"pretty": "cached-miss"}):
+            third = phrase_switch.profile_map()
+        self.assertIn("cached-miss", {row.get("pretty") for row in third.values()})
+        phrase_switch.reset_profile_map_cache()
+
 
 class ThinkingOnlyUiWiringTests(unittest.TestCase):
     def test_status_and_chat_expose_the_alert(self):

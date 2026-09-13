@@ -248,3 +248,24 @@ class InstallShSeedTests(unittest.TestCase):
         seed_at = text.find('select_model.py" \\\n  --seed-installed --ids "$MODEL_SET"')
         self.assertGreater(fetch_at, 0)
         self.assertGreater(seed_at, fetch_at)
+
+
+class YamlCacheTests(unittest.TestCase):
+    def tearDown(self):
+        select_model.reset_yaml_cache_for_tests()
+
+    def test_load_yaml_rereads_only_when_file_changes(self):
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "p.yml"
+            path.write_text(QWEN_YML, encoding="utf-8")
+            _, first = select_model.load_yaml(path)
+            self.assertEqual((first.get("model") or {}).get("model_name"), "Qwen3.5-9B-exl3-4.00bpw")
+            with mock.patch.object(Path, "open", side_effect=AssertionError("disk")):
+                _, second = select_model.load_yaml(path)
+            self.assertEqual(first, second)
+            path.write_text(QWEN35_YML, encoding="utf-8")
+            _, third = select_model.load_yaml(path)
+            self.assertEqual(
+                (third.get("model") or {}).get("model_name"),
+                "Qwen3.5-35B-A3B-exl3-2.13bpw",
+            )

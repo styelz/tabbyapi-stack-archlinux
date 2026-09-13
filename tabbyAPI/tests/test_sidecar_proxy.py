@@ -154,6 +154,12 @@ class SidecarProxyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cmd[5], "5001")
         self.assertEqual(sidecar_command("python"), ["python", "-m", "sidecar"])
 
+    def test_sidecar_uvicorn_drops_ui_status_logs(self):
+        src = Path(__file__).resolve().parents[2] / "sidecar" / "__main__.py"
+        text = src.read_text(encoding="utf-8")
+        self.assertIn("UVICORN_LOG_CONFIG", text)
+        self.assertIn("log_config", text)
+
     def test_child_env_puts_tabbyapi_on_pythonpath(self):
         from sidecar.paths import STACK_ROOT, TABBY_DIR
         from sidecar.supervise import child_env

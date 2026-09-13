@@ -409,10 +409,35 @@ def _load_yaml(path: Path):
         return yaml.load(handle) or {}
 
 
+_profile_map_cache: tuple[tuple, dict] | None = None
+
+
+def _profiles_epoch() -> tuple:
+    """Filename + mtime + size so a new or edited profile drops the cache."""
+    try:
+        return tuple(
+            (path.name, path.stat().st_mtime_ns, path.stat().st_size)
+            for path in sorted(PROFILES_DIR.glob("*.yml"))
+        )
+    except OSError:
+        return ()
+
+
+def reset_profile_map_cache() -> None:
+    global _profile_map_cache
+    _profile_map_cache = None
+
+
 def profile_map() -> dict[str, dict]:
     """alias / folder name -> {alias, folder, pretty} from model_profiles/*.yml"""
+    global _profile_map_cache
+    epoch = _profiles_epoch()
+    cached = _profile_map_cache
+    if cached is not None and cached[0] == epoch:
+        return cached[1]
     mapping = {}
     if not PROFILES_DIR.exists():
+        _profile_map_cache = (epoch, mapping)
         return mapping
     for path in PROFILES_DIR.glob("*.yml"):
         data = _load_yaml(path)
@@ -434,6 +459,7 @@ def profile_map() -> dict[str, dict]:
         mapping[alias] = entry
         if folder:
             mapping[folder.lower()] = entry
+    _profile_map_cache = (epoch, mapping)
     return mapping
 
 
