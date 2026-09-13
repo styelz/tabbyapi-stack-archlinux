@@ -388,6 +388,17 @@ async def stack_status(request=None, username: str = "") -> dict[str, Any]:
                 or last_profile()
             )
         ensure_gpu_cache()
+        gguf_base = False
+        if llama:
+            from common.llama_runtime import is_gguf_base_name, llama_loaded_id, read_llama_runtime
+
+            runtime = read_llama_runtime()
+            gguf_base = is_gguf_base_name(
+                llama_loaded_id() or "",
+                profile or "",
+                str(runtime.get("model") or ""),
+                str(runtime.get("profile") or ""),
+            )
         payload = {
             "ok": True,
             "gpu_mode": gpu_mode,
@@ -401,6 +412,7 @@ async def stack_status(request=None, username: str = "") -> dict[str, Any]:
             "profile_ready": profile_ready,
             "thinking_only": profile_is_thinking_only(profile),
             "profile_thinking_only": profile_thinking_only_map(names),
+            "gguf_base": gguf_base,
             "model": _model_card(),
             "health": {"healthy": healthy, "issues": issue_text},
             "units": {
@@ -439,6 +451,7 @@ async def stack_status(request=None, username: str = "") -> dict[str, Any]:
             "profile_ready": {},
             "thinking_only": False,
             "profile_thinking_only": {},
+            "gguf_base": False,
             "model": {},
             "health": {"healthy": True, "issues": []},
             "units": {},

@@ -58,26 +58,27 @@ class LlamaAdapterTests(unittest.TestCase):
     def test_adapt_chat_payload_strips_tools_when_gguf_cannot(self):
         from sidecar.llama_adapter import NO_TOOLS_SYSTEM
 
-        body = adapt_chat_payload(
-            {
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": "Use the file tools (Grep, Glob, Write) to edit files.",
-                    },
-                    {"role": "user", "content": "hello?"},
-                    {
-                        "role": "assistant",
-                        "content": "",
-                        "tool_calls": [{"id": "1", "function": {"name": "Write"}}],
-                    },
-                    {"role": "tool", "content": "wrote it", "tool_call_id": "1"},
-                ],
-                "tools": [{"type": "function", "function": {"name": "Write"}}],
-                "tool_choice": "auto",
-            },
-            caps={"supports_tools": False, "eos_token": "<｜end▁of▁sentence｜>"},
-        )
+        with mock.patch("sidecar.llama_adapter._runtime_blob", return_value=""):
+            body = adapt_chat_payload(
+                {
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": "Use the file tools (Grep, Glob, Write) to edit files.",
+                        },
+                        {"role": "user", "content": "hello?"},
+                        {
+                            "role": "assistant",
+                            "content": "",
+                            "tool_calls": [{"id": "1", "function": {"name": "Write"}}],
+                        },
+                        {"role": "tool", "content": "wrote it", "tool_call_id": "1"},
+                    ],
+                    "tools": [{"type": "function", "function": {"name": "Write"}}],
+                    "tool_choice": "auto",
+                },
+                caps={"supports_tools": False, "eos_token": "<｜end▁of▁sentence｜>"},
+            )
         self.assertNotIn("tools", body)
         self.assertNotIn("tool_choice", body)
         self.assertEqual(body["messages"][0]["content"], NO_TOOLS_SYSTEM)
@@ -85,6 +86,49 @@ class LlamaAdapterTests(unittest.TestCase):
         self.assertEqual(body["messages"][3]["role"], "user")
         self.assertIn("wrote it", body["messages"][3]["content"])
         self.assertIn("<｜end▁of▁sentence｜>", body["stop"])
+
+    def test_adapt_chat_payload_shortens_console_system_on_chatml_mismatch(self):
+        from sidecar.llama_adapter import SIMPLE_CHAT_SYSTEM
+
+        console = (
+            "You are chatting in the TabbyAPI Stack web console. "
+            "If the user asks for an image, the UI will show PNGs."
+        )
+        coder = "models/deepseek-coder-6.7b-base-GGUF/model.gguf"
+        with mock.patch("sidecar.llama_adapter._runtime_blob", return_value=coder):
+            body = adapt_chat_payload(
+                {
+                    "messages": [
+                        {"role": "system", "content": console},
+                        {"role": "user", "content": "hello?"},
+                    ],
+                },
+                caps={
+                    "chat_template": "<|im_start|>system\n{{ content }}<|im_end|>",
+                    "eos_token": "<｜end▁of▁sentence｜>",
+                },
+            )
+        self.assertEqual(body["messages"][0]["content"], SIMPLE_CHAT_SYSTEM)
+        self.assertNotIn("PNG", body["messages"][0]["content"])
+        self.assertIn("### Instruction:", body["stop"])
+
+    def test_adapt_chat_payload_keeps_console_system_for_chatml_models(self):
+        console = (
+            "You are chatting in the TabbyAPI Stack web console. "
+            "If the user asks for an image, the UI will show PNGs."
+        )
+        with mock.patch("sidecar.llama_adapter._runtime_blob", return_value=""):
+            body = adapt_chat_payload(
+                {
+                    "messages": [
+                        {"role": "system", "content": console},
+                        {"role": "user", "content": "hello?"},
+                    ],
+                },
+                caps={"chat_template": "<|im_start|>", "eos_token": "<|im_end|>"},
+            )
+        self.assertIn("PNG", body["messages"][0]["content"])
+        self.assertNotIn("### Instruction:", body["stop"])
 
     def test_adapt_chat_payload_drops_idle_top_logprobs(self):
         body = adapt_chat_payload(
@@ -158,6 +202,43 @@ class LlamaRuntimeTests(unittest.TestCase):
         self.assertEqual(ngl_arg(-1), "auto")
         self.assertEqual(ngl_arg(12), "12")
         self.assertEqual(ngl_arg("nope"), "auto")
+
+    def test_guess_chat_template_for_coder_base_and_instruct(self):
+        from common.llama_runtime import guess_llama_chat_template, is_gguf_base_name
+
+        coder_base = (
+            "models/lmstudio-community_deepseek-coder-6.7b-base-GGUF/"
+            "deepseek-coder-6.7b-base.Q4_K_M.gguf"
+        )
+        self.assertTrue(is_gguf_base_name(coder_base))
+        self.assertEqual(guess_llama_chat_template(coder_base), "deepseek")
+        self.assertEqual(
+            guess_llama_chat_template("models/kexer-7b-Q4/kexer.gguf"),
+            "deepseek",
+        )
+        self.assertFalse(is_gguf_base_name("deepseek-coder-6.7b-instruct-GGUF"))
+        self.assertEqual(
+            guess_llama_chat_template("models/Some-7B-base-Q4_K_M/model.gguf"),
+            "vicuna",
+        )
+        self.assertEqual(
+            guess_llama_chat_template("models/Qwen2.5-7B-Instruct-GGUF/model.gguf"),
+            "",
+        )
+        self.assertEqual(
+            guess_llama_chat_template(coder_base, override="vicuna"),
+            "vicuna",
+        )
+
+    def test_llama_argv_passes_deepseek_template(self):
+        from common import llama_runtime
+
+        gguf = Path("/tmp/deepseek-coder-6.7b-base.gguf")
+        with mock.patch.object(llama_runtime, "llama_server_bin", return_value=Path("/usr/bin/llama-server")):
+            args = llama_runtime.llama_argv(gguf)
+        self.assertIn("--chat-template", args)
+        self.assertEqual(args[args.index("--chat-template") + 1], "deepseek")
+        self.assertLess(args.index("--jinja"), args.index("--chat-template"))
 
 
 class BackendValidationTests(unittest.TestCase):
@@ -275,6 +356,8 @@ class InstallerLlamaTests(unittest.TestCase):
         self.assertIn("gpt-4o", start.read_text(encoding="utf-8"))
         self.assertIn("auto", start.read_text(encoding="utf-8"))
         self.assertIn('ngl=auto', start.read_text(encoding="utf-8"))
+        self.assertIn("LLAMA_CHAT_TEMPLATE", start.read_text(encoding="utf-8"))
+        self.assertIn("--chat-template", start.read_text(encoding="utf-8"))
 
     def test_wait_llama_healthy_fails_fast_when_process_dies(self):
         from common import llama_runtime

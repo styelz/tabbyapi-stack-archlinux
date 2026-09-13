@@ -455,6 +455,7 @@ def switch_to_llama(
             n_gpu_layers=model_cfg.get("n_gpu_layers", -1),
             max_seq_len=model_cfg.get("max_seq_len"),
             mmproj=str(mmproj) if mmproj else None,
+            chat_template=model_cfg.get("chat_template") or None,
         )
     except Exception:
         write_mode("idle", profile=name)

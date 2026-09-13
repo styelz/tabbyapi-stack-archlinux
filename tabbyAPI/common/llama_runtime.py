@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -26,6 +27,36 @@ LLAMA_ALIASES = {
     "llama.cpp": "llama",
     "gguf": "llama",
 }
+_BASE_TOKEN = re.compile(r"(?:^|[-_./\s])base(?:[-_.]|$)")
+_CHAT_TUNED = re.compile(r"instruct|\bchat\b|(?:^|[-_./\s])it(?:[-_.]|$)")
+_DEEPSEEK_CODER = re.compile(r"deepseek[-_]?coder|kexer")
+
+
+def is_gguf_base_name(*parts: str) -> bool:
+    """True for completion-only GGUFs (DeepSeek Coder -base, not instruct)."""
+    blob = " ".join(str(part or "") for part in parts).lower()
+    if not blob or _CHAT_TUNED.search(blob):
+        return False
+    return bool(_BASE_TOKEN.search(blob))
+
+
+def guess_llama_chat_template(model_path: Path | str, override: str | None = None) -> str:
+    """Built-in llama.cpp template when the GGUF has no chat template of its own.
+
+    llama-server --jinja falls back to ChatML. DeepSeek Coder / Kexer / -base
+    GGUFs do not own those tokens, so replies turn into glued nonce words.
+    """
+    if str(override or "").strip():
+        return str(override).strip()
+    path = Path(str(model_path or ""))
+    blob = f"{path.name} {path.parent.name} {path}".lower()
+    if "mmproj" in path.name.lower():
+        return ""
+    if _DEEPSEEK_CODER.search(blob):
+        return "deepseek"
+    if is_gguf_base_name(blob):
+        return "vicuna"
+    return ""
 
 
 def llama_dir(windows: Optional[bool] = None) -> Path:
@@ -104,16 +135,19 @@ def write_llama_runtime(
     n_gpu_layers: Any = -1,
     max_seq_len: Any = None,
     mmproj: Optional[str] = None,
+    chat_template: Optional[str] = None,
 ) -> dict[str, Any]:
     ctx = int(max_seq_len or DEFAULT_CTX)
     if ctx < 256:
         ctx = DEFAULT_CTX
+    template = guess_llama_chat_template(model_path, chat_template)
     data = {
         "model": str(model_path.resolve()),
         "profile": profile,
         "n_gpu_layers": n_gpu_layers,
         "max_seq_len": ctx,
         "mmproj": str(mmproj) if mmproj else "",
+        "chat_template": template,
     }
     dest = llama_runtime_path()
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -126,6 +160,7 @@ def write_llama_runtime(
         f"LLAMA_HOST={llama_host()}",
         f"LLAMA_ALIAS={DUMMY_MODEL}",
         f"LLAMA_MMPROJ={shlex.quote(data['mmproj']) if data['mmproj'] else ''}",
+        f"LLAMA_CHAT_TEMPLATE={shlex.quote(template) if template else ''}",
     ]
     bin_path = llama_server_bin()
     if bin_path:
@@ -151,6 +186,7 @@ def llama_argv(
     n_gpu_layers: Any = -1,
     max_seq_len: Any = None,
     mmproj: Optional[str] = None,
+    chat_template: Optional[str] = None,
 ) -> list[str]:
     server = llama_server_bin()
     if not server:
@@ -177,6 +213,9 @@ def llama_argv(
     ]
     if mmproj:
         args.extend(["--mmproj", str(mmproj)])
+    template = guess_llama_chat_template(model_path, chat_template)
+    if template:
+        args.extend(["--chat-template", template])
     return args
 
 
@@ -353,22 +392,29 @@ def start_llama_if_needed(
     n_gpu_layers: Any = -1,
     max_seq_len: Any = None,
     mmproj: Optional[str] = None,
+    chat_template: Optional[str] = None,
     timeout: float = 180,
 ) -> None:
     path = Path(model_path)
     if not path.exists():
         raise SystemExit(f"GGUF missing: {path}")
-    write_llama_runtime(
+    previous = read_llama_runtime()
+    runtime = write_llama_runtime(
         path,
         profile=profile,
         n_gpu_layers=n_gpu_layers,
         max_seq_len=max_seq_len,
         mmproj=mmproj,
+        chat_template=chat_template,
     )
-    if llama_up() and _same_model(path):
+    template = str(runtime.get("chat_template") or "")
+    same_template = str(previous.get("chat_template") or "") == template
+    if llama_up() and _same_model(path) and same_template:
         print("  llama-server already running this GGUF")
         return
     if llama_up() or llama_pids():
+        if llama_up() and _same_model(path) and not same_template:
+            print("  chat template changed; restarting llama-server")
         stop_llama()
     print(f"  Starting llama-server ({path.name})...")
     log_path = ROOT / "llama-server.log"
@@ -386,6 +432,7 @@ def start_llama_if_needed(
         n_gpu_layers=n_gpu_layers,
         max_seq_len=max_seq_len,
         mmproj=mmproj,
+        chat_template=template,
     )
     kwargs: dict = {"stdout": log, "stderr": log}
     if os.name == "nt":

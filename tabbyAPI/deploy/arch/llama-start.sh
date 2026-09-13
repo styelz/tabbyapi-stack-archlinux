@@ -51,4 +51,7 @@ ARGS+=(-ngl "$ngl")
 if [[ -n "${LLAMA_MMPROJ:-}" ]]; then
   ARGS+=(--mmproj "$LLAMA_MMPROJ")
 fi
+if [[ -n "${LLAMA_CHAT_TEMPLATE:-}" ]]; then
+  ARGS+=(--chat-template "$LLAMA_CHAT_TEMPLATE")
+fi
 exec "$SERVER" "${ARGS[@]}"

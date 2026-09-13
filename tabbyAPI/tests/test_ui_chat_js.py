@@ -87,6 +87,13 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
         self.assertIn('label: "Queue"', self.src)
         self.assertIn("id=\"chat-queue\"", self.src)
 
+    def test_gguf_base_model_gets_a_composer_hint(self):
+        self.assertIn('id="chat-gguf-base-hint"', self.src)
+        self.assertIn("function paintGgufBaseHint()", self.src)
+        self.assertIn("base (completion) model", self.src)
+        self.assertIn("switch to qwen", self.src)
+        self.assertIn("gguf_base", self.src)
+
     def test_queued_message_can_steer(self):
         self.assertIn("id=\"chat-steer\"", self.src)
         self.assertIn("abortSession(\"steer\")", self.src)

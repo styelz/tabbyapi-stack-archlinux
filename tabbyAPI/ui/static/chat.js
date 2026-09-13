@@ -331,6 +331,11 @@ function mountChat(root) {
             <span class="chat-comfy-hint-text" id="chat-comfy-hint-text">This looks like a chat, not a picture. Switch to the coding model?</span>
             <button class="btn primary" type="button" id="chat-switch-llm">Switch to LLM</button>
           </div>
+          <div class="chat-comfy-hint" id="chat-gguf-base-hint" hidden>
+            <span class="chat-comfy-hint-mark">GGUF</span>
+            <span class="chat-comfy-hint-text">This is a base (completion) model, not a chat model. Odd words are expected. Switch to qwen, or download an instruct GGUF.</span>
+            <button class="btn primary" type="button" id="chat-switch-qwen">Switch to qwen</button>
+          </div>
           <form class="chat-form" id="chat-form">
             <textarea id="chat-input" rows="3" placeholder="Talk to the loaded model. Type / for commands. ↑↓ recalls what you sent."></textarea>
             <input id="chat-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden />
@@ -480,6 +485,8 @@ function mountChat(root) {
   const waitingTimeEl = root.querySelector("#chat-waiting-time");
   const comfyHint = root.querySelector("#chat-comfy-hint");
   const switchLlmBtn = root.querySelector("#chat-switch-llm");
+  const ggufBaseHint = root.querySelector("#chat-gguf-base-hint");
+  const switchQwenBtn = root.querySelector("#chat-switch-qwen");
   const filesPane = root.querySelector("#chat-files");
   const filesTree = root.querySelector("#chat-files-tree");
   const filesGitList = root.querySelector("#chat-files-git-list");
@@ -11697,6 +11704,15 @@ function mountChat(root) {
     runLoop("switch to llm");
   }
 
+  function startQwenSwitch() {
+    if (modelLoading) return;
+    if (inFlight) {
+      queueFollowup("switch to qwen");
+      return;
+    }
+    runLoop("switch to qwen");
+  }
+
   function attachSwitchLlm(host, text) {
     if (!host || !hasSwitchLlmMark(text)) return;
     if (host.querySelector("[data-switch-llm]")) return;
@@ -11721,6 +11737,16 @@ function mountChat(root) {
     const typed = String((input && input.value) || "").trim();
     const show = comfyOwnsGpu() && tabbyLooksLikeChatNotImage(typed);
     comfyHint.hidden = !show;
+  }
+
+  function paintGgufBaseHint() {
+    if (!ggufBaseHint) return;
+    if (modelLoading || inFlight || comfyOwnsGpu()) {
+      ggufBaseHint.hidden = true;
+      return;
+    }
+    const status = TabbyUI.lastGpuStatus || {};
+    ggufBaseHint.hidden = !(status.llama_up && status.gguf_base);
   }
 
   function comfyIsStarting(data) {
@@ -12039,6 +12065,7 @@ function mountChat(root) {
     fillSlashCommands(data);
     paintActiveContext();
     applyStackOccupancy(data);
+    paintGgufBaseHint();
     if (modelWait) return;
     if (data && data.down) {
       ensureModelWait(null, { kind: "restart", target: "restart" });
@@ -12115,6 +12142,7 @@ function mountChat(root) {
       if (queueBar) queueBar.hidden = !queuedText;
       if (queueTextEl) queueTextEl.textContent = queuedText;
       if (comfyHint) comfyHint.hidden = true;
+      if (ggufBaseHint) ggufBaseHint.hidden = true;
       if (steerBtn) {
         steerBtn.hidden = true;
         steerBtn.disabled = true;
@@ -12171,6 +12199,7 @@ function mountChat(root) {
     if (editBar) editBar.hidden = pendingEditIndex < 0;
     if (sessionRestoring) sendBtn.disabled = true;
     paintComfyHint();
+    paintGgufBaseHint();
   }
 
   function appendAssistantToChat(chatId, item) {
@@ -13200,6 +13229,11 @@ function mountChat(root) {
   if (switchLlmBtn) {
     switchLlmBtn.addEventListener("click", () => {
       startLlmSwitch();
+    });
+  }
+  if (switchQwenBtn) {
+    switchQwenBtn.addEventListener("click", () => {
+      startQwenSwitch();
     });
   }
   sendBtn.addEventListener("click", (event) => {

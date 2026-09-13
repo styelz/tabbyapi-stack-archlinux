@@ -445,6 +445,7 @@ async def _start_llama_profile(profile_name: str) -> None:
             n_gpu_layers=model_cfg.get("n_gpu_layers", -1),
             max_seq_len=model_cfg.get("max_seq_len"),
             mmproj=str(mmproj) if mmproj else None,
+            chat_template=model_cfg.get("chat_template") or None,
         )
     except SystemExit as exc:
         raise RuntimeError(str(exc) or f"llama.cpp did not start for {profile_name}") from exc

@@ -66,9 +66,25 @@ NO_TOOLS_SYSTEM = (
     "Reply in this conversation only. You cannot call tools or write project files. "
     "Put any code in markdown fences."
 )
+SIMPLE_CHAT_SYSTEM = (
+    "You are a helpful assistant. Reply to the user's last message in plain language."
+)
 _TOOLISH_SYSTEM = re.compile(
     r"file tools|Use the file tools|tool_calls|Grep, Glob, Write",
     re.I,
+)
+_HEAVY_CONSOLE_SYSTEM = re.compile(
+    r"TabbyAPI Stack(?: web)? console|UI will show PNGs|regenerates a new PNG",
+    re.I,
+)
+DEEPSEEK_STOPS = (
+    "### Instruction:",
+    "### Response:",
+    "<|EOT|>",
+)
+VICUNA_STOPS = (
+    "\nUSER:",
+    "\nASSISTANT:",
 )
 
 _CAPS_CACHE: tuple[str, dict[str, Any], float] | None = None
@@ -125,6 +141,77 @@ def llama_chat_caps() -> dict[str, Any]:
 def reset_llama_caps_cache() -> None:
     global _CAPS_CACHE
     _CAPS_CACHE = None
+
+
+def _runtime_blob() -> str:
+    try:
+        from common.llama_runtime import read_llama_runtime
+
+        data = read_llama_runtime() or {}
+    except Exception:
+        return ""
+    return f"{data.get('model') or ''} {data.get('profile') or ''}"
+
+
+def _guessed_template(blob: str = "") -> str:
+    try:
+        from common.llama_runtime import guess_llama_chat_template
+
+        return guess_llama_chat_template(blob or _runtime_blob())
+    except Exception:
+        return ""
+
+
+def _chatml_mismatch(caps: dict[str, Any] | None) -> bool:
+    """True when llama.cpp wrapped a non-ChatML tokenizer in ChatML."""
+    info = caps or {}
+    tmpl = str(info.get("chat_template") or "")
+    eos = str(info.get("eos_token") or "").strip()
+    chatml = (
+        "<|im_start|>" in tmpl
+        or "<|im_end|>" in tmpl
+        or tmpl.strip().lower() == "chatml"
+    )
+    if not chatml or not eos:
+        return False
+    return eos not in {"<|im_end|>", "<|im_start|>"}
+
+
+def _needs_simple_prompt(caps: dict[str, Any] | None, blob: str = "") -> bool:
+    try:
+        from common.llama_runtime import is_gguf_base_name
+    except Exception:
+        is_gguf_base_name = lambda *parts: False  # noqa: E731
+    name = blob or _runtime_blob()
+    guessed = _guessed_template(name)
+    if guessed in {"deepseek", "vicuna"}:
+        return True
+    if is_gguf_base_name(name):
+        return True
+    return _chatml_mismatch(caps)
+
+
+def _family_stops(caps: dict[str, Any] | None, blob: str = "") -> list[str]:
+    tmpl = str((caps or {}).get("chat_template") or "").lower()
+    guessed = _guessed_template(blob)
+    extra: list[str] = []
+    if guessed == "deepseek" or "### instruction" in tmpl or "<|eot|>" in tmpl:
+        extra.extend(DEEPSEEK_STOPS)
+    if guessed == "vicuna" or "vicuna" in tmpl:
+        extra.extend(VICUNA_STOPS)
+    return extra
+
+
+def _simplify_system(body: dict[str, Any]) -> None:
+    messages = body.get("messages")
+    if not isinstance(messages, list):
+        return
+    for item in messages:
+        if not isinstance(item, dict) or str(item.get("role") or "") != "system":
+            continue
+        text = str(item.get("content") or "")
+        if _HEAVY_CONSOLE_SYSTEM.search(text) or _TOOLISH_SYSTEM.search(text):
+            item["content"] = SIMPLE_CHAT_SYSTEM
 
 
 def _stop_list(value: Any) -> list[str]:
@@ -235,9 +322,13 @@ def adapt_chat_payload(
     eos = str((info or {}).get("eos_token") or "").strip()
     if eos:
         extra_stops.append(eos)
+    blob = _runtime_blob()
+    extra_stops.extend(_family_stops(info, blob))
     _merge_stops(body, extra_stops)
     if (info or {}).get("supports_tools") is False:
         _strip_tools(body)
+    if _needs_simple_prompt(info, blob):
+        _simplify_system(body)
     return body
 
 

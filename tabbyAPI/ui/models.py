@@ -1149,6 +1149,11 @@ def profile_defaults_from_config(
         }
         if mmproj:
             model["mmproj"] = mmproj.name
+        from common.llama_runtime import guess_llama_chat_template
+
+        template = guess_llama_chat_template(weights[0] if weights else folder)
+        if template:
+            model["chat_template"] = template
         return {
             "pretty": pretty_name,
             "model": model,

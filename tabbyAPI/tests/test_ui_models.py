@@ -305,6 +305,16 @@ class LibraryAndDeleteTests(unittest.TestCase):
             self.assertEqual(data["model"]["backend"], "llamacpp")
             self.assertEqual(data["model"]["n_gpu_layers"], -1)
             self.assertEqual(data["model"]["model_name"], "model.gguf")
+            self.assertNotIn("chat_template", data["model"])
+
+    def test_gguf_coder_base_sets_deepseek_template(self):
+        with tempfile.TemporaryDirectory() as raw:
+            folder = Path(raw) / "deepseek-coder-6.7b-base-GGUF"
+            folder.mkdir()
+            (folder / "model.gguf").write_bytes(b"gguf")
+            data = ui_models.profile_defaults_from_config(folder)
+            self.assertEqual(data["model"]["backend"], "llamacpp")
+            self.assertEqual(data["model"]["chat_template"], "deepseek")
 
     def test_delete_refuses_loaded_and_removes_hf_profile(self):
         with tempfile.TemporaryDirectory() as raw:

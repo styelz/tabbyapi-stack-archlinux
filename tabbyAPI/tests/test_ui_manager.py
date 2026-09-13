@@ -405,3 +405,4 @@ class UiManagerTests(unittest.TestCase):
         self.assertIn("folder_for_choice", src)
         self.assertIn("thinking_only", src)
         self.assertIn("profile_thinking_only", src)
+        self.assertIn("gguf_base", src)
