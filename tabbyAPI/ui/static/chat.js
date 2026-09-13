@@ -336,6 +336,11 @@ function mountChat(root) {
             <span class="chat-comfy-hint-text">This is a base (completion) model, not a chat model. Odd words are expected. Switch to qwen, or download an instruct GGUF.</span>
             <button class="btn primary" type="button" id="chat-switch-qwen">Switch to qwen</button>
           </div>
+          <div class="chat-comfy-hint" id="chat-code-write-hint" hidden>
+            <span class="chat-comfy-hint-mark" id="chat-code-write-mark">Code</span>
+            <span class="chat-comfy-hint-text" id="chat-code-write-text">This model cannot write Code files. Switch to qwen or gemma to edit the project.</span>
+            <button class="btn primary" type="button" id="chat-code-write-qwen">Switch to qwen</button>
+          </div>
           <form class="chat-form" id="chat-form">
             <textarea id="chat-input" rows="3" placeholder="Talk to the loaded model. Type / for commands. ↑↓ recalls what you sent."></textarea>
             <input id="chat-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden />
@@ -487,6 +492,10 @@ function mountChat(root) {
   const switchLlmBtn = root.querySelector("#chat-switch-llm");
   const ggufBaseHint = root.querySelector("#chat-gguf-base-hint");
   const switchQwenBtn = root.querySelector("#chat-switch-qwen");
+  const codeWriteHint = root.querySelector("#chat-code-write-hint");
+  const codeWriteMark = root.querySelector("#chat-code-write-mark");
+  const codeWriteText = root.querySelector("#chat-code-write-text");
+  const codeWriteQwenBtn = root.querySelector("#chat-code-write-qwen");
   const filesPane = root.querySelector("#chat-files");
   const filesTree = root.querySelector("#chat-files-tree");
   const filesGitList = root.querySelector("#chat-files-git-list");
@@ -9769,8 +9778,9 @@ function mountChat(root) {
 
   async function blockThinkingOnlyWrite(text, agent) {
     if (!isCodeWriteAttempt(text, agent)) return false;
-    if (!TabbyUI.thinkingOnlyStatus(TabbyUI.lastGpuStatus)) return false;
-    await TabbyUI.alertThinkingOnlyWrite(TabbyUI.lastGpuStatus);
+    const status = TabbyUI.lastGpuStatus;
+    if (!TabbyUI.codeWriteBlockKind(status)) return false;
+    await TabbyUI.alertThinkingOnlyWrite(status);
     return true;
   }
 
@@ -11745,8 +11755,40 @@ function mountChat(root) {
       ggufBaseHint.hidden = true;
       return;
     }
+    if (codeWriteHint && !codeWriteHint.hidden) {
+      ggufBaseHint.hidden = true;
+      return;
+    }
     const status = TabbyUI.lastGpuStatus || {};
     ggufBaseHint.hidden = !(status.llama_up && status.gguf_base);
+  }
+
+  function paintCodeWriteHint() {
+    if (!codeWriteHint) {
+      paintGgufBaseHint();
+      return;
+    }
+    if (modelLoading || inFlight || comfyOwnsGpu() || activeMode() !== "code") {
+      codeWriteHint.hidden = true;
+      paintGgufBaseHint();
+      return;
+    }
+    const status = TabbyUI.lastGpuStatus || {};
+    const kind = TabbyUI.codeWriteBlockKind(status);
+    if (!kind) {
+      codeWriteHint.hidden = true;
+      paintGgufBaseHint();
+      return;
+    }
+    if (codeWriteMark) codeWriteMark.textContent = kind === "thinking" ? "Thinking" : "Code";
+    if (codeWriteText) {
+      codeWriteText.textContent =
+        kind === "thinking"
+          ? "This is a thinking chat model. It cannot write Code files. Switch to qwen or gemma to edit the project."
+          : "This model cannot write Code files. Switch to qwen or gemma to edit the project.";
+    }
+    codeWriteHint.hidden = false;
+    if (ggufBaseHint) ggufBaseHint.hidden = true;
   }
 
   function comfyIsStarting(data) {
@@ -12065,7 +12107,7 @@ function mountChat(root) {
     fillSlashCommands(data);
     paintActiveContext();
     applyStackOccupancy(data);
-    paintGgufBaseHint();
+    paintCodeWriteHint();
     if (modelWait) return;
     if (data && data.down) {
       ensureModelWait(null, { kind: "restart", target: "restart" });
@@ -12143,6 +12185,7 @@ function mountChat(root) {
       if (queueTextEl) queueTextEl.textContent = queuedText;
       if (comfyHint) comfyHint.hidden = true;
       if (ggufBaseHint) ggufBaseHint.hidden = true;
+      if (codeWriteHint) codeWriteHint.hidden = true;
       if (steerBtn) {
         steerBtn.hidden = true;
         steerBtn.disabled = true;
@@ -12199,7 +12242,7 @@ function mountChat(root) {
     if (editBar) editBar.hidden = pendingEditIndex < 0;
     if (sessionRestoring) sendBtn.disabled = true;
     paintComfyHint();
-    paintGgufBaseHint();
+    paintCodeWriteHint();
   }
 
   function appendAssistantToChat(chatId, item) {
@@ -12607,12 +12650,12 @@ function mountChat(root) {
             data = await response.text().catch(() => "");
           }
           const detail = data && typeof data === "object" ? (data.detail || data) : {};
-          if (response.status === 409 && detail && detail.thinking_only) {
+          if (response.status === 409 && detail && (detail.thinking_only || detail.writes_files === false)) {
             poll.stop();
             if (working.discard) working.discard();
             finishChecklistBuild({ chatId, stopped: true });
             persist();
-            await TabbyUI.alertThinkingOnlyWrite(TabbyUI.lastGpuStatus);
+            await TabbyUI.alertThinkingOnlyWrite(TabbyUI.lastGpuStatus, detail);
             stopKind = "stop";
             return;
           }
@@ -13233,6 +13276,11 @@ function mountChat(root) {
   }
   if (switchQwenBtn) {
     switchQwenBtn.addEventListener("click", () => {
+      startQwenSwitch();
+    });
+  }
+  if (codeWriteQwenBtn) {
+    codeWriteQwenBtn.addEventListener("click", () => {
       startQwenSwitch();
     });
   }

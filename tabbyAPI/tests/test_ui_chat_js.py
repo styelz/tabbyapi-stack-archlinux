@@ -94,6 +94,13 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
         self.assertIn("switch to qwen", self.src)
         self.assertIn("gguf_base", self.src)
 
+    def test_code_write_hint_for_models_without_file_tools(self):
+        self.assertIn('id="chat-code-write-hint"', self.src)
+        self.assertIn("function paintCodeWriteHint()", self.src)
+        self.assertIn("cannot write Code files", self.src)
+        self.assertIn("codeWriteBlockKind", self.src)
+        self.assertIn("writes_files", self.src)
+
     def test_queued_message_can_steer(self):
         self.assertIn("id=\"chat-steer\"", self.src)
         self.assertIn("abortSession(\"steer\")", self.src)

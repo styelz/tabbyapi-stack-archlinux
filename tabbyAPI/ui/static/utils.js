@@ -1412,15 +1412,35 @@
     return Boolean(profile && map[profile]);
   }
 
-  function alertThinkingOnlyWrite(data) {
+  function codeWriteBlockKind(data, detail) {
+    if (detail && detail.thinking_only) return "thinking";
+    if (detail && detail.writes_files === false) return "no_tools";
+    const status = data || window.TabbyUI.lastGpuStatus || {};
+    if (thinkingOnlyStatus(status)) return "thinking";
+    if (status.writes_files === false) return "no_tools";
+    return "";
+  }
+
+  function alertThinkingOnlyWrite(data, detail) {
     const status = data || window.TabbyUI.lastGpuStatus || {};
     const profile = String(status.profile || "").trim();
     const pretty = profilePrettyName(profile, status) || profile || "This model";
+    const kind = codeWriteBlockKind(status, detail);
+    if (kind === "thinking") {
+      return alertModal({
+        title: "Thinking model",
+        text:
+          pretty +
+          " is a thinking chat model. It cannot write Code files.\n" +
+          "Switch to qwen or gemma to edit the project.",
+        ok: "OK",
+      });
+    }
     return alertModal({
-      title: "Thinking model",
+      title: "Cannot edit files",
       text:
         pretty +
-        " is a thinking chat model. It cannot write Code files.\n" +
+        " cannot write Code files.\n" +
         "Switch to qwen or gemma to edit the project.",
       ok: "OK",
     });
@@ -2003,6 +2023,7 @@
     showContextMenu,
     alertModal,
     thinkingOnlyStatus,
+    codeWriteBlockKind,
     alertThinkingOnlyWrite,
     confirmModal,
     promptModal,

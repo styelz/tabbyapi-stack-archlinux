@@ -45,7 +45,7 @@ Send a message that is **only** one of these. Times are warm switches on this RT
 | `switch to gemma` | General | 262k | ~85 seconds |
 | `switch to gemma26` | General | 262k | ~2 minutes |
 | `switch to glm` | Thinking chat only (no coding tools; vision off on RTX 4070 Ti 12 GB) | 65k (model max) | ~40 seconds |
-| `switch to llama` | Last GGUF via llama.cpp (CPU offload; slower) | profile | first load varies |
+| `switch to llama` | Last GGUF via llama.cpp (chat; Code file tools need qwen/gemma) | profile | first load varies |
 | `switch to comfy` / `flux` | Unload the LLM; image gen | — | ~4 seconds (then Flux ~2 minutes / Qwen-Image ~3 minutes for the first picture) |
 | `switch to llm` | Free Comfy/llama.cpp; reload the last EXL3/EXL2 model | — | ~50 seconds |
 

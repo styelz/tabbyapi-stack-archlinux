@@ -404,22 +404,34 @@ async def run_console_chat(request: Request, body: dict[str, Any], username: str
         from common.phrase_switch import (
             is_restart_request,
             profile_is_thinking_only,
+            profile_writes_code_files,
             requested_profile,
             switch_token,
         )
 
-        if (
-            profile_is_thinking_only()
-            and not requested_profile(data)
-            and not switch_token(data)
-            and not is_restart_request(data)
-        ):
+        switching = (
+            requested_profile(data)
+            or switch_token(data)
+            or is_restart_request(data)
+        )
+        if not switching and profile_is_thinking_only():
             raise HTTPException(
                 409,
                 {
                     "thinking_only": True,
                     "message": (
                         "This is a thinking chat model. It cannot write Code files. "
+                        "Switch to qwen or gemma to edit the project."
+                    ),
+                },
+            )
+        if not switching and not profile_writes_code_files():
+            raise HTTPException(
+                409,
+                {
+                    "writes_files": False,
+                    "message": (
+                        "This model cannot write Code files. "
                         "Switch to qwen or gemma to edit the project."
                     ),
                 },

@@ -447,11 +447,25 @@ def thinking_only_name(*parts: str) -> bool:
     return False
 
 
+def serving_profile_name() -> str:
+    """Alias the GPU is serving now, including GGUF. Not leftover last EXL."""
+    try:
+        if llama_up():
+            from select_model import last_llama_profile, last_profile
+
+            name = last_llama_profile() or last_profile()
+            if name:
+                return str(name).strip().lower()
+    except Exception:
+        pass
+    return str(last_llm_profile_name() or "").strip().lower()
+
+
 def profile_is_thinking_only(alias: Optional[str] = None) -> bool:
-    """True when this profile cannot drive Code file tools."""
+    """True when this profile is thinking-chat, not a coding agent."""
     key = str(alias or "").strip().lower()
     if not key:
-        key = str(last_llm_profile_name() or "").strip().lower()
+        key = serving_profile_name()
     mapping = profile_map()
     entry = mapping.get(key) or {}
     flag = entry.get("thinking_only")
@@ -461,7 +475,7 @@ def profile_is_thinking_only(alias: Optional[str] = None) -> bool:
         return False
     if key == "glm":
         return True
-    return thinking_only_name(key, entry.get("pretty"), entry.get("folder"), current_folder())
+    return thinking_only_name(key, entry.get("pretty"), entry.get("folder"))
 
 
 def profile_thinking_only_map(names: Optional[list[str]] = None) -> dict[str, bool]:
@@ -728,7 +742,8 @@ def help_text(api_base: Optional[str] = None, request=None) -> str:
             "- `restart` restarts the API and restores the last language model.",
             "- `switch to comfy` and `switch to flux` start image generation.",
             "- `switch to llm` stops ComfyUI/llama.cpp and restores the last EXL3/EXL2 model.",
-            "- `switch to llama` restores the last GGUF (CPU offload; slower).",
+            "- `switch to llama` restores the last GGUF (CPU offload; slower). "
+            "Chat and pasted code work; Code file tools need qwen or gemma.",
             "- EXL3 vision (`qwen`) is faster for pictures in chat than GGUF.",
             "",
             f"### Model profiles on this {gpu_label()}",
@@ -820,7 +835,8 @@ def help_text(api_base: Optional[str] = None, request=None) -> str:
             "",
             "Use **qwen** for everyday coding. Switch to **qwen35** or **qwen36** "
             "before a long, difficult agent task. **glm** is thinking chat only "
-            "(no coding tools). Send `list models` to see what is installed on this server.",
+            "(no coding tools). GGUF/llama can chat and paste code; Code file tools "
+            "need qwen or gemma. Send `list models` to see what is installed on this server.",
         ]
     )
     return "\n".join(lines)
@@ -834,7 +850,8 @@ def list_text() -> str:
         "Stay on gpt-4o. To switch, type switch to <model>. "
         "Send restart to bounce the API. Send help for the full guide.",
         "Daily chat: qwen. Long Agent tasks: switch to qwen35 or qwen36 first. "
-        "glm is thinking chat only — it does not parse coding tools.",
+        "glm is thinking chat only — it does not parse coding tools. "
+        "GGUF/llama can chat and paste code; Code file tools need qwen or gemma.",
         "Image gen: switch to comfy (unloads the LLM, Flux Schnell). "
         "Switch back with switch to qwen. GGUF profiles use llama.cpp "
         "(CPU offload; slower). Vision and fast coding stay on EXL3 qwen.",
@@ -1069,8 +1086,12 @@ def switch_reply_text(name: str) -> str:
 
 NO_TOOL_FORMAT_HINT = (
     "The loaded profile does not parse tool calls. "
+    "Send `switch to qwen` (or gemma) for coding with tools."
+)
+THINKING_NO_TOOL_HINT = (
+    "The loaded profile does not parse tool calls. "
     "Send `switch to qwen` (or gemma) for coding with tools. "
-    "glm is a thinking chat profile, not a coding-agent profile."
+    "This is a thinking chat profile, not a coding-agent profile."
 )
 
 
@@ -1095,13 +1116,18 @@ def profile_parses_tools(alias: Optional[str] = None) -> bool:
     """True when this profile's YAML can parse Code file tools."""
     if profile_is_thinking_only(alias):
         return False
-    key = str(alias or last_llm_profile_name() or "").strip().lower()
+    key = str(alias or serving_profile_name() or "").strip().lower()
     entry = profile_map().get(key) or {}
     if str(entry.get("tool_format") or "").strip():
         return True
     if bool(entry.get("harmony") or entry.get("muse_glimmer")):
         return True
     return key in {"qwen", "qwen35", "qwen36", "gemma", "gemma26"}
+
+
+def profile_writes_code_files(alias: Optional[str] = None) -> bool:
+    """True when Code Agent can Write/Grep against a project."""
+    return profile_parses_tools(alias)
 
 
 def tools_without_format_response(data: ChatCompletionRequest):
@@ -1117,7 +1143,8 @@ def tools_without_format_response(data: ChatCompletionRequest):
         pass
     if container_parses_tools():
         return None
-    return text_response(data, NO_TOOL_FORMAT_HINT)
+    hint = THINKING_NO_TOOL_HINT if profile_is_thinking_only() else NO_TOOL_FORMAT_HINT
+    return text_response(data, hint)
 
 
 def text_response(data: ChatCompletionRequest, text: str):
