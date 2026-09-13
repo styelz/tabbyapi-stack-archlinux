@@ -807,5 +807,86 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(hasattr(ps, "ensure_mixed_image_job"))
 
 
+class CopyJobWorkspaceTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        folder = Path(self.tmp.name)
+        from ui import chats, workspace
+
+        chats.set_chats_dir(folder / "chats")
+        workspace.set_workspaces_dir(folder / "ws")
+
+    def tearDown(self):
+        from ui import chats, workspace
+
+        chats.set_chats_dir(None)
+        workspace.set_workspaces_dir(None)
+        self.tmp.cleanup()
+
+    def test_copy_job_skips_chat_mode_conversation(self):
+        from types import SimpleNamespace
+
+        from images.jobs import copy_job_to_workspace
+        from ui import chats
+
+        chats.save_store(
+            "u",
+            {
+                "chats": [
+                    {
+                        "id": "c1",
+                        "mode": "chat",
+                        "title": "Harbor",
+                        "messages": [{"role": "user", "content": "harbor"}],
+                    }
+                ]
+            },
+        )
+        job = SimpleNamespace(
+            owner="u",
+            chat_id="c1",
+            status="done",
+            workspace_files=[],
+            workspace_copied=False,
+        )
+        with mock.patch("ui.workspace.copy_job_pngs", return_value=["images/a.png"]) as copy:
+            copied = copy_job_to_workspace(job)
+        copy.assert_not_called()
+        self.assertEqual(copied, [])
+        self.assertFalse(job.workspace_copied)
+
+    def test_copy_job_copies_into_code_workspace(self):
+        from types import SimpleNamespace
+
+        from images.jobs import copy_job_to_workspace
+        from ui import chats
+
+        chats.save_store(
+            "u",
+            {
+                "chats": [
+                    {
+                        "id": "w1",
+                        "mode": "code",
+                        "title": "Cafe",
+                        "messages": [{"role": "user", "content": "logo"}],
+                    }
+                ]
+            },
+        )
+        job = SimpleNamespace(
+            owner="u",
+            chat_id="w1",
+            status="done",
+            workspace_files=[],
+            workspace_copied=False,
+        )
+        with mock.patch("ui.workspace.copy_job_pngs", return_value=["images/logo.png"]) as copy:
+            copied = copy_job_to_workspace(job)
+        copy.assert_called_once_with("u", "w1", job)
+        self.assertEqual(copied, ["images/logo.png"])
+        self.assertTrue(job.workspace_copied)
+
+
 if __name__ == "__main__":
     unittest.main()

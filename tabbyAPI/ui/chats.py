@@ -21,6 +21,7 @@ EMPTY_STORE = {
     "lastByMode": {"chat": "", "code": ""},
 }
 PLACEHOLDER_TITLES = frozenset({"", "New chat", "New workspace"})
+RECOVERED_TITLE = "Recovered workspace"
 
 
 def chats_dir() -> Path:
@@ -332,19 +333,32 @@ def _workspace_title_from_files(username: str, chat_id: str) -> str:
 
     page = workspace_root(username, chat_id, create=False, box=False) / "index.html"
     if not page.is_file():
-        return "Recovered workspace"
+        return RECOVERED_TITLE
     try:
         text = page.read_text(encoding="utf-8", errors="replace")[:8000]
     except OSError:
-        return "Recovered workspace"
+        return RECOVERED_TITLE
     match = _TITLE_RE.search(text)
     title = re.sub(r"\s+", " ", (match.group(1) if match else "").strip())
-    return title[:80] or "Recovered workspace"
+    return title[:80] or RECOVERED_TITLE
+
+
+def _has_user_turn(chat: Any) -> bool:
+    if not isinstance(chat, dict):
+        return False
+    for item in chat.get("messages") or []:
+        if (
+            isinstance(item, dict)
+            and item.get("role") == "user"
+            and str(item.get("content") or "").strip()
+        ):
+            return True
+    return False
 
 
 def _rehydrate_file_workspaces(username: str, store: dict[str, Any]) -> dict[str, Any]:
     """Put Code workspace rows back when the project folder still has files."""
-    from ui.workspace import has_files, list_project_ids
+    from ui.workspace import has_project_files, list_project_ids
 
     chats = list(store.get("chats") or [])
     known = {
@@ -355,7 +369,7 @@ def _rehydrate_file_workspaces(username: str, store: dict[str, Any]) -> dict[str
     added = False
     now = int(time.time() * 1000)
     for chat_id in list_project_ids(username):
-        if chat_id in known or not has_files(username, chat_id):
+        if chat_id in known or not has_project_files(username, chat_id):
             continue
         chats.append(
             {
@@ -378,6 +392,45 @@ def _rehydrate_file_workspaces(username: str, store: dict[str, Any]) -> dict[str
     return normalize_store(next_store)
 
 
+def _drop_image_only_recovered(username: str, store: dict[str, Any]) -> dict[str, Any]:
+    """Drop leftover Chat image copies that were revived as empty Code chats."""
+    from ui.workspace import delete_workspace, has_project_files
+
+    chats = list(store.get("chats") or [])
+    drop: set[str] = set()
+    for chat in chats:
+        if not is_workspace_root(chat):
+            continue
+        if str(chat.get("title") or "").strip() != RECOVERED_TITLE:
+            continue
+        if _has_user_turn(chat):
+            continue
+        chat_id = str(chat.get("id") or "").strip()
+        if not chat_id or has_project_files(username, chat_id):
+            continue
+        drop.add(chat_id)
+    if not drop:
+        return store
+    next_chats = []
+    for chat in chats:
+        chat_id = str(chat.get("id") or "").strip()
+        parent = str(chat.get("parentId") or "").strip()
+        if chat_id in drop or parent in drop:
+            continue
+        next_chats.append(chat)
+    for chat_id in drop:
+        delete_workspace(username, chat_id)
+    next_store = dict(store)
+    next_store["chats"] = next_chats
+    return normalize_store(next_store)
+
+
+def _finish_file_workspaces(username: str, store: dict[str, Any]) -> dict[str, Any]:
+    return _drop_image_only_recovered(
+        username, _rehydrate_file_workspaces(username, store)
+    )
+
+
 def _restore_omitted_file_workspaces(
     username: str,
     store: dict[str, Any],
@@ -385,15 +438,13 @@ def _restore_omitted_file_workspaces(
     dropped: list[str],
 ) -> dict[str, Any]:
     """A stale PUT must not erase Code workspaces whose folders are still on disk."""
-    from ui.workspace import has_files
-
     restore_roots = [
         chat_id
         for chat_id in dropped
-        if is_workspace_root(old_chats.get(chat_id)) and has_files(username, chat_id)
+        if _keep_omitted_workspace(username, old_chats.get(chat_id))
     ]
     if not restore_roots:
-        return _rehydrate_file_workspaces(username, store)
+        return _finish_file_workspaces(username, store)
     chats = list(store.get("chats") or [])
     new_ids = {str(chat.get("id") or "") for chat in chats}
     restore_set = set(restore_roots)
@@ -411,7 +462,7 @@ def _restore_omitted_file_workspaces(
             new_ids.add(chat_id)
     next_store = dict(store)
     next_store["chats"] = chats
-    return _rehydrate_file_workspaces(username, normalize_store(next_store))
+    return _finish_file_workspaces(username, normalize_store(next_store))
 
 
 def load_store(username: str) -> dict[str, Any]:
@@ -421,7 +472,7 @@ def load_store(username: str) -> dict[str, Any]:
         store = dict(EMPTY_STORE)
     else:
         store = normalize_store(raw)
-    return _rehydrate_file_workspaces(username, store)
+    return _finish_file_workspaces(username, store)
 
 
 def is_workspace_root(chat: Any) -> bool:
@@ -431,6 +482,38 @@ def is_workspace_root(chat: Any) -> bool:
     if str(chat.get("mode") or "chat").strip().lower() != "code":
         return False
     return not str(chat.get("parentId") or "").strip()
+
+
+def is_code_chat(username: str, chat_id: str) -> bool:
+    """True when this id is already a Code-mode row on disk (no rehydrate)."""
+    want = str(chat_id or "").strip()
+    if not want:
+        return False
+    with _LOCK:
+        raw = _read_disk(username)
+    if not isinstance(raw, dict):
+        return False
+    for item in raw.get("chats") or []:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("id") or "").strip() != want:
+            continue
+        return str(item.get("mode") or "chat").strip().lower() == "code"
+    return False
+
+
+def _keep_omitted_workspace(username: str, chat: Any) -> bool:
+    """Keep a real Code project that a stale PUT dropped, not Chat image leftovers."""
+    if not is_workspace_root(chat):
+        return False
+    chat_id = str(chat.get("id") or "").strip()
+    if not chat_id:
+        return False
+    from ui.workspace import has_files, has_project_files
+
+    if has_project_files(username, chat_id):
+        return True
+    return _has_user_turn(chat) and has_files(username, chat_id)
 
 
 def forget_workspace(username: str, chat_id: str) -> dict[str, Any]:

@@ -280,6 +280,102 @@ class ChatStoreSaveWorkspaceTests(unittest.TestCase):
         titles = {chat.get("title") for chat in loaded["chats"]}
         self.assertNotIn("Recovered workspace", titles)
 
+    def test_html_orphan_folder_rehydrates(self):
+        workspace.write_text("u", "w1", "index.html", "<title>Cafe Night</title><p>hi</p>")
+        loaded = chats.load_store("u")
+        by_id = {chat["id"]: chat for chat in loaded["chats"]}
+        self.assertEqual(by_id["w1"]["title"], "Cafe Night")
+        self.assertEqual(by_id["w1"]["mode"], "code")
+
+    def test_image_only_orphan_folder_does_not_rehydrate(self):
+        root = workspace.workspace_root("u", "w1", create=True, box=False)
+        (root / "images").mkdir()
+        (root / "images" / "logo.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+        (root / "images" / "header.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+        loaded = chats.load_store("u")
+        self.assertEqual(loaded["chats"], [])
+        titles = {chat.get("title") for chat in loaded["chats"]}
+        self.assertNotIn("Recovered workspace", titles)
+
+    def test_deleted_chat_image_folder_does_not_rehydrate(self):
+        root = workspace.workspace_root("u", "c1", create=True, box=False)
+        (root / "images").mkdir()
+        (root / "images" / "generated.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+        chats.save_store(
+            "u",
+            {
+                "chats": [
+                    {
+                        "id": "c1",
+                        "mode": "chat",
+                        "title": "Harbor",
+                        "messages": [{"role": "user", "content": "harbor at dusk"}],
+                    }
+                ]
+            },
+        )
+        chats.save_store("u", {"chats": []})
+        loaded = chats.load_store("u")
+        self.assertEqual(loaded["chats"], [])
+
+    def test_saved_recovered_image_only_is_dropped(self):
+        root = workspace.workspace_root("u", "w1", create=True, box=False)
+        (root / "images").mkdir()
+        (root / "images" / "logo.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+        chats.save_store(
+            "u",
+            {
+                "chats": [
+                    {
+                        "id": "w1",
+                        "mode": "code",
+                        "title": "Recovered workspace",
+                        "messages": [
+                            {
+                                "role": "assistant",
+                                "origin": "server",
+                                "content": "Here are the 2 pictures.",
+                            }
+                        ],
+                    },
+                    {
+                        "id": "t1",
+                        "mode": "code",
+                        "parentId": "w1",
+                        "title": "New chat",
+                        "messages": [],
+                    },
+                ]
+            },
+        )
+        loaded = chats.load_store("u")
+        self.assertEqual(loaded["chats"], [])
+        self.assertFalse((root / "images" / "logo.png").is_file())
+
+    def test_is_code_chat_matches_store_mode(self):
+        chats.save_store(
+            "u",
+            {
+                "chats": [
+                    {
+                        "id": "c1",
+                        "mode": "chat",
+                        "title": "Harbor",
+                        "messages": [{"role": "user", "content": "harbor"}],
+                    },
+                    {
+                        "id": "w1",
+                        "mode": "code",
+                        "title": "Cafe",
+                        "messages": [{"role": "user", "content": "logo"}],
+                    },
+                ]
+            },
+        )
+        self.assertFalse(chats.is_code_chat("u", "c1"))
+        self.assertTrue(chats.is_code_chat("u", "w1"))
+        self.assertFalse(chats.is_code_chat("u", "missing"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1331,6 +1331,10 @@ def copy_job_to_workspace(job: McpImageJob) -> list[str]:
         return []
     if str(getattr(job, "status", "") or "") not in ("done", "error"):
         return []
+    from ui.chats import is_code_chat
+
+    if not is_code_chat(owner, chat_id):
+        return []
     job.workspace_copied = True
     try:
         from ui.workspace import copy_job_pngs

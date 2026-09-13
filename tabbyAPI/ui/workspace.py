@@ -295,7 +295,7 @@ def _stats(root: Path) -> tuple[int, int]:
     return len(files), sum(path.stat().st_size for path in files)
 
 
-def has_files(username: str, chat_id: str) -> bool:
+def _has_listed_file(username: str, chat_id: str, *, skip_images: bool = False) -> bool:
     """True as soon as a listed file turns up, so a badge check stays cheap."""
     root = workspace_root(username, chat_id, create=False)
     if not root.is_dir():
@@ -314,12 +314,24 @@ def has_files(username: str, chat_id: str) -> bool:
                 continue
             try:
                 if entry.is_file():
+                    if skip_images and Path(name).suffix.lower() in IMAGE_SUFFIXES:
+                        continue
                     return True
                 if entry.is_dir():
                     pending.append(entry.path)
             except OSError:
                 continue
     return False
+
+
+def has_files(username: str, chat_id: str) -> bool:
+    """True as soon as a listed file turns up, so a badge check stays cheap."""
+    return _has_listed_file(username, chat_id)
+
+
+def has_project_files(username: str, chat_id: str) -> bool:
+    """True when the folder has something besides generated rasters."""
+    return _has_listed_file(username, chat_id, skip_images=True)
 
 
 def chats_with_files(username: str, chat_ids: list[str]) -> list[str]:
@@ -331,7 +343,7 @@ _SKIP_PROJECT_SUFFIXES = (".codebox", HISTORY_SUFFIX, ".drafts.json")
 
 
 def list_project_ids(username: str) -> list[str]:
-    """Workspace folder names under this account that still have files."""
+    """Workspace folder names under this account that still have project files."""
     root = user_dir(username)
     if not root.is_dir():
         return []
@@ -351,7 +363,7 @@ def list_project_ids(username: str) -> list[str]:
                 continue
         except OSError:
             continue
-        if has_files(username, name):
+        if has_project_files(username, name):
             out.append(name)
     return out
 
