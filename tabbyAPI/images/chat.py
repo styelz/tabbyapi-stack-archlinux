@@ -897,6 +897,54 @@ def _profile_writes_files() -> bool:
     return profile_parses_tools()
 
 
+def _tool_followup_ready_for_comfy(data, job) -> bool:
+    """True when Code already wrote the page and this POST is only tool results.
+
+    qwen38 on 12 GB OOMs a second prefill of those file bodies. Smaller Qwens
+    survive it, but the extra generate is still wasted once HTML/CSS/JS exist.
+    """
+    from common.phrase_switch import last_role
+
+    if last_role(data) not in ("tool", "function"):
+        return False
+    if not _workspace_page_ready(job, data):
+        return False
+    if _missing_linked_page_files(job):
+        return False
+    owner = str(getattr(job, "owner", "") or "")
+    chat_id = str(getattr(job, "chat_id", "") or "")
+    if _missing_requested_pages(owner, chat_id, data):
+        return False
+    return True
+
+
+def _stream_error_message(payload) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    err = payload.get("error")
+    if not err:
+        return ""
+    if isinstance(err, dict):
+        return str(err.get("message") or err or "").strip()
+    return str(err).strip()
+
+
+def _parse_code_stream_payload(text: str):
+    """Split a mixed-code stream line into (payload, error). Skip keepalives."""
+    raw = str(text or "").strip()
+    if raw.startswith("data:"):
+        raw = raw[5:].strip()
+    if not raw or raw == "[DONE]" or not raw.startswith("{"):
+        return None, ""
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return None, ""
+    if not isinstance(payload, dict):
+        return None, ""
+    return payload, _stream_error_message(payload)
+
+
 def _keep_writing_page(code_response, job, data=None) -> bool:
     if int(getattr(job, "code_turns", 0) or 0) >= MAX_CODE_TURNS:
         return False
@@ -925,6 +973,8 @@ async def _write_page_then_maybe_launch(data, job, disconnect_handler):
     """Another coding completion. Hold while named HTML or linked CSS/JS are missing."""
     _inject_missing_page_files(data, job)
     _inject_missing_requested_pages(data, job)
+    if _tool_followup_ready_for_comfy(data, job):
+        return None, _should_launch_mixed_render(None, job, data, allow_empty=True)
     note_coding_progress(job)
     code_response = await _write_site_code(data, disconnect_handler)
     if code_response is None:
@@ -1205,18 +1255,13 @@ async def _write_site_code_via_backend(data: ChatCompletionRequest):
             return strip_response_apologies(response)
         payloads: list[dict] = []
         async for line in generate_chat_stream(payload):
-            text = str(line or "").strip()
-            if text.startswith("data:"):
-                text = text[5:].strip()
-            if not text or text == "[DONE]" or not text.startswith("{"):
+            chunk, err = _parse_code_stream_payload(str(line or ""))
+            if err:
+                xlogger.warning(f"Mixed chat code pass via backend aborted: {err}")
+                return None
+            if chunk is None:
                 continue
-            try:
-                chunk = json.loads(text)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(chunk, dict):
-                continue
-            await flight.publish(text)
+            await flight.publish(str(line or "").strip())
             flight.streamed_live = True
             payloads.append(chunk)
         response = _response_from_stream_payloads(payloads, str(payload.get("model") or "gpt-4o"))
@@ -1274,18 +1319,15 @@ async def _write_site_code(data: ChatCompletionRequest, disconnect_handler):
         async for chunk in stream_generate_chat_completion(
             prompt, embeddings, streamed, request, model_path, nested
         ):
-            if chunk == "[DONE]" or not isinstance(chunk, str):
+            payload, err = _parse_code_stream_payload(
+                chunk if isinstance(chunk, str) else ""
+            )
+            if err:
+                xlogger.warning(f"Mixed chat code pass aborted: {err}")
+                return None
+            if payload is None:
                 continue
-            text = chunk.strip()
-            if not text.startswith("{"):
-                continue
-            try:
-                payload = json.loads(text)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(payload, dict):
-                continue
-            await flight.publish(text)
+            await flight.publish(chunk.strip() if isinstance(chunk, str) else "")
             flight.streamed_live = True
             payloads.append(payload)
         response = _response_from_stream_payloads(payloads, getattr(model_path, "name", "") or "")

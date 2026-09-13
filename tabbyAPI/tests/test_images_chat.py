@@ -1801,6 +1801,117 @@ class LiveCodeStreamTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(response)
         self.assertTrue(launch)
 
+    def test_parse_code_stream_payload_detects_abort(self):
+        from images.chat import _parse_code_stream_payload
+
+        payload, err = _parse_code_stream_payload(
+            'data: {"error":{"message":"Chat completion aborted. Please check the server console."}}'
+        )
+        self.assertIsNotNone(payload)
+        self.assertIn("aborted", err)
+        keep, empty = _parse_code_stream_payload("data: [DONE]")
+        self.assertIsNone(keep)
+        self.assertEqual(empty, "")
+
+    async def test_tool_followup_skips_generate_when_page_ready(self):
+        from images.chat import _write_page_then_maybe_launch
+
+        job = _job(id="abc-123", status="coding", owner="pbp", chat_id="ws-page")
+        data = ChatCompletionRequest(
+            messages=[
+                ChatCompletionMessage(
+                    role="user",
+                    content="Create a simple landing page with a logo and a header photo",
+                ),
+                ChatCompletionMessage(role="assistant", content="writing the page"),
+                ChatCompletionMessage(role="tool", content="Wrote index.html"),
+            ]
+        )
+        write = mock.AsyncMock(return_value=_write_code_response())
+        with (
+            mock.patch("images.chat._write_site_code", write),
+            mock.patch("images.chat._workspace_page_ready", return_value=True),
+            mock.patch("images.chat._missing_linked_page_files", return_value=[]),
+            mock.patch("images.chat._missing_requested_pages", return_value=[]),
+            mock.patch("images.chat._page_blocking_comfy", return_value=False),
+            mock.patch("images.chat.note_coding_progress") as note,
+        ):
+            response, launch = await _write_page_then_maybe_launch(data, job, None)
+        write.assert_not_awaited()
+        note.assert_not_called()
+        self.assertIsNone(response)
+        self.assertTrue(launch)
+
+    async def test_tool_followup_generates_when_css_still_missing(self):
+        from images.chat import _write_page_then_maybe_launch
+
+        job = _job(id="abc-123", status="coding", owner="pbp", chat_id="ws-page")
+        data = ChatCompletionRequest(
+            messages=[
+                ChatCompletionMessage(role="user", content="Create a landing page"),
+                ChatCompletionMessage(role="assistant", content="writing"),
+                ChatCompletionMessage(role="tool", content="Wrote index.html"),
+            ]
+        )
+        write = mock.AsyncMock(return_value=_write_code_response())
+        with (
+            mock.patch("images.chat._write_site_code", write),
+            mock.patch("images.chat._workspace_page_ready", return_value=True),
+            mock.patch("images.chat._missing_linked_page_files", return_value=["styles.css"]),
+            mock.patch("images.chat._missing_requested_pages", return_value=[]),
+            mock.patch("images.chat._page_blocking_comfy", return_value=True),
+            mock.patch("images.chat.note_coding_progress", return_value=1),
+            mock.patch("images.chat._keep_writing_page", return_value=True),
+        ):
+            response, launch = await _write_page_then_maybe_launch(data, job, None)
+        write.assert_awaited()
+        self.assertFalse(launch)
+        self.assertIsNotNone(response)
+
+    async def test_write_site_code_does_not_publish_abort(self):
+        from images.chat import _write_site_code
+        from ui.flight import (
+            ConsoleFlight,
+            bind_console_flight,
+            reset_for_tests,
+            unbind_console_flight,
+        )
+
+        reset_for_tests()
+        flight = ConsoleFlight("u", "c", "code", "landing")
+        token = bind_console_flight(flight)
+
+        async def fake_stream(*args, **kwargs):
+            yield '{"choices":[{"delta":{"content":"writing "}}],"model":"qwen"}'
+            yield '{"error":{"message":"Chat completion aborted. Please check the server console."}}'
+            yield "[DONE]"
+
+        container = SimpleNamespace(
+            loaded=True,
+            prompt_template="tpl",
+            model_dir=SimpleNamespace(name="qwen"),
+        )
+        try:
+            with (
+                mock.patch("common.model.container", container),
+                mock.patch(
+                    "endpoints.OAI.utils.chat_completion.apply_chat_template",
+                    new=mock.AsyncMock(return_value=("prompt", None)),
+                ),
+                mock.patch(
+                    "endpoints.OAI.utils.chat_completion.stream_generate_chat_completion",
+                    new=fake_stream,
+                ),
+            ):
+                response = await _write_site_code(_user("Create a landing page"), None)
+        finally:
+            unbind_console_flight(token)
+            reset_for_tests()
+        self.assertIsNone(response)
+        blob = b"".join(flight.chunks).decode("utf-8", errors="replace")
+        self.assertNotIn("aborted", blob)
+        self.assertIn("writing ", flight.assembled)
+
     def test_profile_writes_files_without_container(self):
         from images.chat import _profile_writes_files
 

@@ -11584,7 +11584,8 @@ function mountChat(root) {
       }
       if (json.error) {
         const msg = json.error.message || json.error;
-        throw new Error(typeof msg === "string" ? msg : "Chat failed");
+        onEvent({ error: typeof msg === "string" ? msg : "Chat failed" });
+        continue;
       }
       if (json.usage) onEvent({ usage: json.usage });
       if (json.model) onEvent({ model: json.model });
@@ -12701,6 +12702,7 @@ function mountChat(root) {
           const decoder = new TextDecoder();
           let buf = "";
           let htmlRestart = false;
+          let streamError = "";
           while (true) {
             const { value, done } = await reader.read();
             if (done) break;
@@ -12710,6 +12712,10 @@ function mountChat(root) {
               break;
             }
             buf = consumeSseBuffer(buf, (event) => {
+              if (event.error) {
+                streamError = event.error;
+                return;
+              }
               if (event.comment) {
                 const held = String(event.comment).match(/tabby-image-job:\s*([0-9a-fA-F-]{8,})/);
                 if (held) {
@@ -12794,6 +12800,9 @@ function mountChat(root) {
           if (htmlRestart) {
             if (await retryAfterRestart()) continue;
             throw new Error("API unavailable — service may be restarting");
+          }
+          if (!assembled && streamError && !working.heldJobId) {
+            assembled = `Error: ${streamError}`;
           }
           if (activity.kind === "restart") activity.kind = "chat";
         }
