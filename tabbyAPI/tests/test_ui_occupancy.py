@@ -237,7 +237,7 @@ class WaitOutImageJobTests(unittest.IsolatedAsyncioTestCase):
             mock.patch("common.phrase_switch.clear_switch_lock"),
             mock.patch("images.jobs._load_profile", new=mock.AsyncMock()),
             mock.patch("images.jobs.write_mode"),
-            mock.patch("images.jobs.loaded_tabby_name", return_value=None),
+            mock.patch("images.jobs.loaded_tabby_name", return_value="Qwen3.5-9B-exl3-4.00bpw"),
         ):
             await reload_last_llm("qwen")
         self.assertEqual(order[0], "wait")
@@ -337,6 +337,59 @@ class GatedGpuSwitchTests(unittest.IsolatedAsyncioTestCase):
             result = await asyncio.wait_for(task, timeout=2)
         apply.assert_awaited_once_with("qwen")
         self.assertIn("Switching to qwen", result.choices[0].message.content)
+
+
+class CancelReleasesLeaseTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        occupancy.reset_for_tests()
+
+    def tearDown(self):
+        occupancy.reset_for_tests()
+
+    async def test_cancel_drops_occupancy_and_coding_job(self):
+        from ui.chat import run_console_chat
+        from ui.flight import ConsoleFlight, register_flight
+        from images.jobs import (
+            CANCEL_ABANDON_REASON,
+            McpImageItem,
+            McpImageJob,
+            _MCP_JOBS,
+            _MCP_ORDER,
+            reset_mcp_image_jobs_for_tests,
+        )
+
+        flight = ConsoleFlight("bob", "chat-1", "chat", "switch to llama")
+        register_flight(flight)
+        oid = await occupancy.try_acquire("bob", kind="chat", chat_id="chat-1")
+        self.assertIsNotNone(oid)
+        await reset_mcp_image_jobs_for_tests()
+        job = McpImageJob(
+            id="job-1",
+            items=[McpImageItem(prompt="logo", output_path="images/logo.png")],
+            restore=True,
+            api_base="http://x",
+            wait_text="",
+            wait_s=0,
+            status="coding",
+            phase="writing_code",
+            owner="bob",
+            chat_id="chat-1",
+        )
+        _MCP_JOBS[job.id] = job
+        _MCP_ORDER.append(job.id)
+        request = mock.Mock()
+        with tempfile.TemporaryDirectory() as raw:
+            with mock.patch("common.gpu_mode.GENERATED_DIR", Path(raw)):
+                result = await run_console_chat(
+                    request,
+                    {"cancel": True, "conversation_id": "chat-1"},
+                    username="bob",
+                )
+        self.assertEqual(result, {"ok": True})
+        self.assertTrue(flight.abort_event.is_set())
+        self.assertIsNone(occupancy._occupant)
+        self.assertEqual(_MCP_JOBS[job.id].status, "error")
+        self.assertEqual(_MCP_JOBS[job.id].error, CANCEL_ABANDON_REASON)
 
     def test_help_still_skips_the_gate(self):
         from common.phrase_switch import handle_if_requested

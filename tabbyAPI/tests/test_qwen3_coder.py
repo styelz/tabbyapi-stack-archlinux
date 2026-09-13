@@ -88,3 +88,16 @@ class Qwen3CoderParseTests(unittest.TestCase):
         self.assertEqual(args["path"], "style.css")
         self.assertEqual(args["old_string"], ".hero { color: red; }")
         self.assertEqual(args["new_string"], ".hero { color: blue; }")
+
+
+class ToolArgumentCoerceTests(unittest.TestCase):
+    def test_concatenated_json_keeps_first_object(self):
+        from endpoints.OAI.utils.tools import coerce_tool_arguments, first_json_value
+
+        doubled = '{"path":"about.css"}{"path":"about.css"}'
+        self.assertEqual(first_json_value(doubled), {"path": "about.css"})
+        self.assertEqual(json.loads(coerce_tool_arguments(doubled)), {"path": "about.css"})
+
+
+if __name__ == "__main__":
+    unittest.main()

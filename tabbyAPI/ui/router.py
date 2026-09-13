@@ -366,12 +366,30 @@ async def apply_gpu_mode(token: str) -> dict:
     except RuntimeError as exc:
         raise HTTPException(400, str(exc)) from exc
     mode = "llama" if profile_backend(name) == "llamacpp" else "llm"
+    tabby = loaded_tabby_name()
+    llama = llama_up()
+    from common.phrase_switch import switch_lock_held, switch_lock_name
+
+    if mode == "llama" and not llama:
+        raise HTTPException(500, f"llama.cpp did not become ready ({name})")
+    if mode == "llm" and not tabby:
+        if switch_lock_held() and switch_lock_name() == "restart":
+            return {
+                "ok": True,
+                "mode": mode,
+                "tabby_model": None,
+                "comfy_up": comfy_up(),
+                "llama_up": False,
+                "restarting": True,
+                "message": f"Restarting to load {name}",
+            }
+        raise HTTPException(500, f"{name} did not finish loading")
     return {
         "ok": True,
         "mode": mode,
-        "tabby_model": loaded_tabby_name(),
+        "tabby_model": tabby,
         "comfy_up": comfy_up(),
-        "llama_up": llama_up(),
+        "llama_up": llama,
         "message": f"GPU handed to {'llama.cpp' if mode == 'llama' else 'TabbyAPI'} ({name})",
     }
 

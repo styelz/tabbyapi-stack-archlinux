@@ -70,6 +70,9 @@ def abort_flight(username: str, chat_id: str = "") -> bool:
     if wanted and current and current != wanted:
         return False
     flight.abort_event.set()
+    task = getattr(flight, "task", None)
+    if task is not None and not task.done():
+        task.cancel()
     return True
 
 
@@ -90,7 +93,7 @@ def iter_live_flights() -> list["ConsoleFlight"]:
     seen: set[str] = set()
     live: list[ConsoleFlight] = []
     for flight in list(_FLIGHTS.values()) + list(_FLIGHTS_BY_CHAT.values()):
-        if flight.done or flight.id in seen:
+        if flight.done or flight.abort_event.is_set() or flight.id in seen:
             continue
         seen.add(flight.id)
         live.append(flight)

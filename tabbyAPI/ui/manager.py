@@ -33,6 +33,7 @@ CONSOLE_SYSTEM = (
 PROCESS_LOGS: deque[str] = deque(maxlen=4000)
 _SINK_ID: Optional[int] = None
 _STARTED_AT = time.time()
+_LAST_STATUS: dict[str, Any] = {}
 
 
 def visible_log_lines(lines, limit: Optional[int] = None) -> list[str]:
@@ -307,18 +308,20 @@ def _auto_update_status() -> dict[str, Any]:
 
 
 async def stack_status(request=None, username: str = "") -> dict[str, Any]:
-    from common.gpu_mode import comfy_up, llama_up, public_api_base, read_mode
+    from common.gpu_mode import public_api_base
     from common.health import HealthManager
     from common.phrase_switch import (
+        gpu_serving_fields,
         last_llm_profile_name,
         profile_alias_for_model,
         profile_is_thinking_only,
         profile_thinking_only_map,
         profile_ui_labels,
+        switch_in_progress,
         switch_lock_held,
         switch_lock_name,
     )
-    from images.jobs import active_mcp_image_job, loaded_tabby_name
+    from images.jobs import active_mcp_image_job
     from select_model import (
         available_profiles,
         folder_for_choice,
@@ -327,86 +330,132 @@ async def stack_status(request=None, username: str = "") -> dict[str, Any]:
     )
     from ui.occupancy import snapshot as stack_queue_snapshot
 
-    mode = read_mode()
-    tabby = loaded_tabby_name()
-    llama = llama_up()
-    gpu_mode = mode.get("mode") or "llm"
-    if llama:
-        gpu_mode = "llama"
-    elif tabby:
-        gpu_mode = "llm"
     try:
-        healthy, issues = await HealthManager.is_service_healthy()
-        issue_text = [
-            issue.description if hasattr(issue, "description") else str(issue) for issue in issues
-        ]
-    except Exception:
-        healthy, issue_text = True, []
-    lock_name = switch_lock_name()
-    lock_held = switch_lock_held()
-    restarting = lock_held and lock_name == "restart"
-    switching = lock_held and not restarting
-    job = active_mcp_image_job()
-    job_info = None
-    if job:
-        job_info = {
-            "id": getattr(job, "id", None),
-            "status": getattr(job, "status", None),
-            "phase": getattr(job, "phase", None),
-            "count": getattr(job, "count", None),
-            "current_index": getattr(job, "current_index", 0),
-            "done_count": getattr(job, "done_count", 0),
-            "wait_s": getattr(job, "wait_s", None),
-            "wait_text": getattr(job, "wait_text", None),
-            "prompt": getattr(job, "prompt", None),
-            "started_at": getattr(job, "started_at", None),
+        serving = gpu_serving_fields()
+        gpu_mode = serving["gpu_mode"]
+        tabby = serving["tabby_model"]
+        llama = serving["llama_up"]
+        http_up = serving["comfy_up"]
+        loaded = serving["loaded"]
+        mode = serving.get("mode_file") or {}
+        try:
+            healthy, issues = await HealthManager.is_service_healthy()
+            issue_text = [
+                issue.description if hasattr(issue, "description") else str(issue)
+                for issue in issues
+            ]
+        except Exception:
+            healthy, issue_text = True, []
+        lock_name = switch_lock_name()
+        lock_held = switch_lock_held()
+        restarting = lock_held and lock_name == "restart"
+        switching = (lock_held or switch_in_progress()) and not restarting
+        job = active_mcp_image_job()
+        job_info = None
+        if job:
+            job_info = {
+                "id": getattr(job, "id", None),
+                "status": getattr(job, "status", None),
+                "phase": getattr(job, "phase", None),
+                "count": getattr(job, "count", None),
+                "current_index": getattr(job, "current_index", 0),
+                "done_count": getattr(job, "done_count", 0),
+                "wait_s": getattr(job, "wait_s", None),
+                "wait_text": getattr(job, "wait_text", None),
+                "prompt": getattr(job, "prompt", None),
+                "started_at": getattr(job, "started_at", None),
+            }
+        comfy_unit = unit_active("comfyui")
+        job_phase = (job_info or {}).get("phase")
+        comfy_booting = (not http_up) and (bool(comfy_unit) or job_phase == "starting_comfy")
+        if comfy_booting and not restarting:
+            switching = True
+        # Keep the loading bar up until something is actually serving.
+        intended = str(mode.get("mode") or "").lower()
+        if not loaded and not restarting and (lock_held or switch_in_progress()):
+            switching = True
+        names = available_profiles()
+        profile_ready = {name: bool(folder_for_choice(name)) for name in names}
+        intended_llama = gpu_mode == "llama" or (
+            not loaded and intended == "llama"
+        )
+        if intended_llama:
+            profile = last_llama_profile() or last_profile()
+        else:
+            profile = (
+                profile_alias_for_model(tabby)
+                or last_llm_profile_name()
+                or last_profile()
+            )
+        ensure_gpu_cache()
+        payload = {
+            "ok": True,
+            "gpu_mode": gpu_mode,
+            "comfy_up": http_up,
+            "llama_up": llama,
+            "tabby_model": tabby,
+            "profile": profile,
+            "loaded": loaded,
+            "profiles": names,
+            "profile_labels": profile_ui_labels(names),
+            "profile_ready": profile_ready,
+            "thinking_only": profile_is_thinking_only(profile),
+            "profile_thinking_only": profile_thinking_only_map(names),
+            "model": _model_card(),
+            "health": {"healthy": healthy, "issues": issue_text},
+            "units": {
+                "tabbyapi": unit_active("tabbyapi"),
+                "comfyui": comfy_unit,
+                "llamacpp": unit_active("llamacpp"),
+            },
+            "gpu": cached_nvidia_stats() or nvidia_stats(),
+            "host": _host_live(),
+            "uptime_s": int(time.time() - _STARTED_AT),
+            "api_base": public_api_base(request),
+            "job": job_info,
+            "switching": switching,
+            "restarting": restarting,
+            "busy": lock_held or comfy_booting,
+            "switch_target": lock_name or ("comfy" if comfy_booting else None),
+            "user": os.environ.get("USER") or "",
+            "now": datetime.now(timezone.utc).isoformat(),
+            "stack_queue": stack_queue_snapshot(username),
+            "auto_update": _auto_update_status(),
         }
-    http_up = comfy_up()
-    comfy_unit = unit_active("comfyui")
-    job_phase = (job_info or {}).get("phase")
-    comfy_booting = (not http_up) and (bool(comfy_unit) or job_phase == "starting_comfy")
-    if comfy_booting and not restarting:
-        switching = True
-    names = available_profiles()
-    profile_ready = {name: bool(folder_for_choice(name)) for name in names}
-    # Prefer the folder actually in VRAM over last.json (VRAM fallback can desync them).
-    if gpu_mode == "llama":
-        profile = last_llama_profile() or last_profile()
-    else:
-        profile = profile_alias_for_model(tabby) or last_llm_profile_name() or last_profile()
-    return {
-        "ok": True,
-        "gpu_mode": gpu_mode,
-        "comfy_up": http_up,
-        "llama_up": llama,
-        "tabby_model": tabby,
-        "profile": profile,
-        "profiles": names,
-        "profile_labels": profile_ui_labels(names),
-        "profile_ready": profile_ready,
-        "thinking_only": profile_is_thinking_only(profile),
-        "profile_thinking_only": profile_thinking_only_map(names),
-        "model": _model_card(),
-        "health": {"healthy": healthy, "issues": issue_text},
-        "units": {
-            "tabbyapi": unit_active("tabbyapi"),
-            "comfyui": comfy_unit,
-            "llamacpp": unit_active("llamacpp"),
-        },
-        "gpu": await asyncio.to_thread(nvidia_stats),
-        "host": _host_live(),
-        "uptime_s": int(time.time() - _STARTED_AT),
-        "api_base": public_api_base(request),
-        "job": job_info,
-        "switching": switching,
-        "restarting": restarting,
-        "busy": lock_held or comfy_booting,
-        "switch_target": lock_name or ("comfy" if comfy_booting else None),
-        "user": os.environ.get("USER") or "",
-        "now": datetime.now(timezone.utc).isoformat(),
-        "stack_queue": stack_queue_snapshot(username),
-        "auto_update": _auto_update_status(),
-    }
+        _LAST_STATUS.clear()
+        _LAST_STATUS.update(payload)
+        return payload
+    except Exception:
+        fallback = dict(_LAST_STATUS) if _LAST_STATUS else {
+            "ok": True,
+            "gpu_mode": "idle",
+            "comfy_up": False,
+            "llama_up": False,
+            "tabby_model": None,
+            "profile": None,
+            "loaded": False,
+            "profiles": [],
+            "profile_labels": {},
+            "profile_ready": {},
+            "thinking_only": False,
+            "profile_thinking_only": {},
+            "model": {},
+            "health": {"healthy": True, "issues": []},
+            "units": {},
+            "gpu": {},
+            "host": {},
+            "uptime_s": int(time.time() - _STARTED_AT),
+            "api_base": "",
+            "job": None,
+            "user": os.environ.get("USER") or "",
+            "stack_queue": {},
+            "auto_update": {},
+        }
+        fallback["switching"] = True
+        fallback["busy"] = True
+        fallback["ok"] = True
+        fallback["now"] = datetime.now(timezone.utc).isoformat()
+        return fallback
 
 
 def _host_live() -> dict[str, Any]:

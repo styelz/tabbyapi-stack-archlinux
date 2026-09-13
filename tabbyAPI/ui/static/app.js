@@ -59,6 +59,7 @@
 
   function currentGpuMode(data) {
     if (!data || data.down) return "";
+    if (!data.tabby_model && !data.llama_up && !data.comfy_up) return "";
     const mode = String(data.gpu_mode || "").toLowerCase();
     if (mode === "comfy") return "comfy";
     if (mode === "llama") return data.profile || "llama";

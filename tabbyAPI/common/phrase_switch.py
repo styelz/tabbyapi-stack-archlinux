@@ -24,7 +24,7 @@ from common.gpu_mode import (
     read_mode,
     recent_generated_files,
 )
-from common.llama_runtime import LLAMA_ALIASES
+from common.llama_runtime import LLAMA_ALIASES, llama_up
 from common.logger import xlogger
 from common.networking import get_sse_ping_interval
 from common.pasted_images import is_save_image_request, pasted_download_text
@@ -497,6 +497,8 @@ def profile_ui_labels(names: Optional[list[str]] = None) -> dict[str, str]:
 
 def installed_models() -> list[str]:
     """Folder names under models/ that look like real EXL or GGUF downloads."""
+    from select_model import is_embedding_folder
+
     if not MODELS_DIR.exists():
         return []
     names = []
@@ -504,8 +506,12 @@ def installed_models() -> list[str]:
         if path.is_dir() and (
             (path / "config.json").exists() or any(path.glob("*.gguf"))
         ):
+            if is_embedding_folder(path.name):
+                continue
             names.append(path.name)
         elif path.is_file() and path.suffix.lower() == ".gguf":
+            if is_embedding_folder(path.name):
+                continue
             names.append(path.name)
     return names
 
@@ -514,10 +520,35 @@ def current_folder() -> Optional[str]:
     try:
         from common import model as model_mod
 
-        if model_mod.container and getattr(model_mod.container, "model_dir", None):
-            return model_mod.container.model_dir.name
+        container = model_mod.container
+        if (
+            container
+            and getattr(container, "loaded", False)
+            and getattr(container, "model_dir", None)
+        ):
+            return container.model_dir.name
     except Exception:
         return None
+    return None
+
+
+def loaded_switch_folder() -> Optional[str]:
+    """Folder or GGUF id that is actually serving, else None."""
+    try:
+        from images.jobs import loaded_tabby_name
+
+        name = loaded_tabby_name()
+        if name:
+            return name
+    except Exception:
+        pass
+    try:
+        from common.llama_runtime import llama_loaded_id
+
+        if llama_up():
+            return llama_loaded_id()
+    except Exception:
+        pass
     return None
 
 
@@ -797,7 +828,8 @@ def help_text(api_base: Optional[str] = None, request=None) -> str:
 
 def list_text() -> str:
     profiles = profile_map()
-    loaded = current_folder()
+    loaded = loaded_switch_folder()
+    loaded_alias = profile_alias_for_model(loaded)
     lines = [
         "Stay on gpt-4o. To switch, type switch to <model>. "
         "Send restart to bounce the API. Send help for the full guide.",
@@ -812,17 +844,26 @@ def list_text() -> str:
     for folder in installed_models():
         found = True
         entry = profiles.get(folder.lower())
+        is_loaded = bool(
+            loaded
+            and (
+                folder == loaded
+                or (entry and entry.get("folder") == loaded)
+                or (entry and loaded_alias and entry.get("alias") == loaded_alias)
+                or str(loaded).lower() == folder.lower()
+            )
+        )
         if entry:
             ctx = entry.get("max_seq_len") or entry.get("cache_size")
             bits = []
-            if folder == loaded:
+            if is_loaded:
                 bits.append("loaded")
             if ctx:
                 bits.append(f"{ctx} ctx")
             extra = f" ({', '.join(bits)})" if bits else ""
             lines.append(f"- {entry['pretty']}{extra} | switch to {entry['alias']}")
         else:
-            extra = " (loaded)" if folder == loaded else ""
+            extra = " (loaded)" if is_loaded else ""
             lines.append(f"- {folder}{extra} | switch to {folder}")
     if not found:
         lines.append("No models installed.")
@@ -1682,7 +1723,33 @@ def gpu_is_comfy() -> bool:
 
 
 def gpu_is_llama() -> bool:
-    return (read_mode().get("mode") or "").lower() == "llama"
+    return llama_up()
+
+
+def gpu_serving_fields() -> dict:
+    """What's actually answering on the GPU, not last-requested mode."""
+    from common.gpu_mode import comfy_up
+    from images.jobs import loaded_tabby_name
+
+    tabby = loaded_tabby_name()
+    llama = llama_up()
+    http_up = comfy_up()
+    if llama:
+        gpu_mode = "llama"
+    elif tabby:
+        gpu_mode = "llm"
+    elif http_up:
+        gpu_mode = "comfy"
+    else:
+        gpu_mode = "idle"
+    return {
+        "gpu_mode": gpu_mode,
+        "tabby_model": tabby,
+        "llama_up": llama,
+        "comfy_up": http_up,
+        "loaded": gpu_mode != "idle",
+        "mode_file": read_mode(),
+    }
 
 
 def switch_lock_name() -> str:

@@ -360,6 +360,24 @@ async def release(occupant_id: Optional[str]) -> None:
             _cond.notify_all()
 
 
+async def release_chat(username: str, chat_id: str = "") -> bool:
+    """Drop the lease for this conversation so Stop does not wedge the stack."""
+    global _occupant
+    who = str(username or "").strip()
+    wanted = str(chat_id or "").strip()
+    async with _cond:
+        occupant = _occupant
+        if occupant is None:
+            return False
+        if who and occupant.username != who:
+            return False
+        if wanted and occupant.chat_id and occupant.chat_id != wanted:
+            return False
+        _occupant = None
+        _cond.notify_all()
+        return True
+
+
 async def wait_tick(timeout: float = 1.0) -> None:
     async with _cond:
         try:

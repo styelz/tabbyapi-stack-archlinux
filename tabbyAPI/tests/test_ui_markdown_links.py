@@ -139,6 +139,32 @@ class UtilsJsAssistantContentTests(unittest.TestCase):
         self.assertEqual(out["open"], "glm-ok")
         self.assertEqual(out["keep"], "see the <answer> element in HTML")
 
+    def test_format_assistant_content_strips_think_blocks(self):
+        src = UTILS_JS.read_text(encoding="utf-8")
+        fn = _js_function(src, "formatAssistantContent")
+        script = (
+            fn
+            + "\nconsole.log(JSON.stringify("
+            "formatAssistantContent('<think>plan</think><answer>PING-OK</answer>')"
+            "));"
+        )
+        out = _run_node(script)
+        self.assertEqual(out, "PING-OK")
+
+    def test_parse_tool_arguments_keeps_first_json_object(self):
+        src = UTILS_JS.read_text(encoding="utf-8")
+        start = src.index("function parseToolArguments(")
+        end = src.index("function splitThinkFromContent(")
+        fn = src[start:end]
+        script = (
+            fn
+            + "\nconsole.log(JSON.stringify("
+            'parseToolArguments(\'{"path":"about.css"}{"path":"about.css"}\')'
+            "));"
+        )
+        out = _run_node(script)
+        self.assertEqual(out, {"path": "about.css"})
+
 
 if __name__ == "__main__":
     unittest.main()

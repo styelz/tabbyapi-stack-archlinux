@@ -518,9 +518,9 @@ function mountStatus(root) {
       .replace(/^NVIDIA\s+GeForce\s+/i, "")
       .replace(/^NVIDIA\s+/i, "");
     cards.innerHTML = [
-      fact("GPU", TabbyUI.escapeHtml(data.gpu_mode || "unknown"), data.llama_up ? "llama.cpp" : (data.comfy_up ? "Comfy up" : "Comfy idle")),
+      fact("GPU", TabbyUI.escapeHtml(data.loaded ? (data.gpu_mode || "unknown") : "idle"), data.loaded ? (data.llama_up ? "llama.cpp" : (data.comfy_up ? "Comfy up" : "serving")) : "nothing loaded"),
       fact("Stack", TabbyUI.escapeHtml(occupancyLabel(data)), occupancyExtra(data)),
-      fact("Profile", TabbyUI.escapeHtml(data.profile || "—"), data.tabby_model || "LLM unloaded"),
+      fact("Profile", TabbyUI.escapeHtml(data.profile || "—"), data.tabby_model || (data.llama_up ? "llama.cpp" : "LLM unloaded")),
       fact("Context", TabbyUI.escapeHtml(String(model.max_seq_len || "—")), model.cache_mode ? `cache ${model.cache_mode}` : ""),
       fact(
         "Health",

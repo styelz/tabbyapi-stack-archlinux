@@ -2908,7 +2908,20 @@ def zip_bytes(
     return buf.getvalue()
 
 
+IMAGE_MEDIA_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+    ".svg": "image/svg+xml",
+}
+
+
 def guess_media_type(path: Path) -> str:
+    suffix = path.suffix.lower()
+    if suffix in IMAGE_MEDIA_TYPES:
+        return IMAGE_MEDIA_TYPES[suffix]
     guessed, _enc = mimetypes.guess_type(path.name)
     if guessed:
         # Files here are written as UTF-8; say so or a preview mangles accents.
@@ -2919,6 +2932,6 @@ def guess_media_type(path: Path) -> str:
         ):
             return f"{guessed}; charset=utf-8"
         return guessed
-    if path.suffix.lower() in IMAGE_SUFFIXES:
+    if suffix in IMAGE_SUFFIXES:
         return "application/octet-stream"
     return "text/plain; charset=utf-8"

@@ -48,6 +48,7 @@ from ui.occupancy import (
     StackGate,
     drain_sse,
     queue_comment,
+    release_chat,
     stream_and_release,
     wait_tick,
 )
@@ -328,6 +329,8 @@ async def _run_console_job(
             await flight.publish(event)
             await wait_tick(1.0)
             info = await gate.step(handler)
+        if flight.abort_event.is_set():
+            return
         result = await _run_console_work(
             proxy,
             data,
@@ -357,10 +360,15 @@ async def _run_console_job(
 
 async def run_console_chat(request: Request, body: dict[str, Any], username: str = ""):
     if body.get("cancel"):
-        abort_flight(
-            username,
-            str(body.get("conversation_id") or body.get("chat_id") or ""),
-        )
+        chat_id = str(body.get("conversation_id") or body.get("chat_id") or "")
+        abort_flight(username, chat_id)
+        await release_chat(username, chat_id)
+        try:
+            from images.jobs import abandon_jobs_for_chat
+
+            abandon_jobs_for_chat(username, chat_id)
+        except Exception:
+            pass
         return {"ok": True}
     if body.get("resume"):
         return stream_response(

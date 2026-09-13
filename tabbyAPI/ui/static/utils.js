@@ -236,6 +236,8 @@
 
   function formatAssistantContent(text) {
     let out = String(text || "");
+    out = out.replace(/<(?:think|thinking|reasoning)\b[^>]*>[\s\S]*?<\/(?:think|thinking|reasoning)>/gi, "");
+    out = out.replace(/<(?:think|thinking|reasoning)\b[^>]*>[\s\S]*$/gi, "");
     const wrapped = out.match(/^\s*<answer>\s*([\s\S]*?)\s*<\/answer>\s*$/i);
     if (wrapped) {
       out = wrapped[1];
@@ -261,6 +263,70 @@
     out = out.replace(/The GPU will save those PNG files[^\n]*/gi, "");
     out = out.replace(/\n{3,}/g, "\n\n");
     return out.trim();
+  }
+
+  function parseToolArguments(raw) {
+    if (raw && typeof raw === "object" && !Array.isArray(raw)) return raw;
+    const text = String(raw || "").trim();
+    if (!text) return {};
+    try {
+      return JSON.parse(text);
+    } catch {
+      /* concatenated JSON objects — keep the first */
+    }
+    if (!text.startsWith("{") && !text.startsWith("[")) return {};
+    let depth = 0;
+    let inStr = false;
+    let escape = false;
+    for (let i = 0; i < text.length; i += 1) {
+      const ch = text[i];
+      if (inStr) {
+        if (escape) {
+          escape = false;
+          continue;
+        }
+        if (ch === "\\") {
+          escape = true;
+          continue;
+        }
+        if (ch === '"') inStr = false;
+        continue;
+      }
+      if (ch === '"') {
+        inStr = true;
+        continue;
+      }
+      if (ch === "{" || ch === "[") depth += 1;
+      else if (ch === "}" || ch === "]") {
+        depth -= 1;
+        if (depth === 0) {
+          try {
+            const value = JSON.parse(text.slice(0, i + 1));
+            return value && typeof value === "object" ? value : {};
+          } catch {
+            return {};
+          }
+        }
+      }
+    }
+    return {};
+  }
+
+  function splitThinkFromContent(text) {
+    const raw = String(text || "");
+    if (!raw) return { content: "", reasoning: "" };
+    const thinkBlocks = [];
+    let rest = raw.replace(/<(?:think|thinking|reasoning)\b[^>]*>([\s\S]*?)<\/(?:think|thinking|reasoning)>/gi, (_, body) => {
+      thinkBlocks.push(String(body || "").trim());
+      return "";
+    });
+    rest = rest.replace(/<(?:think|thinking|reasoning)\b[^>]*>([\s\S]*)$/gi, (_, body) => {
+      thinkBlocks.push(String(body || "").trim());
+      return "";
+    });
+    const answer = rest.match(/<answer\b[^>]*>([\s\S]*?)<\/answer>/i);
+    if (answer) rest = answer[1];
+    return { content: rest, reasoning: thinkBlocks.filter(Boolean).join("\n") };
   }
 
   function isImageHref(href) {
@@ -1955,6 +2021,8 @@
     formatBytes,
     formatDuration,
     formatAssistantContent,
+    parseToolArguments,
+    splitThinkFromContent,
     followUpSuggestions,
     renderMarkdown,
     cssVar,
@@ -2074,13 +2142,17 @@
         window.dispatchEvent(new CustomEvent("tabby-gpu-status", { detail: data }));
         return;
       }
-      const mode = data.gpu_mode || "gpu";
+      const loaded = Boolean(data.tabby_model || data.llama_up || data.comfy_up);
+      const mode = loaded ? (data.gpu_mode || "gpu") : "idle";
       const label = data.profile || data.tabby_model || "idle";
       const pretty = ((data.profile_labels || {})[data.profile] || "").trim();
-      const text = `${String(mode).toUpperCase()} · ${label}`;
+      const text = loaded
+        ? `${String(mode).toUpperCase()} · ${label}`
+        : `UNLOADED · ${label}`;
       labelEl.textContent = text;
-      chip.className = "chip" + (mode === "llm" ? " ok" : " warn");
+      chip.className = "chip" + (loaded && mode === "llm" ? " ok" : " warn");
       const parts = ["Click to switch model"];
+      if (!loaded) parts.unshift("Nothing is serving");
       if (pretty && pretty !== label) parts.unshift(pretty);
       if (data.tabby_model && data.tabby_model !== pretty) parts.push(data.tabby_model);
       chip.title = parts.join(" · ");

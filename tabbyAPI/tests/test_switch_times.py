@@ -345,6 +345,7 @@ class ImageJobRecordsTests(unittest.IsolatedAsyncioTestCase):
             mock.patch("images.jobs.time.time", side_effect=lambda: next(clock, 1064.0)),
             mock.patch("common.phrase_switch.set_switch_lock"),
             mock.patch("common.phrase_switch.clear_switch_lock"),
+            mock.patch("images.jobs.loaded_tabby_name", return_value="Qwen3.5-9B-exl3-4.00bpw"),
             mock.patch("common.switch_times.record_ready") as rec,
         ):
             name = await jobs.reload_last_llm()
@@ -527,6 +528,55 @@ class YieldComfyTests(unittest.TestCase):
         )
         with mock.patch("images.jobs.active_mcp_image_job", return_value=busy):
             self.assertFalse(should_yield_comfy_to_llm(data))
+
+
+class ListModelsTextTests(unittest.TestCase):
+    def test_list_text_skips_embeddings_and_marks_loaded(self):
+        from common.phrase_switch import list_text
+
+        with (
+            mock.patch(
+                "common.phrase_switch.installed_models",
+                return_value=["Qwen3.5-9B-exl3-4.00bpw"],
+            ),
+            mock.patch(
+                "common.phrase_switch.loaded_switch_folder",
+                return_value="Qwen3.5-9B-exl3-4.00bpw",
+            ),
+            mock.patch(
+                "common.phrase_switch.profile_map",
+                return_value={
+                    "qwen3.5-9b-exl3-4.00bpw": {
+                        "alias": "qwen",
+                        "folder": "Qwen3.5-9B-exl3-4.00bpw",
+                        "pretty": "Qwen 9B",
+                        "max_seq_len": 262144,
+                    }
+                },
+            ),
+            mock.patch(
+                "common.phrase_switch.profile_alias_for_model", return_value="qwen"
+            ),
+        ):
+            text = list_text()
+        self.assertIn("loaded", text)
+        self.assertIn("switch to qwen", text)
+
+    def test_installed_models_skips_embedding_folders(self):
+        from common.phrase_switch import installed_models
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            embed = root / "Qwen3-Embedding-0.6B"
+            llm = root / "Qwen3.5-9B-exl3-4.00bpw"
+            embed.mkdir()
+            llm.mkdir()
+            (embed / "config.json").write_text("{}", encoding="utf-8")
+            (llm / "config.json").write_text("{}", encoding="utf-8")
+            with mock.patch("common.phrase_switch.MODELS_DIR", root):
+                names = installed_models()
+        self.assertEqual(names, ["Qwen3.5-9B-exl3-4.00bpw"])
+        self.assertNotIn("Qwen3-Embedding-0.6B", names)
 
 
 if __name__ == "__main__":

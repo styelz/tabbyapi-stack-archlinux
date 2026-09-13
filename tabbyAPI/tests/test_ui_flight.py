@@ -139,6 +139,15 @@ class FlightRegisterTests(unittest.TestCase):
         first.done = True
         self.assertEqual([flight.chat_id for flight in iter_live_flights()], ["chat-b"])
 
+    def test_abort_hides_flight_from_live_list(self):
+        from ui.flight import abort_flight
+
+        flight = ConsoleFlight("u", "chat-a", "chat", "hello")
+        register_flight(flight)
+        self.assertTrue(iter_live_flights())
+        abort_flight("u", "chat-a")
+        self.assertEqual(iter_live_flights(), [])
+
 
 class ConsoleStatusPublishTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):

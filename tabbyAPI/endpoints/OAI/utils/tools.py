@@ -1,7 +1,8 @@
 """Tool call processing utilities for OAI server."""
 
+import json
 from common.logger import xlogger
-from typing import List
+from typing import Any, List
 
 from endpoints.OAI.types.tools import ToolCall
 from endpoints.OAI.utils.toolcall_formats import (
@@ -66,6 +67,32 @@ def is_supported_format(tool_format: str) -> bool:
     return tool_format in ALL_TOOLCALL_FORMATS
 
 
+def first_json_value(text: str) -> Any:
+    """Parse one JSON value. Concatenated objects keep the first."""
+    raw = (text or "").strip()
+    if not raw:
+        return {}
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        try:
+            value, _end = json.JSONDecoder().raw_decode(raw)
+        except json.JSONDecodeError:
+            return {}
+    if isinstance(value, dict):
+        return value
+    return {"value": value}
+
+
+def coerce_tool_arguments(raw) -> str:
+    if isinstance(raw, dict):
+        return json.dumps(raw, ensure_ascii=False)
+    parsed = first_json_value("" if raw is None else str(raw))
+    if parsed:
+        return json.dumps(parsed, ensure_ascii=False)
+    return "" if raw is None else str(raw)
+
+
 def parse_toolcalls(tool_calls_str: str, tool_format: str) -> List[ToolCall]:
     """
     Dispatch tool call parsing to the appropriate format handler.
@@ -83,7 +110,13 @@ def parse_toolcalls(tool_calls_str: str, tool_format: str) -> List[ToolCall]:
         if not parser:
             return []
 
-        return parser.parse_toolcalls(tool_calls_str)
+        calls = parser.parse_toolcalls(tool_calls_str)
+        for call in calls:
+            func = getattr(call, "function", None)
+            if func is None or getattr(func, "arguments", None) is None:
+                continue
+            func.arguments = coerce_tool_arguments(func.arguments)
+        return calls
 
     except Exception as e:
         xlogger.error(

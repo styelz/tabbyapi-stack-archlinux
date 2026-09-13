@@ -47,6 +47,10 @@ class PreviewTests(unittest.TestCase):
         self.assertEqual(out.count("data-tabby-preview-storage"), 1)
         self.assertEqual(again, out)
 
+    def test_guess_media_type_webp(self):
+        self.assertEqual(workspace.guess_media_type(Path("images/logo.webp")), "image/webp")
+        self.assertEqual(workspace.guess_media_type(Path("images/hero.png")), "image/png")
+
 
 if __name__ == "__main__":
     unittest.main()

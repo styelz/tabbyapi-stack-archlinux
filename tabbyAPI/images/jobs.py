@@ -57,6 +57,7 @@ RESTART_ABANDON_REASON = "TabbyAPI restarted before this job finished."
 CODING_ABANDON_REASON = (
     "Left unused while another chat started writing."
 )
+CANCEL_ABANDON_REASON = "Cancelled."
 STALE_ABANDON_REASON = (
     "Left unused after the API restarted. Ask again if you still want that picture."
 )
@@ -179,9 +180,16 @@ def _is_load_error(event) -> bool:
 async def ensure_comfy() -> None:
     """Unload any LLM and make sure ComfyUI owns the GPU."""
     from common.phrase_switch import clear_switch_lock, set_switch_lock
-    from sidecar.settings import is_sidecar_process
 
-    if is_sidecar_process():
+    sidecar = False
+    try:
+        from sidecar.settings import is_sidecar_process
+
+        sidecar = is_sidecar_process()
+    except Exception:
+        sidecar = False
+
+    if sidecar:
         from sidecar.model_status import unload_backend
 
         if comfy_up() and not loaded_tabby_name() and not llama_up():
@@ -268,6 +276,13 @@ async def _load_profile(profile_name: str) -> None:
     async for event in stream_model_load(load_data, model_path):
         if _is_load_error(event):
             raise RuntimeError(event)
+    if loaded_tabby_name():
+        return
+    for _ in range(60):
+        await asyncio.sleep(0.5)
+        if loaded_tabby_name():
+            return
+    raise RuntimeError(f"Model {model_name} did not finish loading")
 
 
 async def wait_out_generating_image_jobs(*, from_job: bool = False, interval: float = 0.5) -> None:
@@ -329,7 +344,14 @@ async def reload_last_llm(name: Optional[str] = None, *, from_job: bool = False)
         raise RuntimeError("No TabbyAPI profile is installed")
 
     from common.phrase_switch import clear_switch_lock, set_switch_lock
-    from sidecar.settings import is_sidecar_process
+
+    sidecar = False
+    try:
+        from sidecar.settings import is_sidecar_process
+
+        sidecar = is_sidecar_process()
+    except Exception:
+        sidecar = False
 
     # Lock before stop_comfy so /status reports switching during the wait
     # (systemd stop can take tens of seconds). The UI loading banner keys off it.
@@ -341,14 +363,21 @@ async def reload_last_llm(name: Optional[str] = None, *, from_job: bool = False)
         await asyncio.to_thread(stop_comfy)
         if profile_backend(profile_name) == "llamacpp":
             await asyncio.to_thread(wait_gpu_vram_drain)
-            if is_sidecar_process():
+            if sidecar:
                 from sidecar.model_status import unload_backend
 
                 await asyncio.to_thread(unload_backend)
             elif loaded_tabby_name():
                 await model.unload_model(skip_wait=True)
             write_mode("llama", profile=profile_name)
-            await _start_llama_profile(profile_name)
+            try:
+                await _start_llama_profile(profile_name)
+            except Exception:
+                write_mode("idle", profile=profile_name)
+                raise
+            if not llama_up():
+                write_mode("idle", profile=profile_name)
+                raise RuntimeError(f"llama.cpp did not become ready ({profile_name})")
         else:
             await asyncio.to_thread(stop_llama)
             await asyncio.to_thread(wait_gpu_vram_drain)
@@ -376,6 +405,9 @@ async def reload_last_llm(name: Optional[str] = None, *, from_job: bool = False)
 
             if not bounce:
                 write_mode("llm", profile=profile_name)
+                if not loaded_tabby_name():
+                    write_mode("idle", profile=profile_name)
+                    raise RuntimeError(f"{profile_name} did not finish loading")
     finally:
         clear_switch_lock()
     if bounce:
@@ -405,14 +437,17 @@ async def _start_llama_profile(profile_name: str) -> None:
     if not gguf:
         raise RuntimeError(f"GGUF for {profile_name} is not installed ({model_name})")
     mmproj = model_cfg.get("mmproj") or resolve_mmproj_path(model_name)
-    await asyncio.to_thread(
-        start_llama_if_needed,
-        gguf,
-        profile=profile_name,
-        n_gpu_layers=model_cfg.get("n_gpu_layers", -1),
-        max_seq_len=model_cfg.get("max_seq_len"),
-        mmproj=str(mmproj) if mmproj else None,
-    )
+    try:
+        await asyncio.to_thread(
+            start_llama_if_needed,
+            gguf,
+            profile=profile_name,
+            n_gpu_layers=model_cfg.get("n_gpu_layers", -1),
+            max_seq_len=model_cfg.get("max_seq_len"),
+            mmproj=str(mmproj) if mmproj else None,
+        )
+    except SystemExit as exc:
+        raise RuntimeError(str(exc) or f"llama.cpp did not start for {profile_name}") from exc
 
 
 def _generate_lock() -> asyncio.Lock:
@@ -627,6 +662,38 @@ def abandon_foreign_coding_job(
     _mark_job_abandoned(job, CODING_ABANDON_REASON)
     _persist_jobs()
     return True
+
+
+def abandon_jobs_for_chat(owner: str, chat_id: str) -> int:
+    """Drop coding or in-flight jobs this conversation started (Stop / cancel)."""
+    global _MCP_TASK, _MCP_JOB_ID
+    owner_name = str(owner or "").strip()
+    chat_name = str(chat_id or "").strip()
+    if not owner_name or not chat_name:
+        return 0
+    _load_persisted_jobs()
+    count = 0
+    cancel_worker = False
+    for job in list(_MCP_JOBS.values()):
+        if str(getattr(job, "owner", "") or "").strip() != owner_name:
+            continue
+        if str(getattr(job, "chat_id", "") or "").strip() != chat_name:
+            continue
+        if job.status not in ("coding", "queued", "running"):
+            continue
+        _mark_job_abandoned(job, CANCEL_ABANDON_REASON)
+        count += 1
+        if _MCP_JOB_ID == job.id:
+            cancel_worker = True
+    if count:
+        _persist_jobs()
+    if cancel_worker:
+        task = _MCP_TASK
+        _MCP_TASK = None
+        _MCP_JOB_ID = None
+        if task is not None and not task.done():
+            task.cancel()
+    return count
 
 
 def bind_job_workspace(job: Optional[McpImageJob], owner: str = "", chat_id: str = "") -> bool:

@@ -199,11 +199,27 @@ def public_api_base(request=None) -> str:
 
     Prefer the URL this request arrived on (including a reverse-proxy path
     prefix). Fall back to TABBY_PUBLIC_BASE, then Host + /v1, then localhost.
+
+    Reverse proxies often send Host + X-Forwarded-Proto but strip a path
+    prefix such as /openai. Host + '/v1' would then 404 image links.
+    When the request has no extra prefix, keep TABBY_PUBLIC_BASE's prefix
+    if it is the same host.
     """
     derived = _public_base_from_request(request)
-    if derived:
-        return derived
     env = (os.environ.get("TABBY_PUBLIC_BASE") or "").strip().rstrip("/")
+    if derived:
+        derived_parts = urlparse(derived)
+        derived_path = (derived_parts.path or "").rstrip("/") or "/v1"
+        if derived_path == "/v1" and env:
+            env_parts = urlparse(env if "://" in env else f"http://x{env}")
+            env_path = (env_parts.path or "").rstrip("/") or "/v1"
+            env_host = (env_parts.netloc or "").lower()
+            derived_host = (derived_parts.netloc or "").lower()
+            if env_path not in ("", "/v1") and (not env_host or env_host == derived_host):
+                merged = _v1_base(derived_parts.scheme, derived_parts.netloc, env_path)
+                if merged:
+                    return merged
+        return derived
     if env:
         return env
     return DEFAULT_PUBLIC_BASE
@@ -282,7 +298,10 @@ def should_skip_startup_load() -> bool:
 def write_mode(mode: str, **extra) -> dict:
     STATUS_PATH.parent.mkdir(parents=True, exist_ok=True)
     data = {"mode": mode, **extra}
-    STATUS_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    payload = json.dumps(data, indent=2)
+    tmp = STATUS_PATH.with_name(STATUS_PATH.name + ".tmp")
+    tmp.write_text(payload, encoding="utf-8")
+    tmp.replace(STATUS_PATH)
     return data
 
 

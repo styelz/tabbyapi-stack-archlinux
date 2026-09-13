@@ -422,33 +422,32 @@ async def saver_state() -> dict[str, Any]:
     stack_status blocks the event loop on nvidia-smi (up to 5s), which is why
     the field used to sit idle for several seconds after a chat started.
     """
-    from common.gpu_mode import llama_up, read_mode
     from common.live_decode import snapshot as decode_snapshot
     from common.phrase_switch import (
+        gpu_serving_fields,
         last_llm_profile_name,
         profile_alias_for_model,
+        switch_in_progress,
         switch_lock_held,
         switch_lock_name,
     )
-    from images.jobs import active_mcp_image_job, loaded_tabby_name
+    from images.jobs import active_mcp_image_job
     from select_model import last_llama_profile, last_profile
     from ui.flight import iter_live_flights
     from ui.manager import _host_live, cached_nvidia_stats, ensure_gpu_cache
     from ui.occupancy import snapshot as stack_queue_snapshot
 
-    mode = read_mode()
-    tabby = loaded_tabby_name()
-    llama = llama_up()
-    gpu_mode = mode.get("mode") or "llm"
-    if llama:
-        gpu_mode = "llama"
-    elif tabby:
-        gpu_mode = "llm"
+    serving = gpu_serving_fields()
+    gpu_mode = serving["gpu_mode"]
+    tabby = serving["tabby_model"]
+    loaded = serving["loaded"]
+    mode = serving.get("mode_file") or {}
     lock_name = switch_lock_name()
     lock_held = switch_lock_held()
     restarting = lock_held and lock_name == "restart"
-    switching = lock_held and not restarting
-    if gpu_mode == "llama":
+    switching = (lock_held or switch_in_progress()) and not restarting
+    intended = str(mode.get("mode") or "").lower()
+    if gpu_mode == "llama" or (not loaded and intended == "llama"):
         profile = last_llama_profile() or last_profile()
     else:
         profile = profile_alias_for_model(tabby) or last_llm_profile_name() or last_profile()

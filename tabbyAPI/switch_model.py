@@ -448,13 +448,17 @@ def switch_to_llama(
     stop_comfy()
     write_mode("llama", profile=name)
     already = llama_up() and llama_loaded_id() in {name, model_name, "gpt-4o"}
-    start_llama_if_needed(
-        gguf,
-        profile=name,
-        n_gpu_layers=model_cfg.get("n_gpu_layers", -1),
-        max_seq_len=model_cfg.get("max_seq_len"),
-        mmproj=str(mmproj) if mmproj else None,
-    )
+    try:
+        start_llama_if_needed(
+            gguf,
+            profile=name,
+            n_gpu_layers=model_cfg.get("n_gpu_layers", -1),
+            max_seq_len=model_cfg.get("max_seq_len"),
+            mmproj=str(mmproj) if mmproj else None,
+        )
+    except Exception:
+        write_mode("idle", profile=name)
+        raise
     elapsed = time.time() - started
     print(f"Now loaded: {gguf.name} via llama.cpp ({elapsed:.0f}s)")
     print("GPU mode: llama")

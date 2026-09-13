@@ -275,3 +275,26 @@ class InstallerLlamaTests(unittest.TestCase):
         self.assertIn("gpt-4o", start.read_text(encoding="utf-8"))
         self.assertIn("auto", start.read_text(encoding="utf-8"))
         self.assertIn('ngl=auto', start.read_text(encoding="utf-8"))
+
+    def test_wait_llama_healthy_fails_fast_when_process_dies(self):
+        from common import llama_runtime
+
+        clock = {"t": 0.0}
+
+        def now():
+            return clock["t"]
+
+        sleeps = []
+
+        def fake_sleep(seconds):
+            sleeps.append(seconds)
+            clock["t"] += seconds
+
+        with (
+            mock.patch.object(llama_runtime, "llama_up", return_value=False),
+            mock.patch.object(llama_runtime, "llama_pids", side_effect=[[42], [], [], []]),
+            mock.patch.object(llama_runtime.time, "time", side_effect=now),
+            mock.patch.object(llama_runtime.time, "sleep", side_effect=fake_sleep),
+        ):
+            self.assertFalse(llama_runtime._wait_llama_healthy(180))
+        self.assertLess(clock["t"], 10)

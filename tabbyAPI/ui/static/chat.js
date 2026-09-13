@@ -11579,7 +11579,15 @@ function mountChat(root) {
       const tools = delta.tool_calls || message.tool_calls;
       if (Array.isArray(tools) && tools.length) onEvent({ tool_calls: tools });
       if (choice.finish_reason) onEvent({ finish_reason: choice.finish_reason });
-      if (content || reasoning) onEvent({ content, reasoning });
+      if (content || reasoning) {
+        const split = TabbyUI.splitThinkFromContent
+          ? TabbyUI.splitThinkFromContent(content)
+          : { content, reasoning: "" };
+        onEvent({
+          content: split.content,
+          reasoning: (reasoning || "") + (split.reasoning || ""),
+        });
+      }
     }
     return rest;
   }
@@ -12312,11 +12320,15 @@ function mountChat(root) {
       const fn = (item && item.function) || {};
       let args = fn.arguments;
       if (typeof args === "string") {
-        try {
-          args = args ? JSON.parse(args) : {};
-        } catch {
-          args = {};
-        }
+        args = TabbyUI.parseToolArguments
+          ? TabbyUI.parseToolArguments(args)
+          : (() => {
+              try {
+                return args ? JSON.parse(args) : {};
+              } catch {
+                return {};
+              }
+            })();
       }
       if (!args || typeof args !== "object") args = {};
       return {
@@ -12947,7 +12959,9 @@ function mountChat(root) {
       const stepSummary = summaryFromCodeSteps(savedSteps);
       const item = {
         role: "assistant",
-        content: assembled || (persistEmpty ? (stepSummary || EMPTY_REPLY_NOTE) : stepSummary),
+        content: (TabbyUI.formatAssistantContent
+          ? TabbyUI.formatAssistantContent(assembled)
+          : assembled) || (persistEmpty ? (stepSummary || EMPTY_REPLY_NOTE) : stepSummary),
         createdAt: Date.now(),
       };
       if (historyRun) item.historyRun = historyRun;

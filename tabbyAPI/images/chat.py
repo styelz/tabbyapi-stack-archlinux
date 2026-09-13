@@ -968,6 +968,11 @@ async def _write_page_then_maybe_launch(data, job, disconnect_handler):
     return code_response, _should_launch_mixed_render(code_response, job, data)
 
 
+def _writes_have_paths(code_response) -> bool:
+    message = _assistant_message(code_response)
+    return any(_tool_write_path(args) for _name, args in _file_write_pairs(message))
+
+
 def _first_code_pass_holds_llm(code_response, *, page_ready: bool = False) -> bool:
     """Hold Comfy for page tools. Skip only for a pure dest replace."""
     return not page_ready
@@ -984,10 +989,9 @@ def _tool_call_pairs(message) -> list[tuple[str, dict]]:
         if isinstance(raw, dict):
             args = raw
         else:
-            try:
-                parsed = json.loads(raw)
-            except json.JSONDecodeError:
-                parsed = {"arguments": raw}
+            from endpoints.OAI.utils.tools import first_json_value
+
+            parsed = first_json_value(str(raw))
             args = parsed if isinstance(parsed, dict) else {"value": parsed}
         pairs.append((str(name), args))
     return pairs
@@ -1908,6 +1912,10 @@ async def handle(
                 code_response = await _write_site_code(data, disconnect_handler)
                 if code_response is None:
                     return None
+                if not _writes_have_paths(code_response) and not _pages_on_disk(
+                    owner, chat_id
+                ):
+                    return code_response
                 keep = _first_code_pass_holds_llm(
                     code_response,
                     page_ready=_dests_already_on_page(owner, chat_id, plan.items)
@@ -1947,6 +1955,8 @@ async def handle(
             code_response = await _write_site_code(data, disconnect_handler)
             if code_response is None:
                 return None
+            if not _writes_have_paths(code_response) and not _pages_on_disk(owner, chat_id):
+                return code_response
             keep = _first_code_pass_holds_llm(code_response)
             started = await _start_mixed_job(
                 plan.items,

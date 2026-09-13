@@ -325,6 +325,27 @@ def _same_model(model_path: Path) -> bool:
         return False
 
 
+def _wait_llama_healthy(timeout: float) -> bool:
+    """True once /health answers. False if the process dies or time runs out."""
+    deadline = time.time() + max(1.0, float(timeout))
+    saw_pid = False
+    missing = 0
+    while time.time() < deadline:
+        if llama_up():
+            return True
+        pids = llama_pids()
+        if pids:
+            saw_pid = True
+            missing = 0
+        elif saw_pid:
+            missing += 1
+            if missing >= 3:
+                print("  llama-server exited before becoming healthy")
+                return False
+        time.sleep(1)
+    return llama_up()
+
+
 def start_llama_if_needed(
     model_path: Path,
     *,
@@ -350,15 +371,14 @@ def start_llama_if_needed(
     if llama_up() or llama_pids():
         stop_llama()
     print(f"  Starting llama-server ({path.name})...")
-    if start_llama_via_systemd():
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            if llama_up():
-                print("  llama-server is up")
-                return
-            time.sleep(1)
-        print("  systemd llama-server did not become healthy; trying a direct start")
     log_path = ROOT / "llama-server.log"
+    if start_llama_via_systemd():
+        if _wait_llama_healthy(timeout):
+            print("  llama-server is up")
+            return
+        print("  systemd llama-server did not become healthy; trying a direct start")
+        if llama_pids():
+            kill_llama_process()
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log = log_path.open("a", encoding="utf-8")
     cmd = llama_argv(
@@ -373,10 +393,7 @@ def start_llama_if_needed(
     else:
         kwargs["start_new_session"] = True
     subprocess.Popen(cmd, **kwargs)
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if llama_up():
-            print("  llama-server is up")
-            return
-        time.sleep(1)
+    if _wait_llama_healthy(timeout):
+        print("  llama-server is up")
+        return
     raise SystemExit(f"llama-server did not start within {timeout:.0f}s. See {log_path}")
