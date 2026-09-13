@@ -3,10 +3,22 @@
 from __future__ import annotations
 
 import unittest
+import re
 from pathlib import Path
 
 CHAT_JS = Path(__file__).resolve().parents[1] / "ui" / "static" / "chat.js"
 CHAT_CSS = Path(__file__).resolve().parents[1] / "ui" / "static" / "styles.css"
+
+
+def clean_reply_model(name: str) -> str:
+    text = " ".join(str(name or "").split())
+    if not text or text.lower() == "gpt-4o":
+        return ""
+    text = re.sub(r"\s*\(vision off on [^)]+\)\s*$", "", text, flags=re.I).strip()
+    slash = text.find("/")
+    if 0 < slash <= 32 and not re.search(r"\s", text[:slash]):
+        text = text[slash + 1 :].strip()
+    return text[:80]
 
 
 def compose_action(in_flight: bool, typed: str, queued: str) -> tuple[str, bool]:
@@ -79,6 +91,33 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
         self.assertIn("signal: abortController.signal", self.src)
         self.assertIn('err.name === "AbortError"', self.src)
         self.assertNotRegex(self.src, r"if \(inFlight\) return;")
+
+    def test_live_thought_does_not_rerender_markdown_every_token(self):
+        self.assertIn("function paintThoughtSoon()", self.src)
+        self.assertIn("function paintLiveReason(block)", self.src)
+        self.assertIn('block.classList.add("is-live")', self.src)
+        self.assertIn("if (block.textContent !== reasoningText) block.textContent = reasoningText;", self.src)
+        css = CHAT_CSS.read_text(encoding="utf-8")
+        self.assertIn(".think-reason.is-live", css)
+        self.assertIn("white-space: pre-wrap", css)
+
+    def test_reply_model_name_does_not_flip_during_stream(self):
+        self.assertIn("if (modelName && !(opts && opts.replace)) return;", self.src)
+        self.assertIn("working.setModel(named, { replace: true })", self.src)
+        poll = self.src.split("function startStatusPoll")[1].split("function sleep(")[0]
+        self.assertIn('kind === "switch" || kind === "restart"', poll)
+        self.assertIn("text.replace(/\\s*\\(vision off on [^)]+\\)\\s*$/i", self.src)
+        self.assertEqual(
+            clean_reply_model(
+                "turboderp/Qwen3.8-27B-exl3 SC_3.00bpw_H4_V4 (vision off on RTX 4070 Ti 12 GB)"
+            ),
+            "Qwen3.8-27B-exl3 SC_3.00bpw_H4_V4",
+        )
+        self.assertEqual(
+            clean_reply_model("Qwen3.8-27B-exl3-SC_3.00bpw_H4_V4"),
+            "Qwen3.8-27B-exl3-SC_3.00bpw_H4_V4",
+        )
+        self.assertEqual(clean_reply_model("gpt-4o"), "")
 
     def test_typed_text_during_session_is_queued(self):
         self.assertIn("function queueFollowup(", self.src)

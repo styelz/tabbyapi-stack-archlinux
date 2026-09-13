@@ -10012,8 +10012,13 @@ function mountChat(root) {
   }
 
   function cleanReplyModel(name) {
-    const text = String(name || "").replace(/\s+/g, " ").trim();
+    let text = String(name || "").replace(/\s+/g, " ").trim();
     if (!text || /^gpt-4o$/i.test(text)) return "";
+    text = text.replace(/\s*\(vision off on [^)]+\)\s*$/i, "").trim();
+    const slash = text.indexOf("/");
+    if (slash > 0 && slash <= 32 && !/\s/.test(text.slice(0, slash))) {
+      text = text.slice(slash + 1).trim();
+    }
     return text.slice(0, 80);
   }
 
@@ -10382,11 +10387,53 @@ function mountChat(root) {
       }
     }, true);
 
+    let thoughtPaintRaf = 0;
+
+    function paintThoughtSoon() {
+      if (finished) {
+        if (thoughtPaintRaf) {
+          cancelAnimationFrame(thoughtPaintRaf);
+          thoughtPaintRaf = 0;
+        }
+        paintThought();
+        return;
+      }
+      if (thoughtPaintRaf) return;
+      thoughtPaintRaf = requestAnimationFrame(() => {
+        thoughtPaintRaf = 0;
+        paintThought();
+      });
+    }
+
+    function paintLiveReason(block) {
+      block.classList.add("is-live");
+      block.style.whiteSpace = "pre-wrap";
+      if (block.textContent !== reasoningText) block.textContent = reasoningText;
+    }
+
     function paintThought() {
       paintStepCount();
       if (!hasTrace()) {
         thought.hidden = true;
         thought.innerHTML = "";
+        return;
+      }
+      const liveReasonOnly = Boolean(
+        !finished
+        && !imageHoldActive
+        && reasoningText
+        && !steps.some(stepIsVisible)
+      );
+      const existing = thought.firstElementChild;
+      if (
+        liveReasonOnly
+        && thought.childElementCount === 1
+        && existing
+        && existing.classList.contains("think-reason")
+      ) {
+        paintLiveReason(existing);
+        thought.hidden = false;
+        stickThought();
         return;
       }
       const keepScroll = thought.scrollTop;
@@ -10395,7 +10442,8 @@ function mountChat(root) {
       if (reasoningText) {
         const block = document.createElement("div");
         block.className = "think-reason";
-        block.innerHTML = TabbyUI.renderMarkdown(reasoningText);
+        if (!finished && !imageHoldActive) paintLiveReason(block);
+        else block.innerHTML = TabbyUI.renderMarkdown(reasoningText);
         thought.appendChild(block);
       }
       steps.forEach((step) => {
@@ -10426,7 +10474,7 @@ function mountChat(root) {
       }
       if (!reasoningFromModel && !steps.length) {
         reasoningText = line;
-        paintThought();
+        paintThoughtSoon();
         thought.hidden = false;
       }
       stickLog();
@@ -10458,6 +10506,10 @@ function mountChat(root) {
       if (pinThoughtRaf) {
         cancelAnimationFrame(pinThoughtRaf);
         pinThoughtRaf = 0;
+      }
+      if (thoughtPaintRaf) {
+        cancelAnimationFrame(thoughtPaintRaf);
+        thoughtPaintRaf = 0;
       }
     }
 
@@ -10554,7 +10606,7 @@ function mountChat(root) {
             bubble.hidden = true;
             turn.classList.remove("has-answer");
           }
-          paintThought();
+          paintThoughtSoon();
           if (hasTrace() && !imageHoldActive) thought.hidden = false;
           stickLog();
           return;
@@ -10570,7 +10622,7 @@ function mountChat(root) {
         } else {
           steps.push(row);
         }
-        paintThought();
+        paintThoughtSoon();
         if (!imageHoldActive) thought.hidden = false;
         stickLog();
       },
@@ -10584,7 +10636,7 @@ function mountChat(root) {
           head.hidden = false;
           setProcessing(false);
         }
-        paintThought();
+        paintThoughtSoon();
         stickLog();
       },
       setAnswer(text) {
@@ -10671,9 +10723,11 @@ function mountChat(root) {
           ticker = null;
         }
       },
-      setModel(name) {
+      setModel(name, opts) {
         const next = cleanReplyModel(name);
         if (!next) return;
+        if (next === modelName) return;
+        if (modelName && !(opts && opts.replace)) return;
         modelName = next;
         paintModel();
       },
@@ -11618,7 +11672,14 @@ function mountChat(root) {
         const data = await TabbyUI.api("status");
         if (stopped) return;
         rememberGpu(data);
-        if (working && working.setModel) working.setModel(displayModelName(data));
+        if (working && working.setModel) {
+          const named = displayModelName(data);
+          if (kind === "switch" || kind === "restart") {
+            working.setModel(named, { replace: true });
+          } else {
+            working.setModel(named);
+          }
+        }
         applyStackOccupancy(data, working, kind);
         if (planChecklistBuilding && data && data.job) {
           advanceChecklistForImageStatus(labelForJob(data.job), flightChatId, data.job);
