@@ -6,7 +6,7 @@ from unittest import mock
 
 from common.llama_runtime import ngl_arg
 from common.model import validate_backend
-from sidecar.llama_adapter import adapt_chat_payload, rewrite_sse_line
+from sidecar.llama_adapter import adapt_chat_payload, cut_at_stop, rewrite_sse_line
 
 
 class FakeHF:
@@ -43,6 +43,26 @@ class LlamaAdapterTests(unittest.TestCase):
         self.assertIn("<|im_end|>", body["stop"])
         self.assertIn("<|fim_start|>", body["stop"])
         self.assertIn("<｜end▁of▁sentence｜>", body["stop"])
+        self.assertIn("^^", body["stop"])
+
+    def test_cut_at_stop_strips_trailing_carets(self):
+        text, hit = cut_at_stop("I am glad to hear from you^^")
+        self.assertEqual(text, "I am glad to hear from you")
+        self.assertTrue(hit)
+
+    def test_rewrite_sse_cuts_trailing_carets(self):
+        state = {}
+        line, _ = rewrite_sse_line(
+            'data: {"choices":[{"delta":{"content":"I am glad to hear from you^^"}}]}',
+            in_think=False,
+            state=state,
+        )
+        self.assertTrue(state.get("stopped"))
+        event = json.loads(line[5:].strip())
+        self.assertEqual(
+            event["choices"][0]["delta"]["content"],
+            "I am glad to hear from you",
+        )
 
     def test_adapt_chat_payload_keeps_client_stop(self):
         body = adapt_chat_payload(
@@ -111,6 +131,7 @@ class LlamaAdapterTests(unittest.TestCase):
         self.assertEqual(body["messages"][0]["content"], SIMPLE_CHAT_SYSTEM)
         self.assertNotIn("PNG", body["messages"][0]["content"])
         self.assertIn("### Instruction:", body["stop"])
+        self.assertIn("^^", body["stop"])
 
     def test_adapt_chat_payload_keeps_console_system_for_chatml_models(self):
         console = (

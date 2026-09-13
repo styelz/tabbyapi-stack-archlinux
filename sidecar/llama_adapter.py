@@ -58,6 +58,8 @@ DEFAULT_STOPS = (
     "<fim_prefix>",
     "<fim_suffix>",
     "<fim_middle>",
+    # DeepSeek Coder / Kexer often close a turn with this vocab token.
+    "^^",
 )
 
 TOOL_PAYLOAD_KEYS = ("tools", "functions", "tool_choice", "parallel_tool_calls")
@@ -81,6 +83,7 @@ DEEPSEEK_STOPS = (
     "### Instruction:",
     "### Response:",
     "<|EOT|>",
+    "^^",
 )
 VICUNA_STOPS = (
     "\nUSER:",
@@ -233,17 +236,20 @@ def _merge_stops(body: dict[str, Any], extra: tuple[str, ...] | list[str] = ()) 
 
 
 def cut_at_stop(text: str) -> tuple[str, bool]:
-    """Trim leaked ChatML / FIM markers. Returns (text, hit_a_stop)."""
+    """Trim leaked ChatML / FIM / DeepSeek end markers. Returns (text, hit_a_stop)."""
     if not text:
         return text, False
     cut = len(text)
     hit = False
-    for marker in DEFAULT_STOPS:
+    for marker in (*DEFAULT_STOPS, *DEEPSEEK_STOPS, *VICUNA_STOPS):
         idx = text.find(marker)
         if 0 <= idx < cut:
             cut = idx
             hit = True
-    return text[:cut], hit
+    trimmed = text[:cut]
+    if hit:
+        trimmed = trimmed.rstrip()
+    return trimmed, hit
 
 
 def cut_completion_stops(data: dict[str, Any]) -> dict[str, Any]:
