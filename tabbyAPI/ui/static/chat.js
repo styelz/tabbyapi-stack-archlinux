@@ -11782,10 +11782,13 @@ function mountChat(root) {
     }
     if (codeWriteMark) codeWriteMark.textContent = kind === "thinking" ? "Thinking" : "Code";
     if (codeWriteText) {
+      const llama = Boolean((TabbyUI.lastGpuStatus || {}).llama_up);
       codeWriteText.textContent =
         kind === "thinking"
           ? "This is a thinking chat model. It cannot write Code files. Switch to qwen or gemma to edit the project."
-          : "This model cannot write Code files. Switch to qwen or gemma to edit the project.";
+          : llama
+            ? "This GGUF cannot call Code file tools. Switch to a Qwen or Gemma EXL profile to edit the project."
+            : "This model cannot write Code files. Switch to qwen or gemma to edit the project.";
     }
     codeWriteHint.hidden = false;
     if (ggufBaseHint) ggufBaseHint.hidden = true;

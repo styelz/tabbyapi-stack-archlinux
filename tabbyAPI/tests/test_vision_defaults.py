@@ -150,6 +150,7 @@ class ProfileDefaultMatrixTests(unittest.TestCase):
         self.assertTrue(data["model"]["vision"])
         self.assertNotIn("vision_offload", data["model"])
         self.assertEqual(data["pretty"], "malaiwah/Qwen3.8 main")
+        self.assertEqual(data["model"]["tool_format"], "qwen3_5")
 
     def test_glm_thinking_download_gets_reasoning_tokens(self):
         from ui.models import profile_defaults_from_config

@@ -666,7 +666,9 @@ async def _chat_stream_collector(
             return "harmony", False, HarmonyStreamParser()
         if mc.muse_glimmer:
             return "muse_glimmer", False, GlimmerStreamParser()
-        tool_format = mc.tool_format
+        from common.phrase_switch import ensure_container_tool_format
+
+        tool_format = mc.tool_format or ensure_container_tool_format()
         t_tool_start, t_tool_end = get_toolcall_tags(tool_format)
         use_tool = params.tool_choice != "none" and bool(t_tool_start)
         use_think = bool(mc.reasoning_start_token)

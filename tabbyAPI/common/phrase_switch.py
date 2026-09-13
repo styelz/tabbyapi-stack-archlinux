@@ -447,6 +447,29 @@ def thinking_only_name(*parts: str) -> bool:
     return False
 
 
+def guess_tool_format(*parts: str) -> str:
+    """EXL tool parser for a Qwen/Gemma/GLM coding family, or empty."""
+    if thinking_only_name(*parts):
+        return ""
+    blob = " ".join(str(part or "") for part in parts).lower()
+    if not blob.strip():
+        return ""
+    if "gemma" in blob:
+        return "gemma4"
+    if "qwen" in blob:
+        return "qwen3_5"
+    if "glm" in blob and (
+        "4.5" in blob
+        or "4.6" in blob
+        or "4.7" in blob
+        or "glm45" in blob
+        or "glm46" in blob
+        or "glm47" in blob
+    ):
+        return "glm4_5"
+    return ""
+
+
 def serving_profile_name() -> str:
     """Alias the GPU is serving now, including GGUF. Not leftover last EXL."""
     try:
@@ -1099,35 +1122,95 @@ def request_has_tools(data: ChatCompletionRequest) -> bool:
     return bool(getattr(data, "tools", None) or getattr(data, "functions", None))
 
 
+def _llamacpp_backend(entry: dict) -> bool:
+    return str(entry.get("backend") or "").strip().lower() in LLAMA_ALIASES
+
+
+def resolved_tool_format(
+    alias: Optional[str] = None,
+    *,
+    folder: Optional[str] = None,
+    explicit: Optional[str] = None,
+) -> str:
+    """YAML tool_format, else a family guess. Empty for thinking-only / GGUF."""
+    fmt = str(explicit or "").strip()
+    if fmt:
+        return fmt
+    key = str(alias or serving_profile_name() or "").strip().lower()
+    entry = profile_map().get(key) or {}
+    fmt = str(entry.get("tool_format") or "").strip()
+    if fmt:
+        return fmt
+    if _llamacpp_backend(entry):
+        return ""
+    return guess_tool_format(key, entry.get("pretty"), entry.get("folder"), folder)
+
+
 def container_parses_tools() -> bool:
     from common import model as tabby_model
 
     container = getattr(tabby_model, "container", None)
     if container is None:
         return False
+    if getattr(container, "harmony", False) or getattr(container, "muse_glimmer", False):
+        return True
+    folder = str(getattr(container, "model_dir", "") or "")
     return bool(
-        getattr(container, "tool_format", None)
-        or getattr(container, "harmony", False)
-        or getattr(container, "muse_glimmer", False)
+        resolved_tool_format(
+            folder=folder,
+            explicit=getattr(container, "tool_format", None),
+        )
     )
 
 
+def ensure_container_tool_format() -> str:
+    """Fill an EXL container's tool_format from the family if YAML omitted it."""
+    from common import model as tabby_model
+
+    container = getattr(tabby_model, "container", None)
+    if container is None:
+        return ""
+    fmt = resolved_tool_format(
+        folder=str(getattr(container, "model_dir", "") or ""),
+        explicit=getattr(container, "tool_format", None),
+    )
+    if fmt and not getattr(container, "tool_format", None):
+        container.tool_format = fmt
+    return fmt
+
+
+def llama_native_tools(alias: Optional[str] = None) -> bool:
+    """True when llama.cpp's loaded GGUF chat template can emit tool calls."""
+    if not llama_up():
+        return False
+    key = str(alias or serving_profile_name() or "").strip().lower()
+    serving = serving_profile_name()
+    if alias and key and key != serving:
+        return False
+    try:
+        from sidecar.llama_adapter import llama_chat_caps
+
+        return bool(llama_chat_caps().get("supports_tools"))
+    except Exception:
+        return False
+
+
 def profile_parses_tools(alias: Optional[str] = None) -> bool:
-    """True when this profile's YAML can parse Code file tools."""
+    """True when this EXL profile can parse Code file tools."""
     if profile_is_thinking_only(alias):
         return False
     key = str(alias or serving_profile_name() or "").strip().lower()
     entry = profile_map().get(key) or {}
-    if str(entry.get("tool_format") or "").strip():
-        return True
     if bool(entry.get("harmony") or entry.get("muse_glimmer")):
         return True
-    return key in {"qwen", "qwen35", "qwen36", "gemma", "gemma26"}
+    return bool(resolved_tool_format(alias))
 
 
 def profile_writes_code_files(alias: Optional[str] = None) -> bool:
     """True when Code Agent can Write/Grep against a project."""
-    return profile_parses_tools(alias)
+    if profile_parses_tools(alias):
+        return True
+    return llama_native_tools(alias)
 
 
 def tools_without_format_response(data: ChatCompletionRequest):
@@ -1141,7 +1224,7 @@ def tools_without_format_response(data: ChatCompletionRequest):
             return None
     except Exception:
         pass
-    if container_parses_tools():
+    if container_parses_tools() or profile_writes_code_files():
         return None
     hint = THINKING_NO_TOOL_HINT if profile_is_thinking_only() else NO_TOOL_FORMAT_HINT
     return text_response(data, hint)

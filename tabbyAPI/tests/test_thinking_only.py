@@ -119,8 +119,80 @@ class ProfileParsesToolsTests(unittest.TestCase):
 
     def test_coding_profiles_write_code_files(self):
         self.assertTrue(phrase_switch.profile_writes_code_files("qwen"))
+        self.assertTrue(phrase_switch.profile_writes_code_files("qwen36"))
         self.assertTrue(phrase_switch.profile_writes_code_files("gemma"))
         self.assertFalse(phrase_switch.profile_writes_code_files("glm"))
+
+    def test_downloaded_qwen_without_yaml_tool_format_still_writes(self):
+        entry = {
+            "alias": "qwen38",
+            "folder": "Qwen3.8-27B-exl3-SC_3.00bpw_H4_V4",
+            "pretty": "turboderp/Qwen3.8-27B-exl3 SC_3.00bpw_H4_V4",
+            "thinking_only": None,
+            "tool_format": None,
+            "backend": "",
+        }
+        mapping = {
+            "qwen38": entry,
+            "qwen3.8-27b-exl3-sc_3.00bpw_h4_v4": entry,
+        }
+        with mock.patch.object(phrase_switch, "profile_map", return_value=mapping):
+            self.assertEqual(
+                phrase_switch.guess_tool_format("qwen38", entry["pretty"], entry["folder"]),
+                "qwen3_5",
+            )
+            self.assertTrue(phrase_switch.profile_parses_tools("qwen38"))
+            self.assertTrue(phrase_switch.profile_writes_code_files("qwen38"))
+
+    def test_llama_without_native_tools_still_blocked(self):
+        entry = {
+            "alias": "dsc67b",
+            "folder": "deepseek-coder-6.7B-kexer-GGUF",
+            "pretty": "lmstudio-community/deepseek-coder-6.7B-kexer-GGUF main",
+            "thinking_only": None,
+            "tool_format": None,
+            "backend": "llamacpp",
+        }
+        with (
+            mock.patch.object(phrase_switch, "profile_map", return_value={"dsc67b": entry}),
+            mock.patch.object(phrase_switch, "llama_up", return_value=True),
+            mock.patch.object(phrase_switch, "serving_profile_name", return_value="dsc67b"),
+            mock.patch("sidecar.llama_adapter.llama_chat_caps", return_value={"supports_tools": False}),
+        ):
+            self.assertFalse(phrase_switch.profile_parses_tools("dsc67b"))
+            self.assertFalse(phrase_switch.profile_writes_code_files("dsc67b"))
+
+    def test_llama_with_native_tools_can_write(self):
+        entry = {
+            "alias": "qwen-gguf",
+            "folder": "Qwen3-8B-Instruct-GGUF",
+            "pretty": "Qwen3 instruct GGUF",
+            "thinking_only": None,
+            "tool_format": None,
+            "backend": "llamacpp",
+        }
+        with (
+            mock.patch.object(phrase_switch, "profile_map", return_value={"qwen-gguf": entry}),
+            mock.patch.object(phrase_switch, "llama_up", return_value=True),
+            mock.patch.object(phrase_switch, "serving_profile_name", return_value="qwen-gguf"),
+            mock.patch("sidecar.llama_adapter.llama_chat_caps", return_value={"supports_tools": True}),
+        ):
+            self.assertFalse(phrase_switch.profile_parses_tools("qwen-gguf"))
+            self.assertTrue(phrase_switch.profile_writes_code_files("qwen-gguf"))
+
+    def test_guess_tool_format_families(self):
+        self.assertEqual(phrase_switch.guess_tool_format("gemma26"), "gemma4")
+        self.assertEqual(phrase_switch.guess_tool_format("glm45"), "glm4_5")
+        self.assertEqual(phrase_switch.guess_tool_format("glm", "GLM-4.1V-9B-Thinking"), "")
+        self.assertEqual(phrase_switch.guess_tool_format("dsc67b", "deepseek-coder-kexer"), "")
+
+    def test_load_payload_fills_qwen_tool_format(self):
+        from common.load_fields import load_payload
+
+        payload = load_payload("Qwen3.8-27B-exl3-SC_3.00bpw_H4_V4", {"max_seq_len": 32768})
+        self.assertEqual(payload["tool_format"], "qwen3_5")
+        glm = load_payload("GLM-4.1V-9B-Thinking-exl3-4.00bpw", {"max_seq_len": 65536})
+        self.assertNotIn("tool_format", glm)
 
     def test_profile_map_exposes_tool_format(self):
         entry = phrase_switch.profile_map().get("gemma26") or {}
@@ -138,6 +210,7 @@ class ThinkingOnlyUiWiringTests(unittest.TestCase):
         self.assertIn("writes_files", manager)
         self.assertIn("alertThinkingOnlyWrite", utils_js)
         self.assertIn("codeWriteBlockKind", utils_js)
+        self.assertIn("codingFamilyStatus", utils_js)
         self.assertIn("Cannot edit files", utils_js)
         self.assertIn("blockThinkingOnlyWrite", chat_js)
         self.assertIn("chat-code-write-hint", chat_js)

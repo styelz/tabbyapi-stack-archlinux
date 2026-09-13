@@ -40,6 +40,7 @@ ALL_TOOLCALL_FORMATS = {
     "qwen3_coder": qwen3_coder,
     "qwen3_5": qwen3_coder,
     "qwen3_6": qwen3_coder,
+    "qwen3_8": qwen3_coder,
     "step3_5": qwen3_coder,
     "step3_7": qwen3_coder,
 }

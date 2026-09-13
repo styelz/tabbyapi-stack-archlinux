@@ -33,4 +33,10 @@ def load_payload(model_name: str, model_cfg: dict) -> dict:
     for key in LOAD_FIELDS:
         if key in model_cfg and model_cfg[key] is not None:
             payload[key] = model_cfg[key]
+    if not str(payload.get("tool_format") or "").strip():
+        from common.phrase_switch import guess_tool_format
+
+        guessed = guess_tool_format(model_name, str(model_cfg.get("model_name") or ""))
+        if guessed:
+            payload["tool_format"] = guessed
     return payload

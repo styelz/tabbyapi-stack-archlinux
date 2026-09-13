@@ -1412,12 +1412,20 @@
     return Boolean(profile && map[profile]);
   }
 
+  function codingFamilyStatus(data) {
+    const status = data || window.TabbyUI.lastGpuStatus || {};
+    if (thinkingOnlyStatus(status)) return false;
+    if (status.llama_up && !status.tabby_model) return false;
+    const blob = [status.profile, status.tabby_model].map((part) => String(part || "").toLowerCase()).join(" ");
+    return /\bqwen/.test(blob) || /\bgemma/.test(blob);
+  }
+
   function codeWriteBlockKind(data, detail) {
     if (detail && detail.thinking_only) return "thinking";
-    if (detail && detail.writes_files === false) return "no_tools";
+    if (detail && detail.writes_files === false && !codingFamilyStatus(data)) return "no_tools";
     const status = data || window.TabbyUI.lastGpuStatus || {};
     if (thinkingOnlyStatus(status)) return "thinking";
-    if (status.writes_files === false) return "no_tools";
+    if (status.writes_files === false && !codingFamilyStatus(status)) return "no_tools";
     return "";
   }
 
@@ -2023,6 +2031,7 @@
     showContextMenu,
     alertModal,
     thinkingOnlyStatus,
+    codingFamilyStatus,
     codeWriteBlockKind,
     alertThinkingOnlyWrite,
     confirmModal,

@@ -72,6 +72,10 @@ class Qwen3CoderParseTests(unittest.TestCase):
         self.assertEqual(ends, ("</tool_call>", "</function>"))
         self.assertEqual(get_toolcall_tags("qwen3_6"), get_toolcall_tags("qwen3_5"))
 
+    def test_qwen3_8_alias_uses_coder_tags(self):
+        self.assertTrue(is_supported_format("qwen3_8"))
+        self.assertEqual(get_toolcall_tags("qwen3_8"), get_toolcall_tags("qwen3_5"))
+
     def test_unclosed_strreplace_params_stay_separate(self):
         text = (
             "<function=StrReplace>\n"

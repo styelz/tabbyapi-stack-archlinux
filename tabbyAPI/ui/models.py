@@ -1226,14 +1226,19 @@ def _thinking_only_folder(folder_name: str) -> bool:
 
 def _apply_family_model_defaults(folder_name: str, model: dict) -> None:
     """Fill shipped-profile tokens that a Hugging Face download would omit."""
-    if not _thinking_only_folder(folder_name):
+    if _thinking_only_folder(folder_name):
+        model.setdefault("reasoning", True)
+        model.setdefault("reasoning_start_token", "<think>")
+        model.setdefault("reasoning_end_token", "</think>")
+        model.setdefault("answer_start_token", "<answer>")
+        model.setdefault("answer_end_token", "</answer>")
+        model.setdefault("start_in_reasoning", "always")
         return
-    model.setdefault("reasoning", True)
-    model.setdefault("reasoning_start_token", "<think>")
-    model.setdefault("reasoning_end_token", "</think>")
-    model.setdefault("answer_start_token", "<answer>")
-    model.setdefault("answer_end_token", "</answer>")
-    model.setdefault("start_in_reasoning", "always")
+    from common.phrase_switch import guess_tool_format
+
+    fmt = guess_tool_format(folder_name)
+    if fmt:
+        model.setdefault("tool_format", fmt)
 
 
 def _write_profile_yaml(path: Path, data: dict) -> None:
