@@ -36,7 +36,7 @@ HF_URL_RE = re.compile(
 )
 REPO_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 QUANT_REV_RE = re.compile(r"(bpw|exl\d|exllama)", re.IGNORECASE)
-ALIAS_RE = re.compile(r"^[a-z][a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$")
+ALIAS_RE = re.compile(r"^[a-z][a-z0-9](?:[a-z0-9.-]{0,30}[a-z0-9])?$")
 SHIPPED_PROFILE_ALIASES = frozenset(
     {"qwen", "qwen35", "qwen36", "gemma", "gemma26", "glm"}
 )
@@ -58,7 +58,7 @@ RESERVED_ALIASES = frozenset(
         "embed",
         "qwen-image",
     }
-) | SHIPPED_PROFILE_ALIASES
+)
 FORMAT_NEEDLES = {
     "exl3": ("exl3", "exllamav3"),
     "exl2": ("exl2", "exllamav2"),
@@ -183,10 +183,10 @@ def normalize_alias(raw: str) -> str:
     alias = str(raw or "").strip().lower()
     if alias.endswith(".yml"):
         alias = alias[:-4]
-    if not ALIAS_RE.fullmatch(alias) or "--" in alias:
+    if not ALIAS_RE.fullmatch(alias) or "--" in alias or ".." in alias:
         raise ModelsError(
             "Short name must be 2–32 characters: start with a letter, then letters, "
-            "digits, or hyphens (like qwen38)."
+            "digits, or hyphens."
         )
     if alias in RESERVED_ALIASES:
         raise ModelsError(f"{alias} is reserved. Pick another short name.")
@@ -198,6 +198,78 @@ def optional_alias(raw: Any) -> str | None:
     if not text:
         return None
     return normalize_alias(text)
+
+
+def optional_pretty(raw: Any) -> str | None:
+    text = " ".join(str(raw or "").split())
+    if not text:
+        return None
+    return text[:80]
+
+
+def _pretty_label(*parts: str) -> str:
+    from common.model_labels import pretty_model_label
+
+    return pretty_model_label(*parts)
+
+
+def is_shipped_alias(alias: str) -> bool:
+    return str(alias or "").strip().lower() in SHIPPED_PROFILE_ALIASES
+
+
+def names_local_path(profiles_dir: Path) -> Path:
+    from common.model_labels import NAMES_LOCAL
+
+    return Path(profiles_dir) / NAMES_LOCAL
+
+
+def load_name_overrides(profiles_dir: Path) -> dict[str, dict]:
+    from common.model_labels import load_name_overrides as _load
+
+    return _load(profiles_dir)
+
+
+def save_name_overrides(profiles_dir: Path, data: dict[str, dict]) -> None:
+    path = names_local_path(profiles_dir)
+    cleaned: dict[str, dict] = {}
+    for key, value in (data or {}).items():
+        stem = str(key or "").strip().lower()
+        if not stem or not isinstance(value, dict):
+            continue
+        pretty = str(value.get("pretty") or "").strip()
+        if pretty:
+            cleaned[stem] = {"pretty": pretty[:80]}
+    if not cleaned:
+        path.unlink(missing_ok=True)
+        return
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(cleaned, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def set_name_override(profiles_dir: Path, alias: str, pretty: str | None) -> None:
+    key = str(alias or "").strip().lower()
+    if not key:
+        return
+    data = load_name_overrides(profiles_dir)
+    text = optional_pretty(pretty)
+    if text:
+        data[key] = {"pretty": text}
+    else:
+        data.pop(key, None)
+    save_name_overrides(profiles_dir, data)
+
+
+def move_name_override(profiles_dir: Path, old: str, new: str) -> None:
+    src = str(old or "").strip().lower()
+    dest = str(new or "").strip().lower()
+    if not src or src == dest:
+        return
+    data = load_name_overrides(profiles_dir)
+    rec = data.pop(src, None)
+    if rec and dest:
+        data[dest] = rec
+    save_name_overrides(profiles_dir, data)
 
 
 def is_local_profile(alias: str, data: dict | None = None) -> bool:
@@ -623,6 +695,7 @@ def inspect_repo(
         "vram_mib": vram_mib,
         "vram_gb": gpu_vram_gb(vram_mib),
         "folder_name": hf_folder_name(parsed, revision or (chosen[0] if chosen else "main")),
+        "suggested_pretty": _pretty_label(parsed) or parsed.rsplit("/", 1)[-1],
         "has_token": bool(hf_token()),
     }
 
@@ -682,6 +755,7 @@ def _profile_map(profiles_dir: Path) -> dict[str, dict]:
     from ruamel.yaml import YAML
 
     yaml = YAML(typ="safe")
+    overrides = load_name_overrides(profiles_dir)
     for path in sorted(profiles_dir.glob("*.yml")):
         try:
             data = yaml.load(path.read_text(encoding="utf-8")) or {}
@@ -692,6 +766,11 @@ def _profile_map(profiles_dir: Path) -> dict[str, dict]:
         alias = path.stem
         folder = str(((data.get("model") or {}) or {}).get("model_name") or "")
         pretty = str(data.get("pretty") or folder or alias)
+        ov = overrides.get(alias.lower()) or {}
+        if ov.get("pretty"):
+            pretty = str(ov["pretty"])
+        else:
+            pretty = _pretty_label(pretty) or pretty
         entry = {
             "alias": alias,
             "folder": folder,
@@ -929,6 +1008,7 @@ def _prepare_hf_job(body: dict, paths: ModelPaths, hf_api=None) -> dict:
         "revision": revision,
         "folder": folder,
         "alias": optional_alias(body.get("alias") or body.get("name") or ""),
+        "pretty": optional_pretty(body.get("pretty") or ""),
         "format": fmt,
         "dests": [str(dest)],
         "percent": 0,
@@ -1009,6 +1089,7 @@ def _run_job(job_id: str) -> None:
                 repo_id=job.get("repo_id") or "",
                 revision=job.get("revision") or "",
                 alias=job.get("alias") or None,
+                pretty=job.get("pretty") or None,
                 paths=paths,
             )
             final["profile"] = profile_alias_for_folder(job["folder"], paths)
@@ -1287,18 +1368,25 @@ def maybe_write_hf_profile(
     repo_id: str = "",
     revision: str = "",
     alias: str | None = None,
+    pretty: str | None = None,
     paths: ModelPaths | None = None,
 ) -> str | None:
     p = paths or default_paths()
     wanted = optional_alias(alias) if alias else None
     existing = profile_alias_for_folder(folder, p)
+    explicit = optional_pretty(pretty)
+    pretty_name = explicit or _pretty_label(repo_id, revision) or _pretty_label(folder) or folder
     if wanted:
         taken = _alias_taken_by_other(wanted, folder, p)
         if taken:
             raise ModelsError(f"{wanted} is already used by {taken}")
         if existing == wanted:
+            if explicit:
+                _write_profile_pretty(existing, explicit, folder, p)
             return wanted
     elif existing:
+        if explicit:
+            _write_profile_pretty(existing, explicit, folder, p)
         return existing
     if wanted:
         stem = wanted
@@ -1314,10 +1402,12 @@ def maybe_write_hf_profile(
             n += 1
             if n > 50:
                 raise ModelsError("Could not allocate a profile name")
-    pretty = " ".join(part for part in (repo_id, revision) if part).strip() or folder
-    data = profile_defaults_from_config(p.models_dir / folder, pretty=pretty)
+    data = profile_defaults_from_config(p.models_dir / folder, pretty=pretty_name)
     data["local"] = True
     _write_profile_yaml(dest, data)
+    from common.phrase_switch import reset_profile_map_cache
+
+    reset_profile_map_cache()
     return stem
 
 
@@ -1373,9 +1463,38 @@ def retarget_profile_refs(old: str, new: str, paths: ModelPaths | None = None) -
     tmp.replace(times_path)
 
 
+def _write_profile_pretty(alias: str, pretty: str, folder: str, paths: ModelPaths) -> None:
+    text = optional_pretty(pretty)
+    if not text or not alias:
+        return
+    src = paths.profiles_dir / f"{alias}.yml"
+    data = _load_profile_yaml(src) if src.is_file() else {}
+    shipped = is_shipped_alias(alias) and not is_local_profile(alias, data)
+    if shipped:
+        set_name_override(paths.profiles_dir, alias, text)
+    else:
+        if not data:
+            dest_folder = paths.models_dir / folder
+            data = profile_defaults_from_config(dest_folder, pretty=text)
+        data["pretty"] = text
+        data["local"] = True
+        model_cfg = data.get("model")
+        if not isinstance(model_cfg, dict):
+            model_cfg = {}
+            data["model"] = model_cfg
+        if folder:
+            model_cfg["model_name"] = folder
+        _write_profile_yaml(src, data)
+        set_name_override(paths.profiles_dir, alias, None)
+    from common.phrase_switch import reset_profile_map_cache
+
+    reset_profile_map_cache()
+
+
 def set_profile_alias(body: dict, paths: ModelPaths | None = None) -> dict:
     p = paths or default_paths()
-    wanted = normalize_alias((body or {}).get("alias") or (body or {}).get("name") or "")
+    wanted_raw = (body or {}).get("alias") or (body or {}).get("name") or ""
+    pretty_in = optional_pretty((body or {}).get("pretty") or (body or {}).get("label") or "")
     folder = str((body or {}).get("folder") or (body or {}).get("id") or "").strip()
     current = str((body or {}).get("profile") or "").strip()
     if folder:
@@ -1396,24 +1515,48 @@ def set_profile_alias(body: dict, paths: ModelPaths | None = None) -> dict:
         raise ModelsError(f"{folder} is not installed", 404)
 
     existing = profile_alias_for_folder(folder, p)
-    if existing == wanted:
-        return {"ok": True, "alias": wanted, "folder": folder, "unchanged": True}
-    if existing:
-        existing_data = _load_profile_yaml(p.profiles_dir / f"{existing}.yml")
-        if not is_local_profile(existing, existing_data):
-            raise ModelsError(
-                "Catalog models keep their built-in names (qwen, qwen35, qwen36, …)."
-            )
+    existing_data = (
+        _load_profile_yaml(p.profiles_dir / f"{existing}.yml") if existing else {}
+    )
+    if not str(wanted_raw).strip():
+        if not existing:
+            raise ModelsError("Short name is required")
+        wanted = existing
+    elif existing and str(wanted_raw).strip().lower() == existing.lower():
+        wanted = existing
+    else:
+        wanted = normalize_alias(wanted_raw)
+
     taken = _alias_taken_by_other(wanted, folder, p)
     if taken:
         raise ModelsError(f"{wanted} is already used by {taken}")
 
+    if existing == wanted:
+        if pretty_in:
+            _write_profile_pretty(wanted, pretty_in, folder, p)
+        return {
+            "ok": True,
+            "alias": wanted,
+            "folder": folder,
+            "pretty": pretty_in
+            or str(
+                (load_name_overrides(p.profiles_dir).get(wanted.lower()) or {}).get("pretty")
+                or existing_data.get("pretty")
+                or _pretty_label(folder)
+                or folder
+            ),
+        }
+
     dest = p.profiles_dir / f"{wanted}.yml"
     if existing:
         src = p.profiles_dir / f"{existing}.yml"
-        data = _load_profile_yaml(src) if src.is_file() else {}
+        data = dict(existing_data) if existing_data else {}
         if not data:
-            data = profile_defaults_from_config(dest_folder, pretty=folder)
+            data = profile_defaults_from_config(dest_folder, pretty=pretty_in or folder)
+        if pretty_in:
+            data["pretty"] = pretty_in
+        elif not data.get("pretty"):
+            data["pretty"] = _pretty_label(folder) or folder
         data["local"] = True
         model_cfg = data.get("model")
         if not isinstance(model_cfg, dict):
@@ -1421,12 +1564,26 @@ def set_profile_alias(body: dict, paths: ModelPaths | None = None) -> dict:
             data["model"] = model_cfg
         model_cfg["model_name"] = folder
         _write_profile_yaml(dest, data)
-        if src.is_file() and src.resolve() != dest.resolve():
+        shipped = is_shipped_alias(existing) and not is_local_profile(existing, existing_data)
+        if src.is_file() and src.resolve() != dest.resolve() and not shipped:
             src.unlink(missing_ok=True)
+        move_name_override(p.profiles_dir, existing, wanted)
+        if pretty_in and not shipped:
+            set_name_override(p.profiles_dir, wanted, None)
         retarget_profile_refs(existing, wanted, p)
     else:
-        maybe_write_hf_profile(folder, alias=wanted, paths=p)
-    return {"ok": True, "alias": wanted, "folder": folder}
+        maybe_write_hf_profile(
+            folder, alias=wanted, pretty=pretty_in, paths=p
+        )
+    from common.phrase_switch import reset_profile_map_cache
+
+    reset_profile_map_cache()
+    return {
+        "ok": True,
+        "alias": wanted,
+        "folder": folder,
+        "pretty": pretty_in or _pretty_label(folder) or folder,
+    }
 
 
 def delete_model(

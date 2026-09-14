@@ -21,6 +21,7 @@ from ui.models import (
     library_state,
     matches_format,
     maybe_write_hf_profile,
+    names_local_path,
     normalize_alias,
     parse_repo_id,
     profile_slug,
@@ -32,6 +33,7 @@ from ui.models import (
     start_download,
     write_job,
 )
+from common.model_labels import pretty_model_label
 
 
 DISK_OK = {
@@ -217,6 +219,7 @@ class ParseAndFilterTests(unittest.TestCase):
         self.assertNotIn("docs", names)
         self.assertTrue(payload["compatible"])
         self.assertEqual(payload["vram_gb"], 12)
+        self.assertEqual(payload["suggested_pretty"], "Qwen3.5-9B")
 
     def test_revision_vram_fit_uses_file_size(self):
         over = revision_vram_fit(22 * 1024**3, 12288)
@@ -389,7 +392,9 @@ class LibraryAndDeleteTests(unittest.TestCase):
     def test_normalize_alias_accepts_qwen38(self):
         self.assertEqual(normalize_alias("Qwen38"), "qwen38")
         self.assertEqual(normalize_alias("qwen-38.yml"), "qwen-38")
-        for bad in ("q", "1qwen", "qwen 38", "qwen_38", "comfy", "qwen", "help"):
+        self.assertEqual(normalize_alias("qwen"), "qwen")
+        self.assertEqual(normalize_alias("ds.16"), "ds.16")
+        for bad in ("q", "1qwen", "qwen 38", "qwen_38", "comfy", "help", "ds..16"):
             with self.subTest(bad=bad):
                 with self.assertRaises(ModelsError):
                     normalize_alias(bad)
@@ -443,7 +448,7 @@ class LibraryAndDeleteTests(unittest.TestCase):
             )
             self.assertFalse((paths.profiles_dir / "qwen-big.yml").exists())
 
-    def test_rename_rejects_shipped_profile(self):
+    def test_rename_shipped_profile_keeps_yaml_and_sets_pretty(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             paths = _paths(root)
@@ -452,11 +457,87 @@ class LibraryAndDeleteTests(unittest.TestCase):
                 "pretty: Qwen\nmodel:\n  model_name: Qwen3.5-9B-exl3-4.00bpw\n",
                 encoding="utf-8",
             )
-            with self.assertRaises(ModelsError):
-                set_profile_alias(
-                    {"folder": "Qwen3.5-9B-exl3-4.00bpw", "alias": "daily"},
-                    paths=paths,
-                )
+            renamed = set_profile_alias(
+                {
+                    "folder": "Qwen3.5-9B-exl3-4.00bpw",
+                    "alias": "daily",
+                    "pretty": "Daily 9B",
+                },
+                paths=paths,
+            )
+            self.assertEqual(renamed["alias"], "daily")
+            self.assertTrue((paths.profiles_dir / "qwen.yml").is_file())
+            self.assertTrue((paths.profiles_dir / "daily.yml").is_file())
+            saved = (paths.profiles_dir / "daily.yml").read_text(encoding="utf-8")
+            self.assertIn("local: true", saved)
+            self.assertIn("Daily 9B", saved)
+
+    def test_shipped_pretty_uses_overlay(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            paths = _paths(root)
+            _llm_folder(paths.models_dir, "Qwen3.5-9B-exl3-4.00bpw")
+            (paths.profiles_dir / "qwen.yml").write_text(
+                "pretty: Qwen\nmodel:\n  model_name: Qwen3.5-9B-exl3-4.00bpw\n",
+                encoding="utf-8",
+            )
+            set_profile_alias(
+                {
+                    "folder": "Qwen3.5-9B-exl3-4.00bpw",
+                    "alias": "qwen",
+                    "pretty": "Daily coding",
+                },
+                paths=paths,
+            )
+            shipped = (paths.profiles_dir / "qwen.yml").read_text(encoding="utf-8")
+            self.assertIn("pretty: Qwen\n", shipped)
+            overlay = json.loads(names_local_path(paths.profiles_dir).read_text(encoding="utf-8"))
+            self.assertEqual(overlay["qwen"]["pretty"], "Daily coding")
+            data = library_state(paths, loaded="")
+            self.assertEqual(data["llms"][0]["pretty"], "Daily coding")
+
+    def test_hf_profile_pretty_is_cleaned(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            paths = _paths(root)
+            _llm_folder(paths.models_dir, "Qwen3.8-27B-exl3-4.00bpw")
+            alias = maybe_write_hf_profile(
+                "Qwen3.8-27B-exl3-4.00bpw",
+                repo_id="turboderp/Qwen3.8-27B-exl3",
+                revision="SC_3.00bpw_H4_V4",
+                alias="qwen38",
+                paths=paths,
+            )
+            self.assertEqual(alias, "qwen38")
+            saved = (paths.profiles_dir / "qwen38.yml").read_text(encoding="utf-8")
+            self.assertIn("pretty: Qwen3.8-27B\n", saved)
+            self.assertNotIn("turboderp/", saved)
+
+
+class PrettyModelLabelTests(unittest.TestCase):
+    def test_strips_hf_org_quant_and_vision_note(self):
+        self.assertEqual(
+            pretty_model_label(
+                "turboderp/Qwen3.8-27B-exl3 SC_3.00bpw_H4_V4 "
+                "(vision off on RTX 4070 Ti 12 GB)"
+            ),
+            "Qwen3.8-27B",
+        )
+        self.assertEqual(
+            pretty_model_label("lmstudio-community/deepseek-coder-6.7B-kexer-GGUF main"),
+            "deepseek-coder-6.7B-kexer",
+        )
+        self.assertEqual(
+            pretty_model_label("TheBloke/deepseek-coder-1.3b-instruct-GGUF main"),
+            "deepseek-coder-1.3b-instruct",
+        )
+        self.assertEqual(
+            pretty_model_label(
+                "Bucoid/Qwen3.8-27B-Uncensored-IQ4-XS-MTP-16GB-VRAM-GGUF"
+            ),
+            "Qwen3.8-27B-Uncensored",
+        )
+        self.assertEqual(pretty_model_label("Daily coding"), "Daily coding")
 
 
 class JobStateTests(unittest.TestCase):

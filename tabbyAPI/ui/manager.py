@@ -318,6 +318,7 @@ async def stack_status(request=None, username: str = "") -> dict[str, Any]:
         profile_thinking_only_map,
         profile_writes_code_files,
         profile_ui_labels,
+        visible_profile_names,
         switch_in_progress,
         switch_lock_held,
         switch_lock_name,
@@ -376,6 +377,7 @@ async def stack_status(request=None, username: str = "") -> dict[str, Any]:
         if not loaded and not restarting and (lock_held or switch_in_progress()):
             switching = True
         names = available_profiles()
+        shown = visible_profile_names(names)
         profile_ready = {name: bool(folder_for_choice(name)) for name in names}
         intended_llama = gpu_mode == "llama" or (
             not loaded and intended == "llama"
@@ -408,11 +410,11 @@ async def stack_status(request=None, username: str = "") -> dict[str, Any]:
             "tabby_model": tabby,
             "profile": profile,
             "loaded": loaded,
-            "profiles": names,
-            "profile_labels": profile_ui_labels(names),
+            "profiles": shown,
+            "profile_labels": profile_ui_labels(shown),
             "profile_ready": profile_ready,
             "thinking_only": profile_is_thinking_only(profile),
-            "profile_thinking_only": profile_thinking_only_map(names),
+            "profile_thinking_only": profile_thinking_only_map(shown),
             "writes_files": profile_writes_code_files(profile),
             "gguf_base": gguf_base,
             "model": _model_card(),

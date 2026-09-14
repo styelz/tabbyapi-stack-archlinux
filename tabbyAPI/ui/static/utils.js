@@ -1506,18 +1506,32 @@
     autocomplete = "off",
     value = "",
     placeholder = "",
+    fields,
   } = {}) {
     return new Promise((resolve) => {
+      const specs = Array.isArray(fields) && fields.length
+        ? fields
+        : [{ name: "value", label, value, placeholder, type, minlength, autocomplete, required: true }];
+      const multi = Array.isArray(fields) && fields.length > 0;
       const wrap = document.createElement("div");
       wrap.className = "dialog-modal";
       wrap.setAttribute("role", "dialog");
       wrap.setAttribute("aria-modal", "true");
+      const fieldHtml = specs
+        .map((spec) => {
+          const name = String(spec.name || "value");
+          return (
+            '<label><span class="dialog-label"></span>' +
+            `<input class="dialog-input" data-field="${name.replace(/"/g, "")}" /></label>`
+          );
+        })
+        .join("");
       wrap.innerHTML =
         '<div class="dialog-card">' +
         "<h2></h2>" +
         '<p class="dialog-text" hidden></p>' +
         '<form class="dialog-form">' +
-        '<label><span class="dialog-label"></span><input class="dialog-input" /></label>' +
+        fieldHtml +
         '<div class="dialog-actions">' +
         '<button type="button" class="btn dialog-no"></button>' +
         '<button type="submit" class="btn primary dialog-yes"></button>' +
@@ -1528,23 +1542,30 @@
         textEl.hidden = false;
         textEl.textContent = text;
       }
-      wrap.querySelector(".dialog-label").textContent = label || "";
-      const input = wrap.querySelector(".dialog-input");
-      input.type = type === "password" ? "password" : "text";
-      input.autocomplete = autocomplete || "off";
-      if (placeholder) input.placeholder = placeholder;
-      if (value) input.value = String(value);
-      const min = Number(minlength) || 0;
-      if (min) {
-        input.minLength = min;
-        input.required = true;
-      }
+      const inputs = Array.from(wrap.querySelectorAll(".dialog-input"));
+      specs.forEach((spec, index) => {
+        const lab = wrap.querySelectorAll(".dialog-label")[index];
+        const input = inputs[index];
+        if (lab) lab.textContent = spec.label || "";
+        if (!input) return;
+        input.type = spec.type === "password" || type === "password" ? "password" : "text";
+        input.autocomplete = spec.autocomplete || autocomplete || "off";
+        if (spec.placeholder) input.placeholder = spec.placeholder;
+        if (spec.value) input.value = String(spec.value);
+        const min = Number(spec.minlength || minlength) || 0;
+        if (min) {
+          input.minLength = min;
+          input.required = true;
+        }
+        if (spec.required) input.required = true;
+        if (spec.maxlength) input.maxLength = Number(spec.maxlength) || spec.maxlength;
+      });
       wrap.querySelector(".dialog-no").textContent = no;
       wrap.querySelector(".dialog-yes").textContent = yes;
-      const finish = (value) => {
+      const finish = (result) => {
         document.removeEventListener("keydown", onKey);
         wrap.remove();
-        resolve(value);
+        resolve(result);
       };
       const onKey = (ev) => {
         if (ev.key === "Escape") {
@@ -1555,18 +1576,31 @@
       wrap.querySelector(".dialog-no").addEventListener("click", () => finish(null));
       wrap.querySelector("form").addEventListener("submit", (ev) => {
         ev.preventDefault();
-        const value = String(input.value || "");
-        if (min && value.length < min) return;
-        if (!value) return;
-        finish(value);
+        const values = {};
+        let first = "";
+        for (let i = 0; i < specs.length; i += 1) {
+          const spec = specs[i];
+          const input = inputs[i];
+          const raw = String((input && input.value) || "");
+          const min = Number(spec.minlength || minlength) || 0;
+          if (min && raw.length < min) return;
+          if ((spec.required || (!multi && i === 0)) && !raw.trim()) return;
+          const key = spec.name || "value";
+          values[key] = raw;
+          if (!first) first = raw;
+        }
+        finish(multi ? values : first);
       });
       wrap.addEventListener("click", (ev) => {
         if (ev.target === wrap) finish(null);
       });
       document.addEventListener("keydown", onKey);
       document.body.appendChild(wrap);
-      input.focus();
-      if (input.value) input.select();
+      const firstInput = inputs[0];
+      if (firstInput) {
+        firstInput.focus();
+        if (firstInput.value) firstInput.select();
+      }
     });
   }
 

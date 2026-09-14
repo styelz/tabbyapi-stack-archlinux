@@ -135,14 +135,15 @@
         const ready = data && data.profile_ready && Object.prototype.hasOwnProperty.call(data.profile_ready, name)
           ? data.profile_ready[name]
           : true;
+        const pretty = String(labels[name] || "").trim() || name;
         gpuPanel.appendChild(
           makeGpuItem(
-            name,
+            pretty,
             name,
             current === name,
             switchLocked,
             occupied && !switchLocked && current !== name ? "Wait" : (!ready && current !== name ? "Download" : ""),
-            labels[name] || ""
+            pretty !== name ? name : ""
           )
         );
       });

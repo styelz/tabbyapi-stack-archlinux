@@ -33,13 +33,22 @@ class ModelsJobBannerTests(unittest.TestCase):
 
     def test_download_and_library_expose_short_names(self):
         self.assertIn('id="models-hf-alias"', self.src)
+        self.assertIn('id="models-hf-pretty"', self.src)
+        self.assertIn("Display name", self.src)
         self.assertIn("Short name", self.src)
         self.assertIn("models/alias", self.src)
         self.assertIn("data-alias", self.src)
+        self.assertIn("data-pretty", self.src)
         self.assertIn("data-format=\"gguf\"", self.src)
         self.assertIn(">GGUF</button>", self.src)
         self.assertIn("promptModal", self.src)
         self.assertIn("alias: hfAlias || null", self.src)
+        self.assertIn("pretty: hfPretty || null", self.src)
+        self.assertNotIn("row.local_profile)", self.src)
+        self.assertNotIn("switch to ${TabbyUI.escapeHtml(row.profile)}", self.src)
+        app = Path(__file__).resolve().parents[1] / "ui" / "static" / "app.js"
+        app_src = app.read_text(encoding="utf-8")
+        self.assertIn("pretty !== name ? name : \"\"", app_src)
 
     def test_busy_jobs_still_show_byte_progress(self):
         paint = self.src.split("function paintJob(job)")[1].split("function libraryRows")[0]

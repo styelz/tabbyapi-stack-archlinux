@@ -78,6 +78,7 @@ function mountModels(root) {
   let paintedJobId = "";
   let loading = false;
   let hfAlias = "";
+  let hfPretty = "";
   let repoSeq = 0;
   const JOB_DONE_TTL_MS = 90 * 1000;
   const JOB_DONE_HIDE_MS = 8 * 1000;
@@ -219,7 +220,7 @@ function mountModels(root) {
         id: kind === "image" ? pick.id : llm ? llm.id : pick.id,
         catalog_id: pick.id,
         kind,
-        pretty: pick.label || (llm && llm.pretty) || pick.id,
+        pretty: (llm && llm.pretty) || pick.label || pick.id,
         profile: llm && llm.profile,
         folder: llm && (llm.folder || llm.id),
         local_profile: Boolean(llm && llm.local_profile),
@@ -276,12 +277,13 @@ function mountModels(root) {
         if (row.loaded) badges.push('<span class="models-badge is-on">Loaded</span>');
         else if (row.installed) badges.push('<span class="models-badge is-on">Installed</span>');
         if (row.partial) badges.push('<span class="models-badge">Incomplete</span>');
-        if (row.profile && !row.local_profile) {
-          badges.push(`<span class="muted">switch to ${TabbyUI.escapeHtml(row.profile)}</span>`);
-        }
-        if (row.profile && row.local_profile) {
+        if (row.profile && row.installed && row.kind === "llm") {
           badges.push(
-            `<button type="button" class="models-alias-btn" data-alias="${TabbyUI.escapeHtml(row.profile)}" data-folder="${TabbyUI.escapeHtml(row.folder || row.id)}">switch to ${TabbyUI.escapeHtml(row.profile)}</button>`
+            `<button type="button" class="models-alias-btn" title="Edit display and short names" data-alias="${TabbyUI.escapeHtml(row.profile)}" data-pretty="${TabbyUI.escapeHtml(row.pretty || row.label || "")}" data-folder="${TabbyUI.escapeHtml(row.folder || row.id)}">${TabbyUI.escapeHtml(row.profile)}</button>`
+          );
+        } else if (row.kind === "llm" && row.installed && !row.partial) {
+          badges.push(
+            `<button type="button" class="models-alias-btn" title="Set display and short names" data-alias="" data-pretty="${TabbyUI.escapeHtml(row.pretty || row.label || "")}" data-folder="${TabbyUI.escapeHtml(row.folder || row.id)}">Set name</button>`
           );
         }
         if (!row.installed && row.min_vram_mib) {
@@ -365,6 +367,8 @@ function mountModels(root) {
 
   function rememberAliasFrom(scope) {
     if (!scope || !scope.querySelector) return;
+    const prevPretty = scope.querySelector("#models-hf-pretty");
+    if (prevPretty) hfPretty = String(prevPretty.value || "").trim();
     const prevAlias = scope.querySelector("#models-hf-alias");
     if (prevAlias) hfAlias = String(prevAlias.value || "").trim();
   }
@@ -408,7 +412,7 @@ function mountModels(root) {
     slot.hidden = false;
     const id = TabbyUI.escapeHtml(data.id);
     const note = data.gguf_only
-      ? '<p class="muted">GGUF via llama.cpp. Larger than VRAM still loads (CPU offload; slower). Switch to qwen for EXL3 vision.</p>'
+      ? '<p class="muted">GGUF via llama.cpp. Larger than VRAM still loads (CPU offload; slower). Use an EXL3 model for vision.</p>'
       : data.compatible
         ? ""
         : '<p class="muted">This may not be an EXL2/EXL3 snapshot. Download only if you know it will load.</p>';
@@ -455,10 +459,14 @@ function mountModels(root) {
       ${note}
       ${vramNote}
       <label class="models-alias-field">
-        <span>Short name</span>
-        <input id="models-hf-alias" type="text" maxlength="32" placeholder="qwen38" autocomplete="off" spellcheck="false" value="${TabbyUI.escapeHtml(hfAlias)}" />
+        <span>Display name</span>
+        <input id="models-hf-pretty" type="text" maxlength="80" placeholder="Shown in the model list" autocomplete="off" spellcheck="true" value="${TabbyUI.escapeHtml((data && data.suggested_pretty) || "")}" />
       </label>
-      <p class="muted models-alias-hint">Used for <code>switch to qwen38</code> and the model dropdown. Letters, digits, and hyphens.</p>
+      <label class="models-alias-field">
+        <span>Short name</span>
+        <input id="models-hf-alias" type="text" maxlength="32" placeholder="my-model" autocomplete="off" spellcheck="false" value="${TabbyUI.escapeHtml(hfAlias)}" />
+      </label>
+      <p class="muted models-alias-hint">Display name is the dropdown and library. Short name is for <code>switch to …</code> (letters, digits, hyphens).</p>
       <table class="models-table models-repo-table">
         <thead><tr><th>Revision</th><th class="num">Size</th><th></th></tr></thead>
         <tbody>${revRows || '<tr><td colspan="3" class="muted">No branches listed.</td></tr>'}</tbody>
@@ -561,22 +569,39 @@ function mountModels(root) {
         const current = aliasBtn.getAttribute("data-alias") || "";
         const folder = aliasBtn.getAttribute("data-folder") || "";
         const next = await TabbyUI.promptModal({
-          title: "Short name",
-          text: "Used for switch to …, the model dropdown, and list models.",
-          label: "Short name",
-          value: current,
-          placeholder: "qwen38",
+          title: "Model names",
+          text: "Display name is the library and dropdown. Short name is for switch to …",
+          fields: [
+            {
+              name: "pretty",
+              label: "Display name",
+              value: aliasBtn.getAttribute("data-pretty") || "",
+              placeholder: "Qwen 27B",
+              maxlength: 80,
+            },
+            {
+              name: "alias",
+              label: "Short name",
+              value: current,
+              placeholder: "my-model",
+              maxlength: 32,
+              required: true,
+              minlength: 2,
+            },
+          ],
           yes: "Save",
         });
         if (next == null) return;
-        const alias = String(next || "").trim();
-        if (!alias || alias === current) return;
+        const alias = String((next && next.alias) || "").trim();
+        const pretty = String((next && next.pretty) || "").trim();
+        if (!alias) return;
+        if (alias === current && pretty === (aliasBtn.getAttribute("data-pretty") || "")) return;
         await TabbyUI.api("models/alias", {
           method: "POST",
-          body: { folder, profile: current, alias },
+          body: { folder, profile: current, alias, pretty },
         });
         await loadLibrary();
-        showOk(`Named ${alias}. Send switch to ${alias} to load it.`);
+        showOk(`Named ${pretty || alias}. Send switch to ${alias} to load it.`);
         return;
       }
       if (load) {
@@ -628,6 +653,7 @@ function mountModels(root) {
           size_bytes: size ? Number(size) : null,
           format: format,
           alias: hfAlias || null,
+          pretty: hfPretty || null,
         });
       } catch (exc) {
         showError(exc.message || String(exc));

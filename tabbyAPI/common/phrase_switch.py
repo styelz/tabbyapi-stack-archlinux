@@ -28,6 +28,7 @@ from common.llama_runtime import LLAMA_ALIASES, llama_up
 from common.logger import xlogger
 from common.networking import get_sse_ping_interval
 from common.pasted_images import is_save_image_request, pasted_download_text
+from common.model_labels import NAMES_LOCAL, load_name_overrides, pretty_model_label
 from common.switch_times import (
     extra_seconds,
     format_duration,
@@ -415,9 +416,13 @@ _profile_map_cache: tuple[tuple, dict] | None = None
 def _profiles_epoch() -> tuple:
     """Filename + mtime + size so a new or edited profile drops the cache."""
     try:
+        paths = list(PROFILES_DIR.glob("*.yml"))
+        extra = PROFILES_DIR / NAMES_LOCAL
+        if extra.is_file():
+            paths.append(extra)
         return tuple(
             (path.name, path.stat().st_mtime_ns, path.stat().st_size)
-            for path in sorted(PROFILES_DIR.glob("*.yml"))
+            for path in sorted(paths, key=lambda item: item.name)
         )
     except OSError:
         return ()
@@ -439,12 +444,16 @@ def profile_map() -> dict[str, dict]:
     if not PROFILES_DIR.exists():
         _profile_map_cache = (epoch, mapping)
         return mapping
+    overrides = load_name_overrides(PROFILES_DIR)
     for path in PROFILES_DIR.glob("*.yml"):
         data = _load_yaml(path)
         alias = path.stem.lower()
         model_cfg = data.get("model") or {}
         folder = model_cfg.get("model_name")
         pretty = data.get("pretty") or folder or alias
+        ov = overrides.get(alias) or {}
+        if ov.get("pretty"):
+            pretty = ov["pretty"]
         entry = {
             "alias": alias,
             "folder": folder,
@@ -455,6 +464,7 @@ def profile_map() -> dict[str, dict]:
             "thinking_only": data.get("thinking_only"),
             "tool_format": model_cfg.get("tool_format"),
             "backend": str(model_cfg.get("backend") or ""),
+            "local": bool(data.get("local")) or alias.startswith("hf-"),
         }
         mapping[alias] = entry
         if folder:
@@ -544,7 +554,7 @@ def profile_alias_for_model(folder: Optional[str]) -> Optional[str]:
 
 
 def profile_ui_labels(names: Optional[list[str]] = None) -> dict[str, str]:
-    """alias -> short pretty name for the GPU picker (text before ' - ')."""
+    """alias -> cleaned display name for the GPU picker."""
     if names is None:
         from select_model import available_profiles
 
@@ -553,9 +563,33 @@ def profile_ui_labels(names: Optional[list[str]] = None) -> dict[str, str]:
     labels: dict[str, str] = {}
     for name in names:
         entry = mapping.get(str(name).lower()) or {}
-        pretty = str(entry.get("pretty") or name)
-        labels[name] = pretty.split(" - ", 1)[0].strip() or name
+        raw = str(entry.get("pretty") or name)
+        pretty = pretty_model_label(raw) or raw
+        labels[name] = pretty.split(" - ", 1)[0].strip() or str(name)
     return labels
+
+
+def visible_profile_names(names: Optional[list[str]] = None) -> list[str]:
+    """Dropdown list: hide a shipped alias when a local profile covers the same folder."""
+    if names is None:
+        from select_model import available_profiles
+
+        names = available_profiles()
+    mapping = profile_map()
+    claimed: set[str] = set()
+    for name in names:
+        entry = mapping.get(str(name).lower()) or {}
+        folder = str(entry.get("folder") or "").strip().lower()
+        if folder and entry.get("local"):
+            claimed.add(folder)
+    out: list[str] = []
+    for name in names:
+        entry = mapping.get(str(name).lower()) or {}
+        folder = str(entry.get("folder") or "").strip().lower()
+        if folder and folder in claimed and not entry.get("local"):
+            continue
+        out.append(name)
+    return out
 
 
 def installed_models() -> list[str]:
