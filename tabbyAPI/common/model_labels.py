@@ -34,15 +34,17 @@ def pretty_model_label(*parts: str) -> str:
         if nxt and " " not in nxt.split()[0]:
             text = rest.strip()
     bits = text.split()
-    while len(bits) > 1 and _REV_TOKEN_RE.match(bits[-1]):
+    while len(bits) > 1 and _REV_TOKEN_RE.match(bits[-1].strip(".,;")):
         bits.pop()
-    text = " ".join(bits)
+    text = " ".join(bits).rstrip(" ,")
     head, sep, tail = text.partition(" - ")
     prev = None
     while prev != head:
         prev = head
         head = _TRAILING_JUNK_RE.sub("", head).strip(" .-_")
+    head = head.rstrip(" ,")
     if sep and tail and "/" not in raw:
+        tail = tail.strip().rstrip(" ,")
         return f"{head} - {tail}".strip() if head else text
     return head or text or raw
 

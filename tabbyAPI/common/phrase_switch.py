@@ -449,11 +449,20 @@ def profile_map() -> dict[str, dict]:
         data = _load_yaml(path)
         alias = path.stem.lower()
         model_cfg = data.get("model") or {}
-        folder = model_cfg.get("model_name")
+        raw_folder = model_cfg.get("model_name")
+        folder = raw_folder
+        try:
+            from select_model import profile_model_folder
+
+            folder = profile_model_folder(raw_folder) or raw_folder
+        except Exception:
+            folder = raw_folder
         pretty = data.get("pretty") or folder or alias
         ov = overrides.get(alias) or {}
         if ov.get("pretty"):
             pretty = ov["pretty"]
+        else:
+            pretty = pretty_model_label(pretty) or pretty
         entry = {
             "alias": alias,
             "folder": folder,
@@ -468,7 +477,9 @@ def profile_map() -> dict[str, dict]:
         }
         mapping[alias] = entry
         if folder:
-            mapping[folder.lower()] = entry
+            mapping[str(folder).lower()] = entry
+        if raw_folder and str(raw_folder).lower() != str(folder or "").lower():
+            mapping[str(raw_folder).lower()] = entry
     _profile_map_cache = (epoch, mapping)
     return mapping
 

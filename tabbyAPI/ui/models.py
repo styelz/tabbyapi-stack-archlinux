@@ -147,6 +147,43 @@ def path_size(path: Path) -> int:
     return total
 
 
+def library_size(path: Path) -> int:
+    """On-disk size for the library. Extra GGUF quants in the same folder do not stack."""
+    if not path.exists():
+        return 0
+    if path.is_file():
+        return path_size(path)
+    weights: list[int] = []
+    extra = 0
+    try:
+        for child in path.rglob("*"):
+            if not child.is_file():
+                continue
+            try:
+                n = int(child.stat().st_size)
+            except OSError:
+                continue
+            name = child.name.lower()
+            if name.endswith(".gguf") and "mmproj" not in name:
+                weights.append(n)
+            else:
+                extra += n
+    except OSError:
+        return path_size(path)
+    if len(weights) > 1:
+        return max(weights) + extra
+    return sum(weights) + extra
+
+
+def _weights_folder(model_name: str, models_dir: Path) -> str:
+    from select_model import profile_model_folder
+
+    raw = str(model_name or "").strip()
+    if not raw:
+        return ""
+    return str(profile_model_folder(raw, models_dir=models_dir) or raw)
+
+
 def disk_usage_for(path: Path) -> dict[str, int]:
     target = path if path.exists() else path.parent
     try:
@@ -748,7 +785,7 @@ def catalog_pick_rows(paths: ModelPaths | None = None) -> list[dict]:
     return rows
 
 
-def _profile_map(profiles_dir: Path) -> dict[str, dict]:
+def _profile_map(profiles_dir: Path, models_dir: Path | None = None) -> dict[str, dict]:
     mapping: dict[str, dict] = {}
     if not profiles_dir.is_dir():
         return mapping
@@ -756,6 +793,7 @@ def _profile_map(profiles_dir: Path) -> dict[str, dict]:
 
     yaml = YAML(typ="safe")
     overrides = load_name_overrides(profiles_dir)
+    models = models_dir if models_dir is not None else MODELS_DIR
     for path in sorted(profiles_dir.glob("*.yml")):
         try:
             data = yaml.load(path.read_text(encoding="utf-8")) or {}
@@ -764,8 +802,9 @@ def _profile_map(profiles_dir: Path) -> dict[str, dict]:
         if not isinstance(data, dict):
             continue
         alias = path.stem
-        folder = str(((data.get("model") or {}) or {}).get("model_name") or "")
-        pretty = str(data.get("pretty") or folder or alias)
+        raw_folder = str(((data.get("model") or {}) or {}).get("model_name") or "")
+        folder = _weights_folder(raw_folder, models) if raw_folder else ""
+        pretty = str(data.get("pretty") or folder or raw_folder or alias)
         ov = overrides.get(alias.lower()) or {}
         if ov.get("pretty"):
             pretty = str(ov["pretty"])
@@ -773,7 +812,7 @@ def _profile_map(profiles_dir: Path) -> dict[str, dict]:
             pretty = _pretty_label(pretty) or pretty
         entry = {
             "alias": alias,
-            "folder": folder,
+            "folder": folder or raw_folder,
             "pretty": pretty,
             "local": is_local_profile(alias, data),
             "path": str(path),
@@ -781,6 +820,8 @@ def _profile_map(profiles_dir: Path) -> dict[str, dict]:
         mapping[alias.lower()] = entry
         if folder:
             mapping[folder.lower()] = entry
+        if raw_folder and raw_folder.lower() != str(folder or "").lower():
+            mapping[raw_folder.lower()] = entry
     return mapping
 
 
@@ -788,7 +829,7 @@ def library_llms(paths: ModelPaths | None = None, loaded: str | None = None) -> 
     p = paths or default_paths()
     from select_model import is_embedding_folder
 
-    profiles = _profile_map(p.profiles_dir)
+    profiles = _profile_map(p.profiles_dir, models_dir=p.models_dir)
     catalog_folders: dict[str, str] = {}
     catalog = load_catalog(p.catalog_path)
     for item_id, item in (catalog.get("items") or {}).items():
@@ -810,15 +851,16 @@ def library_llms(paths: ModelPaths | None = None, loaded: str | None = None) -> 
             continue
         entry = profiles.get(child.name.lower()) or {}
         embed = is_embedding_folder(child.name)
+        pretty = entry.get("pretty") or _pretty_label(child.name) or child.name
         rows.append(
             {
                 "id": child.name,
                 "kind": "embed" if embed else "llm",
-                "label": entry.get("pretty") or child.name,
+                "label": pretty,
                 "folder": child.name,
-                "size_bytes": path_size(child),
+                "size_bytes": library_size(child),
                 "profile": None if embed else (entry.get("alias") or None),
-                "pretty": entry.get("pretty") or child.name,
+                "pretty": pretty,
                 "loaded": (not embed) and loaded == child.name,
                 "catalog_id": catalog_folders.get(child.name),
                 "local_profile": bool(entry.get("local")),
@@ -1191,7 +1233,8 @@ def profile_slug(folder_name: str) -> str:
 
 
 def profile_alias_for_folder(folder: str, paths: ModelPaths | None = None) -> str | None:
-    mapping = _profile_map((paths or default_paths()).profiles_dir)
+    p = paths or default_paths()
+    mapping = _profile_map(p.profiles_dir, models_dir=p.models_dir)
     entry = mapping.get(str(folder).lower())
     return entry.get("alias") if entry else None
 
@@ -1218,13 +1261,12 @@ def profile_defaults_from_config(
     ggufs = list(folder.glob("*.gguf")) if folder.is_dir() else []
     cfg_path = folder / "config.json"
     if not cfg_path.is_file() and ggufs:
-        pretty_name = pretty or folder.name
+        pretty_name = pretty or _pretty_label(folder.name) or folder.name
         mmproj = next((p for p in ggufs if "mmproj" in p.name.lower()), None)
         weights = [p for p in ggufs if p != mmproj]
-        model_file = weights[0].name if len(weights) == 1 else folder.name
         model = {
             "backend": "llamacpp",
-            "model_name": model_file,
+            "model_name": folder.name,
             "n_gpu_layers": -1,
             "max_seq_len": max_seq,
             "vision": bool(mmproj),
@@ -1352,15 +1394,28 @@ def _load_profile_yaml(path: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def _alias_owner_label(alias: str, other: str, paths: ModelPaths) -> str:
+    data = _load_profile_yaml(paths.profiles_dir / f"{alias}.yml")
+    pretty = str(data.get("pretty") or "")
+    folder = _weights_folder(other, paths.models_dir) or other
+    return _pretty_label(pretty) or _pretty_label(folder) or pretty or folder or other
+
+
 def _alias_taken_by_other(alias: str, folder: str, paths: ModelPaths) -> str | None:
     dest = paths.profiles_dir / f"{alias}.yml"
     if not dest.is_file():
         return None
     data = _load_profile_yaml(dest)
     other = str(((data.get("model") or {}) or {}).get("model_name") or "")
-    if other and other.lower() != str(folder).lower():
-        return other
-    return None
+    if not other:
+        return None
+    other_folder = _weights_folder(other, paths.models_dir).lower()
+    want_folder = _weights_folder(folder, paths.models_dir).lower()
+    if other_folder and want_folder and other_folder == want_folder:
+        return None
+    if other.lower() == str(folder).lower():
+        return None
+    return _alias_owner_label(alias, other, paths)
 
 
 def maybe_write_hf_profile(
@@ -1377,6 +1432,23 @@ def maybe_write_hf_profile(
     explicit = optional_pretty(pretty)
     pretty_name = explicit or _pretty_label(repo_id, revision) or _pretty_label(folder) or folder
     if wanted:
+        dest = p.profiles_dir / f"{wanted}.yml"
+        existing_wanted = _load_profile_yaml(dest) if dest.is_file() else {}
+        if (
+            existing_wanted
+            and is_shipped_alias(wanted)
+            and not is_local_profile(wanted, existing_wanted)
+        ):
+            other = str(((existing_wanted.get("model") or {}) or {}).get("model_name") or "")
+            other_folder = _weights_folder(other, p.models_dir)
+            this_folder = _weights_folder(folder, p.models_dir)
+            if other and other_folder.lower() != this_folder.lower():
+                raise ModelsError(
+                    f"{wanted} is already used by {_alias_owner_label(wanted, other, p)}"
+                )
+            if explicit:
+                _write_profile_pretty(wanted, explicit, folder, p)
+            return wanted
         taken = _alias_taken_by_other(wanted, folder, p)
         if taken:
             raise ModelsError(f"{wanted} is already used by {taken}")
@@ -1413,7 +1485,7 @@ def maybe_write_hf_profile(
 
 def _local_profiles_for_folder(folder: str, paths: ModelPaths) -> list[Path]:
     found = []
-    mapping = _profile_map(paths.profiles_dir)
+    mapping = _profile_map(paths.profiles_dir, models_dir=paths.models_dir)
     entry = mapping.get(str(folder).lower()) or {}
     alias = str(entry.get("alias") or "")
     if alias and is_local_profile(alias, _load_profile_yaml(paths.profiles_dir / f"{alias}.yml")):
@@ -1500,7 +1572,7 @@ def set_profile_alias(body: dict, paths: ModelPaths | None = None) -> dict:
     if folder:
         folder = sanitize_folder_name(folder)
     elif current:
-        entry = _profile_map(p.profiles_dir).get(current.lower()) or {}
+        entry = _profile_map(p.profiles_dir, models_dir=p.models_dir).get(current.lower()) or {}
         folder = str(entry.get("folder") or "")
         if not folder:
             raise ModelsError(f"Unknown profile {current!r}", 404)

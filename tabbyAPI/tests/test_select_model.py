@@ -203,6 +203,13 @@ class GgufProfileTests(unittest.TestCase):
                     select_model.resolve_gguf_path("Some-20B", models_dir=models).name,
                     "weights.gguf",
                 )
+                self.assertEqual(
+                    select_model.profile_model_folder("weights.gguf", models_dir=models),
+                    "Some-20B",
+                )
+                self.assertTrue(
+                    select_model.model_folder_ready("weights.gguf", models_dir=models)
+                )
 
     def test_profile_backend_and_apply_skips_config_yml(self):
         with tempfile.TemporaryDirectory() as raw:

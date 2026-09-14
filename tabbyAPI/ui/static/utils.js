@@ -2208,8 +2208,8 @@
       }
       const loaded = Boolean(data.tabby_model || data.llama_up || data.comfy_up);
       const mode = loaded ? (data.gpu_mode || "gpu") : "idle";
-      const label = data.profile || data.tabby_model || "idle";
       const pretty = ((data.profile_labels || {})[data.profile] || "").trim();
+      const label = pretty || data.profile || data.tabby_model || "idle";
       const text = loaded
         ? `${String(mode).toUpperCase()} · ${label}`
         : `UNLOADED · ${label}`;
@@ -2217,8 +2217,10 @@
       chip.className = "chip" + (loaded && mode === "llm" ? " ok" : " warn");
       const parts = ["Click to switch model"];
       if (!loaded) parts.unshift("Nothing is serving");
-      if (pretty && pretty !== label) parts.unshift(pretty);
-      if (data.tabby_model && data.tabby_model !== pretty) parts.push(data.tabby_model);
+      if (data.profile && pretty && data.profile !== pretty) parts.push(data.profile);
+      if (data.tabby_model && data.tabby_model !== pretty && data.tabby_model !== label) {
+        parts.push(data.tabby_model);
+      }
       chip.title = parts.join(" · ");
       chip.setAttribute("aria-label", `GPU and model: ${text}`);
       window.dispatchEvent(new CustomEvent("tabby-gpu-status", { detail: data }));

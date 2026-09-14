@@ -106,11 +106,29 @@ def _gguf_in(path: Path) -> list[Path]:
 def model_folder_ready(folder_name: str, models_dir: Path | None = None) -> bool:
     if not folder_name or is_embedding_folder(folder_name):
         return False
-    base = models_dir or (ROOT / "models")
-    path = base / folder_name
-    if (path / "config.json").is_file():
-        return True
-    return bool(_gguf_in(path))
+    return profile_model_folder(folder_name, models_dir=models_dir) is not None
+
+
+def _gguf_named(base: Path, folder_name: str) -> list[Path]:
+    """Find a profile model_name that is a .gguf file, not a models/ folder."""
+    target = Path(folder_name).name.lower()
+    if not target.endswith(".gguf") or not base.is_dir():
+        return []
+    try:
+        children = list(base.iterdir())
+    except OSError:
+        return []
+    for child in children:
+        if child.is_file() and child.name.lower() == target:
+            return [child]
+        if child.is_dir():
+            hit = child / Path(folder_name).name
+            if hit.is_file():
+                return [hit]
+            nested = [item for item in _gguf_in(child) if item.name.lower() == target]
+            if nested:
+                return nested
+    return []
 
 
 def resolve_gguf_path(folder_name: str, models_dir: Path | None = None) -> Path | None:
@@ -118,7 +136,7 @@ def resolve_gguf_path(folder_name: str, models_dir: Path | None = None) -> Path 
         return None
     base = models_dir or (ROOT / "models")
     path = base / folder_name
-    files = _gguf_in(path)
+    files = _gguf_in(path) or _gguf_named(base, folder_name)
     if not files:
         return None
     if len(files) == 1:
@@ -126,12 +144,37 @@ def resolve_gguf_path(folder_name: str, models_dir: Path | None = None) -> Path 
     named = [item for item in files if item.stem.lower() == Path(folder_name).stem.lower()]
     if named:
         return named[0]
-    return max(files, key=lambda item: item.stat().st_size if item.is_file() else 0)
+    weights = [item for item in files if "mmproj" not in item.name.lower()]
+    pool = weights or files
+    return max(pool, key=lambda item: item.stat().st_size if item.is_file() else 0)
+
+
+def profile_model_folder(model_name: str, models_dir: Path | None = None) -> str | None:
+    """models/ directory name for a profile model_name (folder or nested .gguf)."""
+    raw = str(model_name or "").strip()
+    if not raw:
+        return None
+    base = models_dir or (ROOT / "models")
+    path = base / raw
+    if path.is_dir() and ((path / "config.json").is_file() or _gguf_in(path)):
+        return path.name
+    gguf = resolve_gguf_path(raw, models_dir=models_dir)
+    if gguf is None:
+        return None
+    parent = gguf.parent
+    try:
+        rel = parent.resolve().relative_to(base.resolve())
+    except ValueError:
+        return parent.name
+    if str(rel) in (".", ""):
+        return gguf.name
+    return rel.parts[0]
 
 
 def resolve_mmproj_path(folder_name: str, models_dir: Path | None = None) -> Path | None:
     base = models_dir or (ROOT / "models")
-    path = base / folder_name
+    gguf = resolve_gguf_path(folder_name, models_dir=models_dir)
+    path = gguf.parent if gguf is not None else (base / folder_name)
     if path.is_file():
         path = path.parent
     if not path.is_dir():
@@ -242,8 +285,13 @@ def ready_llm_folders(models_dir: Path | None = None) -> list[str]:
 
 
 def profile_for_folder(folder: str, profiles_dir: Path | None = None) -> str | None:
+    want = str(folder or "").strip().lower()
+    if not want:
+        return None
     for path in sorted((profiles_dir or PROFILES_DIR).glob("*.yml")):
-        if profile_model_name(path.stem, profiles_dir=profiles_dir) == folder:
+        raw = profile_model_name(path.stem, profiles_dir=profiles_dir) or ""
+        resolved = (profile_model_folder(raw) or raw).strip().lower()
+        if resolved == want or raw.lower() == want:
             return path.stem
     return None
 
@@ -252,8 +300,12 @@ def folder_for_choice(name: str | None, models_dir: Path | None = None) -> str |
     if not name:
         return None
     folder = profile_model_name(name)
-    if folder and model_folder_ready(folder, models_dir=models_dir):
-        return folder
+    resolved = profile_model_folder(folder, models_dir=models_dir) if folder else None
+    if resolved:
+        return resolved
+    resolved = profile_model_folder(name, models_dir=models_dir)
+    if resolved:
+        return resolved
     if model_folder_ready(name, models_dir=models_dir):
         return name
     return None
@@ -311,8 +363,9 @@ def folder_for_id(
     catalog: dict | None = None,
 ) -> str | None:
     folder = profile_model_name(token, profiles_dir=profiles_dir)
-    if folder and model_folder_ready(folder, models_dir=models_dir):
-        return folder
+    resolved = profile_model_folder(folder, models_dir=models_dir) if folder else None
+    if resolved:
+        return resolved
     item = ((catalog if catalog is not None else _load_catalog()).get("items") or {}).get(token) or {}
     dest = str(item.get("dest") or "")
     if dest.startswith("tabby/models/"):
@@ -324,8 +377,9 @@ def folder_for_id(
             safe = "".join(ch if ch.isalnum() or ch in "._-" else "-" for ch in name).strip("-")
             if f"local-{safe}" == token:
                 return name
-    if model_folder_ready(token, models_dir=models_dir):
-        return token
+    resolved = profile_model_folder(token, models_dir=models_dir)
+    if resolved:
+        return resolved
     return None
 
 

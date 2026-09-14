@@ -143,7 +143,7 @@
             current === name,
             switchLocked,
             occupied && !switchLocked && current !== name ? "Wait" : (!ready && current !== name ? "Download" : ""),
-            pretty !== name ? name : ""
+            pretty !== name && !String(name).toLowerCase().startsWith("hf-") ? name : ""
           )
         );
       });

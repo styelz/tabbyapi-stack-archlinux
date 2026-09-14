@@ -5066,6 +5066,10 @@ figure.shot .open { display: block; }
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+.models-table th.models-kind, .models-table td.models-kind {
+  white-space: nowrap;
+  width: 1%;
+}
 .models-table td.models-actions {
   width: 1%;
   vertical-align: middle;

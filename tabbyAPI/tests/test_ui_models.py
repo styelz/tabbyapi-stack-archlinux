@@ -299,6 +299,94 @@ class LibraryAndDeleteTests(unittest.TestCase):
             row = next(item for item in data["llms"] if item["id"] == "Some-20B-Q4_K_M")
             self.assertEqual(row["profile"], "biggguf")
 
+    def test_library_matches_gguf_profile_stored_as_filename(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            paths = _paths(root)
+            folder = paths.models_dir / "Qwen3.8-27B-Uncensored-IQ4-XS-MTP-16GB-VRAM-GGUF"
+            folder.mkdir()
+            gguf = folder / "Qwen3.8-27B-Uncensored-IQ4_XS-459W.gguf"
+            gguf.write_bytes(b"gguf")
+            (paths.profiles_dir / "uncens.yml").write_text(
+                "pretty: Qwen3.8-27B Uncensored\nlocal: true\nmodel:\n"
+                "  backend: llamacpp\n"
+                "  model_name: Qwen3.8-27B-Uncensored-IQ4_XS-459W.gguf\n",
+                encoding="utf-8",
+            )
+            data = library_state(paths, loaded="")
+            row = next(item for item in data["llms"] if item["id"] == folder.name)
+            self.assertEqual(row["profile"], "uncens")
+            self.assertEqual(row["pretty"], "Qwen3.8-27B Uncensored")
+
+    def test_library_pretty_strips_junk_folder_names(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            paths = _paths(root)
+            folder = paths.models_dir / "Qwen3.8-27B-Uncensored-IQ4-XS-MTP-16GB-VRAM-GGUF"
+            folder.mkdir()
+            (folder / "weights.gguf").write_bytes(b"gguf")
+            data = library_state(paths, loaded="")
+            row = next(item for item in data["llms"] if item["id"] == folder.name)
+            self.assertEqual(row["pretty"], "Qwen3.8-27B-Uncensored")
+            self.assertIsNone(row["profile"])
+
+    def test_library_size_uses_one_gguf_when_repo_has_many_quants(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            paths = _paths(root)
+            folder = paths.models_dir / "deepseek-coder-1.3b-instruct-GGUF"
+            folder.mkdir()
+            (folder / "Q4_K_M.gguf").write_bytes(b"x" * 80)
+            (folder / "Q8_0.gguf").write_bytes(b"x" * 200)
+            (folder / "Q2_K.gguf").write_bytes(b"x" * 40)
+            data = library_state(paths, loaded="")
+            row = next(item for item in data["llms"] if item["id"] == folder.name)
+            self.assertEqual(row["size_bytes"], 200)
+
+    def test_alias_taken_by_gguf_file_is_same_folder(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            paths = _paths(root)
+            folder = paths.models_dir / "Qwen3.8-Uncensored"
+            folder.mkdir()
+            (folder / "weights.gguf").write_bytes(b"gguf")
+            (paths.profiles_dir / "qwen36.yml").write_text(
+                "pretty: Qwen3.6-27B - hard coding, 2.00bpw\n"
+                "model:\n  model_name: Qwen3.6-27B-exl3-2.00bpw\n",
+                encoding="utf-8",
+            )
+            _llm_folder(paths.models_dir, "Qwen3.6-27B-exl3-2.00bpw")
+            with self.assertRaises(ModelsError) as caught:
+                maybe_write_hf_profile(
+                    folder.name,
+                    repo_id="Bucoid/Qwen3.8-27B-Uncensored-IQ4-XS-MTP-16GB-VRAM-GGUF",
+                    alias="qwen36",
+                    paths=paths,
+                )
+            self.assertIn("already used by", str(caught.exception))
+            self.assertIn("Qwen3.6-27B", str(caught.exception))
+            self.assertNotIn(".gguf", str(caught.exception))
+            shipped = (paths.profiles_dir / "qwen36.yml").read_text(encoding="utf-8")
+            self.assertIn("Qwen3.6-27B-exl3-2.00bpw", shipped)
+            self.assertNotIn("local: true", shipped)
+
+    def test_gguf_filename_profile_can_keep_its_alias(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            paths = _paths(root)
+            folder = paths.models_dir / "Some-20B"
+            folder.mkdir()
+            (folder / "weights.gguf").write_bytes(b"gguf")
+            (paths.profiles_dir / "biggguf.yml").write_text(
+                "pretty: Some 20B\nlocal: true\nmodel:\n"
+                "  backend: llamacpp\n  model_name: weights.gguf\n",
+                encoding="utf-8",
+            )
+            alias = maybe_write_hf_profile(
+                folder.name, alias="biggguf", pretty="Some 20B", paths=paths
+            )
+            self.assertEqual(alias, "biggguf")
+
     def test_gguf_profile_defaults_use_llamacpp(self):
         with tempfile.TemporaryDirectory() as raw:
             folder = Path(raw) / "Some-20B"
@@ -307,7 +395,7 @@ class LibraryAndDeleteTests(unittest.TestCase):
             data = ui_models.profile_defaults_from_config(folder)
             self.assertEqual(data["model"]["backend"], "llamacpp")
             self.assertEqual(data["model"]["n_gpu_layers"], -1)
-            self.assertEqual(data["model"]["model_name"], "model.gguf")
+            self.assertEqual(data["model"]["model_name"], folder.name)
             self.assertNotIn("chat_template", data["model"])
 
     def test_gguf_coder_base_sets_deepseek_template(self):
@@ -532,10 +620,16 @@ class PrettyModelLabelTests(unittest.TestCase):
             "deepseek-coder-1.3b-instruct",
         )
         self.assertEqual(
-            pretty_model_label(
-                "Bucoid/Qwen3.8-27B-Uncensored-IQ4-XS-MTP-16GB-VRAM-GGUF"
-            ),
+            pretty_model_label("Bucoid/Qwen3.8-27B-Uncensored-IQ4-XS-MTP-16GB-VRAM-GGUF"),
             "Qwen3.8-27B-Uncensored",
+        )
+        self.assertEqual(
+            pretty_model_label("Qwen3.6-27B - hard coding, 2.00bpw"),
+            "Qwen3.6-27B - hard coding",
+        )
+        self.assertEqual(
+            pretty_model_label("Gemma 4 26B-A4B - stronger general, 2.10bpw"),
+            "Gemma 4 26B-A4B - stronger general",
         )
         self.assertEqual(pretty_model_label("Daily coding"), "Daily coding")
 

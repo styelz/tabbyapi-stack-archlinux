@@ -27,7 +27,7 @@ function mountModels(root) {
             <thead>
               <tr>
                 <th>Model</th>
-                <th>Kind</th>
+                <th class="models-kind">Kind</th>
                 <th class="num">Size</th>
                 <th></th>
               </tr>
@@ -303,7 +303,7 @@ function mountModels(root) {
           : "";
         return `<tr data-id="${id}" data-kind="${TabbyUI.escapeHtml(row.kind)}" data-catalog="${catalogId}">
           <td><strong>${name}</strong><div class="muted models-sub">${sub}</div></td>
-          <td class="muted">${kind}</td>
+          <td class="muted models-kind">${kind}</td>
           <td class="num">${TabbyUI.escapeHtml(size)}</td>
           <td class="models-actions">${actionSlot(primary)}${actionSlot(del)}</td>
         </tr>`;
