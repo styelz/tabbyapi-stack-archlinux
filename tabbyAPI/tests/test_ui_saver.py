@@ -600,6 +600,44 @@ class SaverKioskSceneTests(unittest.TestCase):
         self.assertGreater(dx * dx + dy * dy, self.kiosk._SLEEP_MIN_SEP ** 2)
         self.assertGreater(min(item["size"] for item in pair), 400)
 
+    def test_idle_sleepers_spin_on_random_axes(self):
+        rates = [self.kiosk._sleep_spin_rates(0, cycle) for cycle in range(24)]
+        yaw_signs = {1 if y > 0 else -1 for y, _p, _r in rates}
+        pitch_signs = {1 if p > 0 else -1 for _y, p, _r in rates}
+        roll_signs = {1 if r > 0 else -1 for _y, _p, r in rates}
+        self.assertGreater(len(yaw_signs), 1)
+        self.assertGreater(len(pitch_signs), 1)
+        self.assertGreater(len(roll_signs), 1)
+        self.assertGreater(len(set(rates)), 8)
+        other = [self.kiosk._sleep_spin_rates(1, cycle) for cycle in range(8)]
+        self.assertTrue(any(a != b for a, b in zip(rates, other)))
+
+    def test_idle_sleeper_pose_tumbles_all_axes(self):
+        idle = self.kiosk.scene_from_state(
+            {"gpu_mode": "llm", "profile": "qwen", "busy": False},
+            True,
+        )
+        idle["cycle"] = "idle"
+        idle["overlay"] = 0.0
+        idle["live"] = False
+        first = second = []
+        for st in (4.0, 8.0, 12.0, 18.0, 22.0):
+            idle["st"] = st
+            first = self.kiosk.idle_sleeper_items(idle, 480, 270)
+            if not first:
+                continue
+            idle["st"] = st + 3.0
+            second = self.kiosk.idle_sleeper_items(idle, 480, 270)
+            by_seed = {item["seed"]: item for item in second}
+            held = [item for item in first if item["seed"] in by_seed]
+            if held:
+                a, b = held[0], by_seed[held[0]["seed"]]
+                self.assertNotAlmostEqual(a["yaw"], b["yaw"], places=3)
+                self.assertNotAlmostEqual(a["pitch"], b["pitch"], places=3)
+                self.assertNotAlmostEqual(a["roll"], b["roll"], places=3)
+                return
+        self.fail("no sleeper stayed visible long enough to tumble")
+
     def test_idle_rt_sphere_is_lit(self):
         rgb = self.kiosk._sleep_rt_rgb(
             "sphere", 32, 32, 0.35, 0.2, 1.0, (80, 100, 160)
@@ -1658,11 +1696,20 @@ class SaverKioskSceneTests(unittest.TestCase):
     def test_sleep_cache_key_quantises_slow_rotation(self):
         key = self.kiosk.sleep_cache_key
         q = self.kiosk._SLEEP_ANGLE_Q
-        base = {"kind": "torus", "yaw": 100 * q, "pitch": 12 * q, "tint": (56, 84, 132), "size": 344}
+        base = {
+            "kind": "torus",
+            "yaw": 100 * q,
+            "pitch": 12 * q,
+            "roll": 7 * q,
+            "tint": (56, 84, 132),
+            "size": 344,
+        }
         self.assertEqual(key(base), key(dict(base, yaw=base["yaw"] + q * 0.4)))
         self.assertNotEqual(key(base), key(dict(base, yaw=base["yaw"] + q * 1.4)))
+        self.assertNotEqual(key(base), key(dict(base, roll=base["roll"] + q * 1.4)))
         self.assertNotEqual(key(base), key(dict(base, kind="box")))
         self.assertNotEqual(key(base), key(dict(base, size=400)))
+        self.assertLess(q, 0.008)
 
     def test_close_display_drops_cached_solids(self):
         kiosk = self.kiosk

@@ -1901,11 +1901,43 @@ def idle_sleeper_envelope(
     return _smoothstep(u / fade) * _smoothstep((life - u) / fade)
 
 
-def _sleep_xy(slot: int, st: float) -> tuple[float, float]:
-    """Home in a screen third, plus a slow orbit. math.sin so it does not stair-step."""
+def _sleep_sign(slot: int, cycle: int, salt: int) -> float:
+    return -1.0 if _sleep_unit(slot, cycle, salt) < 0.5 else 1.0
+
+
+def _sleep_spin_rates(slot: int, cycle: int) -> tuple[float, float, float]:
+    """Yaw/pitch/roll rad/s for one appearance. Signs and speeds vary per cycle."""
+
+    def rate(salt_mag: int, salt_sign: int, lo: float, hi: float) -> float:
+        mag = lo + (hi - lo) * _sleep_unit(slot, cycle, salt_mag)
+        return mag * _sleep_sign(slot, cycle, salt_sign)
+
+    return (
+        rate(41, 43, 0.022, 0.090),
+        rate(47, 53, 0.014, 0.072),
+        rate(59, 67, 0.018, 0.086),
+    )
+
+
+def _sleep_pose(slot: int, cycle: int, st: float) -> tuple[float, float, float]:
+    yaw0 = TWO_PI * _sleep_unit(slot, cycle, 31)
+    pitch0 = TWO_PI * _sleep_unit(slot, cycle, 37)
+    roll0 = TWO_PI * _sleep_unit(slot, cycle, 71)
+    wy, wp, wr = _sleep_spin_rates(slot, cycle)
+    return yaw0 + st * wy, pitch0 + st * wp, roll0 + st * wr
+
+
+def _sleep_xy(slot: int, st: float, cycle: int = 0) -> tuple[float, float]:
+    """Home in a screen third, plus a slow wander. math.sin so it does not stair-step."""
     hx, hy = _SLEEP_HOMES[slot % len(_SLEEP_HOMES)]
-    x = hx + 0.06 * math.sin(st * 0.037 + slot * 2.15)
-    y = hy + 0.07 * math.sin(st * 0.029 + slot * 1.37)
+    ax = 0.045 + 0.025 * _sleep_unit(slot, cycle, 11)
+    ay = 0.050 + 0.020 * _sleep_unit(slot, cycle, 13)
+    wx = 0.028 + 0.022 * _sleep_unit(slot, cycle, 17)
+    wy = 0.022 + 0.024 * _sleep_unit(slot, cycle, 19)
+    phx = slot * 2.15 + TWO_PI * _sleep_unit(slot, cycle, 23)
+    phy = slot * 1.37 + TWO_PI * _sleep_unit(slot, cycle, 29)
+    x = hx + ax * math.sin(st * wx + phx) + 0.016 * math.sin(st * (wx * 0.37) + phx * 1.7)
+    y = hy + ay * math.sin(st * wy + phy) + 0.014 * math.sin(st * (wy * 0.41) + phy * 1.4)
     return x, y
 
 
@@ -1940,10 +1972,9 @@ def idle_sleeper_items(scene: dict[str, Any], width: int, height: int) -> list[d
             continue
         cycle = int(math.floor(clock - u + 1e-9))
         kind = _SLEEP_KINDS[(slot + cycle) % n_kinds]
-        x, y = _sleep_xy(slot, st)
+        x, y = _sleep_xy(slot, st, cycle)
         scale = 0.92 + 0.12 * _sleep_unit(slot, cycle, 29)
-        yaw0 = TWO_PI * _sleep_unit(slot, cycle, 31)
-        pitch0 = (_sleep_unit(slot, cycle, 37) - 0.5) * 0.40
+        yaw, pitch, roll = _sleep_pose(slot, cycle, st)
         span = max(160, min(_SLEEP_SPAN_MAX, int(round(short * _SLEEP_SPAN_FRAC * scale))))
         candidates.append(
             {
@@ -1954,8 +1985,9 @@ def idle_sleeper_items(scene: dict[str, Any], width: int, height: int) -> list[d
                 "y": y * (h - 1),
                 "size": span,
                 "amt": amt,
-                "yaw": yaw0 + st * 0.055,
-                "pitch": pitch0 + 0.10 * math.sin(st * 0.048 + slot),
+                "yaw": yaw,
+                "pitch": pitch,
+                "roll": roll,
                 "tint": _sleep_tint_for(slot, cycle, idle_hue),
                 "seed": slot * 10007 + cycle,
             }
@@ -2003,8 +2035,10 @@ def _sleep_sdf(kind: str, px: float, py: float, pz: float) -> float:
 
 
 def _sleep_rotate(
-    px: float, py: float, pz: float, yaw: float, pitch: float
+    px: float, py: float, pz: float, yaw: float, pitch: float, roll: float = 0.0
 ) -> tuple[float, float, float]:
+    c, s = math.cos(roll), math.sin(roll)
+    px, py = px * c - py * s, px * s + py * c
     c, s = math.cos(pitch), math.sin(pitch)
     py, pz = py * c - pz * s, py * s + pz * c
     c, s = math.cos(yaw), math.sin(yaw)
@@ -2020,6 +2054,7 @@ def _sleep_rt_rgb(
     pitch: float,
     amt: float,
     tint: tuple[int, int, int],
+    roll: float = 0.0,
 ) -> bytes:
     """Software ray march of one solid. Black misses; dim additive hits."""
     w = max(8, int(width))
@@ -2034,7 +2069,7 @@ def _sleep_rt_rgb(
     except ImportError:
         np = None
     if np is not None:
-        return _sleep_rt_rgb_numpy(kind, w, h, yaw, pitch, amt, (tr, tg, tb), np)
+        return _sleep_rt_rgb_numpy(kind, w, h, yaw, pitch, amt, (tr, tg, tb), np, roll)
     steps = 12
     light = (0.48, 0.78, 0.44)
     ln = math.sqrt(light[0] ** 2 + light[1] ** 2 + light[2] ** 2)
@@ -2054,7 +2089,7 @@ def _sleep_rt_rgb(
             closest = 8.0
             for _step in range(steps):
                 px, py, pz = rdx * t, rdy * t, 2.05 + rdz * t
-                qx, qy, qz = _sleep_rotate(px, py, pz, yaw, pitch)
+                qx, qy, qz = _sleep_rotate(px, py, pz, yaw, pitch, roll)
                 d = _sleep_sdf(kind, qx, qy, qz)
                 closest = min(closest, d if d > 0.0 else 0.0)
                 if d < 0.012:
@@ -2072,7 +2107,7 @@ def _sleep_rt_rgb(
                 i += 3
                 continue
             def n_at(dx: float, dy: float, dz: float) -> float:
-                sx, sy, sz = _sleep_rotate(px + dx, py + dy, pz + dz, yaw, pitch)
+                sx, sy, sz = _sleep_rotate(px + dx, py + dy, pz + dz, yaw, pitch, roll)
                 return _sleep_sdf(kind, sx, sy, sz)
             nx = n_at(eps, 0.0, 0.0) - n_at(-eps, 0.0, 0.0)
             ny = n_at(0.0, eps, 0.0) - n_at(0.0, -eps, 0.0)
@@ -2103,6 +2138,7 @@ def _sleep_rt_rgb_numpy(
     amt: float,
     tint: tuple[int, int, int],
     np: Any,
+    roll: float = 0.0,
 ) -> bytes:
     xs = ((np.arange(w, dtype=np.float32) + 0.5) / w) * 2.0 - 1.0
     ys = 1.0 - ((np.arange(h, dtype=np.float32) + 0.5) / h) * 2.0
@@ -2112,14 +2148,17 @@ def _sleep_rt_rgb_numpy(
     rdz = np.full((h, w), np.float32(-1.32))
     inv = 1.0 / np.sqrt(rdx * rdx + rdy * rdy + rdz * rdz)
     rdx, rdy, rdz = rdx * inv, rdy * inv, rdz * inv
+    cr, sr = np.float32(math.cos(roll)), np.float32(math.sin(roll))
     cy, sy = np.float32(math.cos(pitch)), np.float32(math.sin(pitch))
     cz, sz = np.float32(math.cos(yaw)), np.float32(math.sin(yaw))
 
     def rotate(px, py, pz):
-        py2 = py * cy - pz * sy
-        pz2 = py * sy + pz * cy
-        px2 = px * cz - pz2 * sz
-        pz3 = px * sz + pz2 * cz
+        px1 = px * cr - py * sr
+        py1 = px * sr + py * cr
+        py2 = py1 * cy - pz * sy
+        pz2 = py1 * sy + pz * cy
+        px2 = px1 * cz - pz2 * sz
+        pz3 = px1 * sz + pz2 * cz
         return px2, py2, pz3
 
     def sdf(px, py, pz):
@@ -2208,7 +2247,7 @@ def _draw_sleeping_solid(pygame_mod: Any, screen: Any, item: dict[str, Any]) -> 
     q_amt = max(1, int(round(_clamp01(amt) * _SLEEP_FADE_STEPS)))
     surf = _SLEEP_SURF_CACHE.get((key, q_amt))
     if surf is None:
-        kind, _qyaw, _qpitch, _tint, span = key
+        kind, _qyaw, _qpitch, _qroll, _tint, span = key
         rt = max(48, min(_SLEEP_RT_MAX, span))
         rgb = _sleep_fade_rgb(_sleep_solid_rgb(key, rt), q_amt / _SLEEP_FADE_STEPS)
         surf = pygame_mod.image.frombuffer(rgb, (rt, rt), "RGB").convert()
@@ -2220,25 +2259,27 @@ def _draw_sleeping_solid(pygame_mod: Any, screen: Any, item: dict[str, Any]) -> 
     _blit_sleep_add(pygame_mod, screen, surf, float(item["x"]), float(item["y"]))
 
 
-# Yaw moves ~0.055 rad/s, so a fresh march every frame is wasted work. Render
-# at quantised angles and reuse until the solid has turned _SLEEP_ANGLE_Q
-# (about 1 degree, roughly every 0.3 s). The march is cached as RGB (survives
-# a display restart); the scaled Surface per fade step is cached too, and
-# those die with pygame.quit(), so _close_display drops them.
-_SLEEP_ANGLE_Q = 0.016
+# Idle paints at ~24 fps and tumble is ~0.05 rad/s, so a 1° cache step
+# (the old 0.016) only remarchs about three times a second and the solid
+# stair-steps. Quantise just under one frame of typical spin (~0.23°) so
+# the pose tracks the clock; RGB cache still skips a true duplicate frame.
+# The scaled Surface per fade step dies with pygame.quit().
+_SLEEP_ANGLE_Q = 0.004
 _SLEEP_FADE_STEPS = 32
 _SLEEP_CACHE: dict[tuple[Any, ...], Any] = {}
-_SLEEP_CACHE_MAX = 8
+_SLEEP_CACHE_MAX = 16
 _SLEEP_SURF_CACHE: dict[tuple[Any, ...], Any] = {}
-_SLEEP_SURF_CACHE_MAX = 24
+_SLEEP_SURF_CACHE_MAX = 32
 
 
 def sleep_cache_key(item: dict[str, Any]) -> tuple[Any, ...]:
     span = max(80, min(_SLEEP_SPAN_MAX, int(item.get("size") or 160)))
+    q = _SLEEP_ANGLE_Q
     return (
         str(item.get("kind") or "sphere"),
-        int(round(float(item.get("yaw") or 0.0) / _SLEEP_ANGLE_Q)),
-        int(round(float(item.get("pitch") or 0.0) / _SLEEP_ANGLE_Q)),
+        int(round(float(item.get("yaw") or 0.0) / q)),
+        int(round(float(item.get("pitch") or 0.0) / q)),
+        int(round(float(item.get("roll") or 0.0) / q)),
         tuple(item.get("tint") or _SLEEP_TINT),
         span,
     )
@@ -2249,8 +2290,11 @@ def _sleep_solid_rgb(key: tuple[Any, ...], rt: int) -> Any:
     hit = _SLEEP_CACHE.get(key)
     if hit is not None:
         return hit
-    kind, qyaw, qpitch, tint, _span = key
-    raw = _sleep_rt_rgb(kind, rt, rt, qyaw * _SLEEP_ANGLE_Q, qpitch * _SLEEP_ANGLE_Q, 1.0, tint)
+    kind, qyaw, qpitch, qroll, tint, _span = key
+    q = _SLEEP_ANGLE_Q
+    raw = _sleep_rt_rgb(
+        kind, rt, rt, qyaw * q, qpitch * q, 1.0, tint, roll=qroll * q
+    )
     try:
         import numpy as np
     except ImportError:
