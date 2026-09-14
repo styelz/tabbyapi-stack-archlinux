@@ -8,6 +8,7 @@ from common.networking import get_generator_error, handle_request_disconnect
 from common.tabby_config import config
 from endpoints.core.types.model import (
     ModelCard,
+    ModelCardParameters,
     ModelList,
     ModelLoadRequest,
     ModelLoadResponse,
@@ -30,6 +31,43 @@ def get_model_list(model_path: pathlib.Path, draft_model_path: Optional[str] = N
             model_card_list.data.append(model_card)  # pylint: disable=no-member
 
     return model_card_list
+
+
+def llama_model_card() -> Optional[ModelCard]:
+    """Card for the GGUF llama-server when it owns the GPU.
+
+    File-based: do not probe llama-server here. Editors poll GET /v1/model,
+    and a hung GGUF health check would block Tabby's event loop.
+    """
+
+    try:
+        from common.gpu_mode import read_mode
+        from common.llama_runtime import DUMMY_MODEL, read_llama_runtime
+    except Exception:
+        return None
+    if (read_mode().get("mode") or "").lower() != "llama":
+        return None
+    runtime = read_llama_runtime()
+    mode = read_mode()
+    seq = runtime.get("max_seq_len")
+    try:
+        seq_n = int(seq) if seq is not None else None
+    except (TypeError, ValueError):
+        seq_n = None
+    name = (
+        str(runtime.get("profile") or "").strip()
+        or str(mode.get("profile") or "").strip()
+        or DUMMY_MODEL
+    )
+    return ModelCard(
+        id=name,
+        parameters=ModelCardParameters(
+            max_seq_len=seq_n,
+            cache_size=seq_n,
+            cache_mode="gguf",
+            use_vision=bool(runtime.get("mmproj")),
+        ),
+    )
 
 
 async def get_current_model_list(model_type: str = "model"):
@@ -56,6 +94,10 @@ async def get_current_model_list(model_type: str = "model"):
 
     if model_path:
         current_models.append(ModelCard(id=model_path.name))
+    elif model_type == "model":
+        llama = llama_model_card()
+        if llama is not None:
+            current_models.append(ModelCard(id=llama.id))
 
     return ModelList(data=current_models)
 
@@ -63,6 +105,9 @@ async def get_current_model_list(model_type: str = "model"):
 def get_current_model():
     """Gets the current model with all parameters."""
 
+    llama = llama_model_card()
+    if llama is not None:
+        return llama
     model_card = model.container.model_info()
 
     return model_card

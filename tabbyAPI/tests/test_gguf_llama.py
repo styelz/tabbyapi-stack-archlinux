@@ -352,6 +352,86 @@ class SwitchRoutingTests(unittest.TestCase):
         self.assertIn("GGUF", text)
 
 
+class LlamaModelCardTests(unittest.TestCase):
+    def test_llama_model_card_from_runtime(self):
+        from endpoints.core.utils.model import llama_model_card
+
+        with (
+            mock.patch(
+                "common.gpu_mode.read_mode",
+                return_value={"mode": "llama", "profile": "qwen38guff"},
+            ),
+            mock.patch(
+                "common.llama_runtime.read_llama_runtime",
+                return_value={
+                    "profile": "qwen38guff",
+                    "max_seq_len": 32768,
+                    "mmproj": "",
+                },
+            ),
+        ):
+            card = llama_model_card()
+        self.assertIsNotNone(card)
+        self.assertEqual(card.id, "qwen38guff")
+        self.assertEqual(card.parameters.cache_mode, "gguf")
+        self.assertEqual(card.parameters.max_seq_len, 32768)
+
+    def test_llama_model_card_none_in_llm_mode(self):
+        from endpoints.core.utils.model import llama_model_card
+
+        with mock.patch("common.gpu_mode.read_mode", return_value={"mode": "llm"}):
+            self.assertIsNone(llama_model_card())
+
+
+class StartupLlamaRestoreTests(unittest.IsolatedAsyncioTestCase):
+    async def test_restore_starts_llama_when_mode_is_llama(self):
+        import main as main_mod
+
+        with (
+            mock.patch(
+                "common.gpu_mode.should_skip_startup_load", return_value=True
+            ),
+            mock.patch(
+                "common.gpu_mode.read_mode",
+                return_value={"mode": "llama", "profile": "qwen38guff"},
+            ),
+            mock.patch("select_model.last_llama_profile", return_value="qwen38guff"),
+            mock.patch(
+                "images.jobs._start_llama_profile",
+                new=mock.AsyncMock(),
+            ) as start,
+        ):
+            skipped = await main_mod._restore_gpu_owner()
+        self.assertTrue(skipped)
+        start.assert_awaited_once_with("qwen38guff")
+
+    async def test_restore_skips_comfy_without_llama(self):
+        import main as main_mod
+
+        with (
+            mock.patch(
+                "common.gpu_mode.should_skip_startup_load", return_value=True
+            ),
+            mock.patch("common.gpu_mode.read_mode", return_value={"mode": "comfy"}),
+            mock.patch(
+                "images.jobs._start_llama_profile",
+                new=mock.AsyncMock(),
+            ) as start,
+        ):
+            skipped = await main_mod._restore_gpu_owner()
+        self.assertTrue(skipped)
+        start.assert_not_called()
+
+    async def test_restore_loads_exl_when_mode_is_llm(self):
+        import main as main_mod
+
+        with mock.patch(
+            "common.gpu_mode.should_skip_startup_load", return_value=False
+        ):
+            skipped = await main_mod._restore_gpu_owner()
+        self.assertFalse(skipped)
+
+
 class InstallerLlamaTests(unittest.TestCase):
     def test_install_sh_builds_llama_and_unit(self):
         src = Path(__file__).resolve().parents[2] / "install.sh"
@@ -367,6 +447,13 @@ class InstallerLlamaTests(unittest.TestCase):
         self.assertIn("vulkan-headers", text)
         self.assertIn("spirv-headers", text)
         self.assertNotIn("20B-Q4", text)
+
+    def test_tabby_startup_restores_llama_mode(self):
+        src = Path(__file__).resolve().parents[1] / "main.py"
+        text = src.read_text(encoding="utf-8")
+        self.assertIn("_restore_gpu_owner", text)
+        self.assertIn("starting llama-server", text)
+        self.assertIn("_start_llama_profile", text)
 
     def test_llama_unit_and_start_script_exist(self):
         root = Path(__file__).resolve().parents[1]

@@ -71,6 +71,43 @@ async def _retry_startup_without_vision(model, model_name: str) -> bool:
         return False
 
 
+async def _restore_gpu_owner() -> bool:
+    """Skip EXL load when Comfy or llama.cpp owns the GPU.
+
+    llama.cpp is not enabled at boot (GPU is exclusive). After a reboot the
+    last GGUF must be started here, or the API stays empty and GET /v1/model
+    503s until someone switches by hand.
+    """
+
+    from common.gpu_mode import read_mode, should_skip_startup_load
+
+    if not should_skip_startup_load():
+        return False
+    mode = (read_mode().get("mode") or "").lower()
+    if mode != "llama":
+        logger.info(
+            "GPU mode is comfy; not loading the LLM. "
+            "Send switch to qwen when you want the model back."
+        )
+        return True
+    from select_model import last_llama_profile
+
+    name = str(read_mode().get("profile") or last_llama_profile() or "").strip()
+    if not name:
+        logger.warning(
+            "GPU mode is llama but no GGUF profile is saved; starting with no LLM"
+        )
+        return True
+    logger.info(f"GPU mode is llama; starting llama-server ({name})")
+    try:
+        from images.jobs import _start_llama_profile
+
+        await _start_llama_profile(name)
+    except (Exception, SystemExit) as exc:
+        logger.error(f"llama-server did not start ({name}): {exc}")
+    return True
+
+
 async def _load_startup_model(model, model_name: str) -> None:
     """Load the configured LLM. On VRAM failure, fall back to qwen and stay up."""
     model_path = pathlib.Path(config.model.model_dir) / model_name
@@ -158,13 +195,7 @@ async def entrypoint_async():
 
     clear_live_decode()
     model_name = config.model.model_name
-    from common.gpu_mode import should_skip_startup_load
-
-    if model_name and should_skip_startup_load():
-        logger.info(
-            "GPU mode is comfy; not loading the LLM. "
-            "Send switch to qwen when you want the model back."
-        )
+    if await _restore_gpu_owner():
         model_name = None
     if model_name:
         from select_model import retarget_startup_model

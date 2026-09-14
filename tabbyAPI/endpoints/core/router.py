@@ -56,6 +56,7 @@ from endpoints.core.utils.model import (
     get_current_model_list,
     get_dummy_models,
     get_model_list,
+    llama_model_card,
     stream_model_load,
 )
 
@@ -132,11 +133,15 @@ async def list_models(request: Request) -> ModelList:
 # Currently loaded model endpoint
 @router.get(
     "/v1/model",
-    dependencies=[Depends(check_api_key), Depends(check_model_container)],
+    dependencies=[Depends(check_api_key)],
 )
 async def current_model() -> ModelCard:
     """Returns the currently loaded model."""
 
+    llama = llama_model_card()
+    if llama is not None:
+        return llama
+    await check_model_container()
     return get_current_model()
 
 

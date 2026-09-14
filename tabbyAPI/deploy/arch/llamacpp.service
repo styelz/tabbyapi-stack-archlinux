@@ -12,7 +12,8 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=llamacpp
 
-# Do not enable at boot. GPU is exclusive: start only via switch to a GGUF profile.
+# Do not enable at boot. GPU is exclusive. Tabby starts this unit on
+# startup when gpu_mode.json is llama (last GGUF), or via a GGUF switch.
 
 [Install]
 WantedBy=default.target
