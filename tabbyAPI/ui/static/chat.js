@@ -12451,6 +12451,38 @@ function mountChat(root) {
     return /write|strreplace|search_replace|replace_in_file|apply_patch|edit_notebook|edit_file|delete|rename|optimize/.test(key);
   }
 
+  function mergeToolCallDeltas(existing, incoming) {
+    if (!Array.isArray(incoming) || !incoming.length) {
+      return Array.isArray(existing) ? existing : [];
+    }
+    const indexed = incoming.some((item) => item && Number.isInteger(item.index));
+    if (!indexed) return incoming;
+    const out = (Array.isArray(existing) ? existing : []).map((item) => {
+      const row = item && typeof item === "object" ? { ...item } : {};
+      row.function = { ...(row.function || {}) };
+      return row;
+    });
+    incoming.forEach((part) => {
+      if (!part || typeof part !== "object") return;
+      const idx = Number.isInteger(part.index) ? part.index : out.length;
+      while (out.length <= idx) {
+        out.push({ type: "function", function: { name: "", arguments: "" } });
+      }
+      const dest = out[idx];
+      if (part.id) dest.id = part.id;
+      if (part.type) dest.type = part.type;
+      const fn = part.function || {};
+      dest.function = dest.function || {};
+      if (fn.name) dest.function.name = fn.name;
+      if (typeof fn.arguments === "string") {
+        dest.function.arguments = String(dest.function.arguments || "") + fn.arguments;
+      } else if (fn.arguments && typeof fn.arguments === "object") {
+        dest.function.arguments = fn.arguments;
+      }
+    });
+    return out;
+  }
+
   function normalizeToolCalls(raw) {
     if (!Array.isArray(raw)) return [];
     return raw.map((item, index) => {
@@ -12741,7 +12773,7 @@ function mountChat(root) {
           assembled = data.choices?.[0]?.message?.content || data.message || JSON.stringify(data);
           reasoning = data.choices?.[0]?.message?.reasoning_content || "";
           if (Array.isArray(data.choices?.[0]?.message?.tool_calls)) {
-            toolCalls = data.choices[0].message.tool_calls;
+            toolCalls = mergeToolCallDeltas(toolCalls, data.choices[0].message.tool_calls);
           }
           if (data.model && working.setModel) {
             const named = cleanReplyModel(data.model);
@@ -12834,7 +12866,7 @@ function mountChat(root) {
                   advanceChecklistFromTool(event.step, chatId);
                 }
               }
-              if (event.tool_calls) toolCalls = event.tool_calls;
+              if (event.tool_calls) toolCalls = mergeToolCallDeltas(toolCalls, event.tool_calls);
               if (event.reasoning) {
                 hideStackQueue(working, { label: "Thinking", processing: false });
                 reasoning += event.reasoning;

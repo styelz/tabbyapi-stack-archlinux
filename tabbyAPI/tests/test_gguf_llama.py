@@ -177,6 +177,46 @@ class LlamaAdapterTests(unittest.TestCase):
         self.assertTrue(body["logprobs"])
         self.assertEqual(body["top_logprobs"], 5)
 
+    def test_adapt_chat_payload_disables_thinking_when_tools_present(self):
+        body = adapt_chat_payload(
+            {
+                "messages": [{"role": "user", "content": "edit the css"}],
+                "tools": [{"type": "function", "function": {"name": "Write"}}],
+            },
+            caps={},
+        )
+        self.assertEqual(body["chat_template_kwargs"]["enable_thinking"], False)
+        self.assertEqual(body["tools"][0]["function"]["name"], "Write")
+
+    def test_adapt_chat_payload_does_not_force_thinking_off_without_tools(self):
+        body = adapt_chat_payload(
+            {"messages": [{"role": "user", "content": "hi"}]},
+            caps={},
+        )
+        self.assertNotIn("chat_template_kwargs", body)
+
+    def test_adapt_chat_payload_maps_template_vars_to_chat_template_kwargs(self):
+        body = adapt_chat_payload(
+            {
+                "messages": [{"role": "user", "content": "hi"}],
+                "template_vars": {"enable_thinking": True},
+            },
+            caps={},
+        )
+        self.assertTrue(body["chat_template_kwargs"]["enable_thinking"])
+        self.assertNotIn("template_vars", body)
+
+    def test_adapt_chat_payload_keeps_client_thinking_with_tools(self):
+        body = adapt_chat_payload(
+            {
+                "messages": [{"role": "user", "content": "edit"}],
+                "tools": [{"type": "function", "function": {"name": "Write"}}],
+                "enable_thinking": True,
+            },
+            caps={},
+        )
+        self.assertTrue(body["chat_template_kwargs"]["enable_thinking"])
+
     def test_rewrite_sse_maps_think_tags(self):
         line, in_think = rewrite_sse_line(
             'data: {"choices":[{"delta":{"content":"<think>plan"}}]}',
@@ -216,6 +256,49 @@ class LlamaAdapterTests(unittest.TestCase):
         )
         event = json.loads(line[5:].strip())
         self.assertEqual(event["choices"][0]["delta"]["content"], "")
+
+    def test_rewrite_sse_keeps_mixed_reasoning_and_content(self):
+        line, _ = rewrite_sse_line(
+            'data: {"choices":[{"delta":{"reasoning_content":"plan","content":"hello"}}]}',
+            in_think=False,
+        )
+        event = json.loads(line[5:].strip())
+        delta = event["choices"][0]["delta"]
+        self.assertEqual(delta["reasoning_content"], "plan")
+        self.assertEqual(delta["content"], "hello")
+
+    def test_rewrite_sse_stop_in_reasoning_keeps_same_chunk_content(self):
+        state = {}
+        line, _ = rewrite_sse_line(
+            'data: {"choices":[{"delta":{"reasoning_content":"plan<|im_end|>","content":"hello"}}]}',
+            in_think=False,
+            state=state,
+        )
+        event = json.loads(line[5:].strip())
+        delta = event["choices"][0]["delta"]
+        self.assertEqual(delta["reasoning_content"], "plan")
+        self.assertEqual(delta["content"], "hello")
+        self.assertFalse(state.get("stopped"))
+
+    def test_rewrite_sse_stop_inside_think_does_not_blank_later_content(self):
+        state = {}
+        line, in_think = rewrite_sse_line(
+            'data: {"choices":[{"delta":{"content":"<think>plan<|im_end|>"}}]}',
+            in_think=False,
+            state=state,
+        )
+        self.assertTrue(in_think)
+        self.assertFalse(state.get("stopped"))
+        event = json.loads(line[5:].strip())
+        self.assertEqual(event["choices"][0]["delta"]["reasoning_content"], "plan")
+        line, in_think = rewrite_sse_line(
+            'data: {"choices":[{"delta":{"content":"</think>hello"}}]}',
+            in_think=in_think,
+            state=state,
+        )
+        event = json.loads(line[5:].strip())
+        self.assertEqual(event["choices"][0]["delta"]["content"], "hello")
+        self.assertFalse(state.get("stopped"))
 
 
 class LlamaRuntimeTests(unittest.TestCase):

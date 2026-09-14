@@ -217,6 +217,47 @@ def _simplify_system(body: dict[str, Any]) -> None:
             item["content"] = SIMPLE_CHAT_SYSTEM
 
 
+def _as_bool(value: Any) -> Optional[bool]:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and value in (0, 1):
+        return bool(value)
+    text = str(value or "").strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return None
+
+
+def _chat_template_kwargs(payload: dict[str, Any]) -> dict[str, Any]:
+    """Map Tabby template_vars onto llama-server's chat_template_kwargs."""
+    kwargs: dict[str, Any] = {}
+    for source in (payload.get("chat_template_kwargs"), payload.get("template_vars")):
+        if isinstance(source, dict):
+            kwargs.update(source)
+    for key in ("enable_thinking", "reasoning_effort"):
+        if key in payload and payload[key] is not None:
+            kwargs[key] = payload[key]
+    thinking = kwargs.get("enable_thinking")
+    if thinking is not None and not isinstance(thinking, bool):
+        coerced = _as_bool(thinking)
+        if coerced is not None:
+            kwargs["enable_thinking"] = coerced
+    return kwargs
+
+
+def _apply_thinking_kwargs(body: dict[str, Any], payload: dict[str, Any]) -> None:
+    kwargs = _chat_template_kwargs(payload)
+    has_tools = bool(body.get("tools") or body.get("functions"))
+    # Qwen GGUFs think by default. With tools advertised they often think,
+    # hit EOS, and never emit tool_calls — Code then settles as an empty reply.
+    if has_tools and "enable_thinking" not in kwargs:
+        kwargs["enable_thinking"] = False
+    if kwargs:
+        body["chat_template_kwargs"] = kwargs
+
+
 def _stop_list(value: Any) -> list[str]:
     if value is None or value is False:
         return []
@@ -335,6 +376,7 @@ def adapt_chat_payload(
         _strip_tools(body)
     if _needs_simple_prompt(info, blob):
         _simplify_system(body)
+    _apply_thinking_kwargs(body, payload or {})
     return body
 
 
@@ -399,30 +441,31 @@ def rewrite_sse_line(
         choices[0]["delta"] = delta
         event["choices"] = choices
         return "data: " + json.dumps(event), in_think
-    if delta.get("reasoning_content"):
-        text = str(delta.get("reasoning_content") or "")
-        trimmed, hit = cut_at_stop(text)
-        if hit:
-            delta["reasoning_content"] = trimmed
-            if state is not None:
-                state["stopped"] = True
-            choices[0]["delta"] = delta
-            event["choices"] = choices
-            return "data: " + json.dumps(event), in_think
+    reasoning = str(delta.get("reasoning_content") or "")
+    content = str(delta.get("content") or "")
+    if not reasoning and not content:
         return line, in_think
-    text = str(delta.get("content") or "")
-    if not text:
-        return line, in_think
-    reasoning, content, in_think = _delta_reasoning_from_think(text, in_think)
-    reasoning, hit_r = cut_at_stop(reasoning)
-    content, hit_c = cut_at_stop(content)
-    if hit_r or hit_c:
+    if content:
+        tagged_r, content, in_think = _delta_reasoning_from_think(content, in_think)
+        reasoning += tagged_r
+    if reasoning:
+        reasoning, _hit_r = cut_at_stop(reasoning)
+    if content:
+        content, hit_c = cut_at_stop(content)
+    else:
+        hit_c = False
+    # A stop inside an open think/reasoning span must not blank a later answer
+    # or tool call. Only a stop in visible content freezes the stream.
+    if hit_c:
         in_think = False
         if state is not None:
             state["stopped"] = True
     if reasoning:
         delta["reasoning_content"] = reasoning
-    delta["content"] = content
+    elif "reasoning_content" in delta:
+        delta["reasoning_content"] = ""
+    if content or "content" in delta:
+        delta["content"] = content
     choices[0]["delta"] = delta
     event["choices"] = choices
     return "data: " + json.dumps(event), in_think

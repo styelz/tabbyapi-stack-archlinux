@@ -404,6 +404,8 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
         self.assertIn("AGENT_EMPTY_NUDGE", self.src)
         self.assertIn("agentEmptyNudges", self.src)
         self.assertIn("AGENT_DONE_NUDGE", self.src)
+        self.assertIn("function mergeToolCallDeltas(existing, incoming)", self.src)
+        self.assertIn("toolCalls = mergeToolCallDeltas(toolCalls, event.tool_calls)", self.src)
         self.assertIn("function shouldSkipInspectTool(", self.src)
         self.assertIn("out.content = \"\"", self.src.split("function outboundAssistant")[1].split("function outboundTool")[0])
         self.assertIn("heldJobId", self.src)
@@ -532,6 +534,73 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
         self.assertIn("Not installed — download", self.src)
         self.assertNotIn("You can watch progress on the Models page.", app_src)
         self.assertNotIn("location.hash = \"#models\"", status_src)
+
+
+def merge_tool_call_deltas(existing, incoming):
+    """Keep in sync with mergeToolCallDeltas in ui/static/chat.js."""
+    if not isinstance(incoming, list) or not incoming:
+        return list(existing or [])
+    indexed = any(isinstance(item, dict) and isinstance(item.get("index"), int) for item in incoming)
+    if not indexed:
+        return list(incoming)
+    out = []
+    for item in existing or []:
+        row = dict(item or {})
+        row["function"] = dict(row.get("function") or {})
+        out.append(row)
+    for part in incoming:
+        if not isinstance(part, dict):
+            continue
+        idx = part.get("index")
+        if not isinstance(idx, int):
+            idx = len(out)
+        while len(out) <= idx:
+            out.append({"type": "function", "function": {"name": "", "arguments": ""}})
+        dest = out[idx]
+        if part.get("id"):
+            dest["id"] = part["id"]
+        if part.get("type"):
+            dest["type"] = part["type"]
+        fn = part.get("function") or {}
+        dest_fn = dest.setdefault("function", {})
+        if fn.get("name"):
+            dest_fn["name"] = fn["name"]
+        args = fn.get("arguments")
+        if isinstance(args, str):
+            dest_fn["arguments"] = str(dest_fn.get("arguments") or "") + args
+        elif isinstance(args, dict):
+            dest_fn["arguments"] = args
+    return out
+
+
+class MergeToolCallDeltasTests(unittest.TestCase):
+    def test_llama_fragments_rebuild_a_write_call(self):
+        chunks = [
+            {
+                "index": 0,
+                "id": "call_write",
+                "type": "function",
+                "function": {"name": "Write", "arguments": ""},
+            },
+            {"index": 0, "function": {"arguments": '{"path":"styles.css","contents":'}},
+            {"index": 0, "function": {"arguments": '"/* compact */\\n"}'}},
+        ]
+        merged = []
+        for chunk in chunks:
+            merged = merge_tool_call_deltas(merged, [chunk])
+        self.assertEqual(merged[0]["function"]["name"], "Write")
+        self.assertIn("styles.css", merged[0]["function"]["arguments"])
+        self.assertIn("compact", merged[0]["function"]["arguments"])
+
+    def test_exl_complete_list_is_kept(self):
+        complete = [
+            {
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "Read", "arguments": '{"path":"index.html"}'},
+            }
+        ]
+        self.assertEqual(merge_tool_call_deltas([], complete), complete)
 
 
 if __name__ == "__main__":
