@@ -387,6 +387,63 @@ class LibraryAndDeleteTests(unittest.TestCase):
             )
             self.assertEqual(alias, "biggguf")
 
+    def test_set_profile_alias_collapses_duplicate_gguf_profiles(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            paths = _paths(root)
+            folder = paths.models_dir / "Qwen3.8-27B-Uncensored-IQ4-XS-MTP-16GB-VRAM-GGUF"
+            folder.mkdir()
+            (folder / "Qwen3.8-27B-Uncensored-IQ4_XS_4BPW.gguf").write_bytes(b"gguf")
+            (paths.profiles_dir / "hf-qwen3-8-27b-uncensored-iq4-xs-mtp-16gb-v.yml").write_text(
+                "pretty: Qwen3.8-27B Uncensored\nlocal: true\nmodel:\n"
+                "  backend: llamacpp\n"
+                "  model_name: Qwen3.8-27B-Uncensored-IQ4_XS_4BPW.gguf\n",
+                encoding="utf-8",
+            )
+            (paths.profiles_dir / "qwen38g.yml").write_text(
+                "pretty: Qwen3.8-27B-Uncensored\nlocal: true\nmodel:\n"
+                "  backend: llamacpp\n"
+                "  model_name: Qwen3.8-27B-Uncensored-IQ4_XS_4BPW.gguf\n",
+                encoding="utf-8",
+            )
+            renamed = set_profile_alias(
+                {
+                    "folder": folder.name,
+                    "alias": "qwen38guff",
+                    "pretty": "Qwen3.8-27B Uncensored",
+                },
+                paths=paths,
+            )
+            self.assertEqual(renamed["alias"], "qwen38guff")
+            stems = sorted(path.stem for path in paths.profiles_dir.glob("*.yml"))
+            self.assertEqual(stems, ["qwen38guff"])
+            data = library_state(paths, loaded="")
+            row = next(item for item in data["llms"] if item["id"] == folder.name)
+            self.assertEqual(row["profile"], "qwen38guff")
+
+    def test_delete_removes_every_local_profile_for_gguf_folder(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            paths = _paths(root)
+            folder = paths.models_dir / "Qwen3.8-Uncensored"
+            folder.mkdir()
+            (folder / "weights.gguf").write_bytes(b"gguf")
+            (paths.profiles_dir / "hf-qwen3-8-uncensored.yml").write_text(
+                "pretty: Uncensored\nlocal: true\nmodel:\n"
+                "  backend: llamacpp\n  model_name: weights.gguf\n",
+                encoding="utf-8",
+            )
+            (paths.profiles_dir / "qwen38g.yml").write_text(
+                "pretty: Uncensored\nlocal: true\nmodel:\n"
+                "  backend: llamacpp\n  model_name: Qwen3.8-Uncensored\n",
+                encoding="utf-8",
+            )
+            result = delete_model(
+                {"kind": "llm", "id": folder.name}, paths=paths, loaded=""
+            )
+            self.assertTrue(result["ok"])
+            self.assertFalse(any(paths.profiles_dir.glob("*.yml")))
+
     def test_gguf_profile_defaults_use_llamacpp(self):
         with tempfile.TemporaryDirectory() as raw:
             folder = Path(raw) / "Some-20B"

@@ -211,6 +211,66 @@ class ProfileParsesToolsTests(unittest.TestCase):
         phrase_switch.reset_profile_map_cache()
 
 
+class VisibleProfileNamesTests(unittest.TestCase):
+    def test_keeps_one_local_short_name_per_folder(self):
+        mapping = {
+            "hf-foo": {
+                "alias": "hf-foo",
+                "folder": "Qwen3.8-Uncensored",
+                "local": True,
+                "pretty": "Qwen3.8-27B Uncensored",
+            },
+            "qwen38g": {
+                "alias": "qwen38g",
+                "folder": "Qwen3.8-Uncensored",
+                "local": True,
+                "pretty": "Qwen3.8-27B Uncensored",
+            },
+            "qwen38guff": {
+                "alias": "qwen38guff",
+                "folder": "Qwen3.8-Uncensored",
+                "local": True,
+                "pretty": "Qwen3.8-27B Uncensored",
+            },
+            "qwen": {
+                "alias": "qwen",
+                "folder": "Qwen3.5-9B-exl3-4.00bpw",
+                "local": False,
+                "pretty": "Qwen3.5 9B",
+            },
+            "qwen38": {
+                "alias": "qwen38",
+                "folder": "Qwen3.8-27B-exl3",
+                "local": True,
+                "pretty": "Qwen3.8-27B",
+            },
+        }
+        with mock.patch.object(phrase_switch, "profile_map", return_value=mapping):
+            shown = phrase_switch.visible_profile_names(
+                ["hf-foo", "qwen", "qwen38", "qwen38g", "qwen38guff"]
+            )
+        self.assertEqual(shown, ["qwen", "qwen38", "qwen38guff"])
+
+    def test_hides_shipped_alias_when_local_covers_folder(self):
+        mapping = {
+            "qwen": {
+                "alias": "qwen",
+                "folder": "Qwen3.5-9B-exl3-4.00bpw",
+                "local": False,
+                "pretty": "Qwen",
+            },
+            "daily": {
+                "alias": "daily",
+                "folder": "Qwen3.5-9B-exl3-4.00bpw",
+                "local": True,
+                "pretty": "Daily 9B",
+            },
+        }
+        with mock.patch.object(phrase_switch, "profile_map", return_value=mapping):
+            shown = phrase_switch.visible_profile_names(["qwen", "daily"])
+        self.assertEqual(shown, ["daily"])
+
+
 class ThinkingOnlyUiWiringTests(unittest.TestCase):
     def test_status_and_chat_expose_the_alert(self):
         root = Path(__file__).resolve().parents[1]

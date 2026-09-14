@@ -1234,6 +1234,9 @@ def profile_slug(folder_name: str) -> str:
 
 def profile_alias_for_folder(folder: str, paths: ModelPaths | None = None) -> str | None:
     p = paths or default_paths()
+    locals_for = _local_profiles_for_folder(folder, p)
+    if locals_for:
+        return _preferred_local_stem(locals_for)
     mapping = _profile_map(p.profiles_dir, models_dir=p.models_dir)
     entry = mapping.get(str(folder).lower())
     return entry.get("alias") if entry else None
@@ -1448,6 +1451,7 @@ def maybe_write_hf_profile(
                 )
             if explicit:
                 _write_profile_pretty(wanted, explicit, folder, p)
+            _collapse_extra_local_profiles(folder, wanted, p)
             return wanted
         taken = _alias_taken_by_other(wanted, folder, p)
         if taken:
@@ -1455,10 +1459,12 @@ def maybe_write_hf_profile(
         if existing == wanted:
             if explicit:
                 _write_profile_pretty(existing, explicit, folder, p)
+            _collapse_extra_local_profiles(folder, wanted, p)
             return wanted
     elif existing:
         if explicit:
             _write_profile_pretty(existing, explicit, folder, p)
+        _collapse_extra_local_profiles(folder, existing, p)
         return existing
     if wanted:
         stem = wanted
@@ -1480,19 +1486,79 @@ def maybe_write_hf_profile(
     from common.phrase_switch import reset_profile_map_cache
 
     reset_profile_map_cache()
+    _collapse_extra_local_profiles(folder, stem, p)
     return stem
 
 
+def _folder_match_keys(folder: str, paths: ModelPaths) -> set[str]:
+    raw = str(folder or "").strip()
+    keys: set[str] = set()
+    if raw:
+        keys.add(raw.lower())
+        resolved = _weights_folder(raw, paths.models_dir)
+        if resolved:
+            keys.add(resolved.lower())
+        dest = paths.models_dir / raw
+        if dest.is_dir():
+            for gguf in dest.glob("*.gguf"):
+                keys.add(gguf.name.lower())
+    return {key for key in keys if key}
+
+
+def _profile_folder_keys(data: dict, paths: ModelPaths) -> set[str]:
+    raw = str(((data.get("model") or {}) or {}).get("model_name") or "").strip()
+    keys: set[str] = set()
+    if raw:
+        keys.add(raw.lower())
+        resolved = _weights_folder(raw, paths.models_dir)
+        if resolved:
+            keys.add(resolved.lower())
+    return {key for key in keys if key}
+
+
+def _preferred_local_stem(files: list[Path]) -> str:
+    names = [path.stem for path in files]
+
+    def rank(stem: str) -> tuple[int, int]:
+        hf = stem.lower().startswith("hf-")
+        try:
+            idx = names.index(stem)
+        except ValueError:
+            idx = 0
+        if hf:
+            return (1, -idx)
+        return (0, -idx)
+
+    return min(names, key=rank)
+
+
 def _local_profiles_for_folder(folder: str, paths: ModelPaths) -> list[Path]:
-    found = []
-    mapping = _profile_map(paths.profiles_dir, models_dir=paths.models_dir)
-    entry = mapping.get(str(folder).lower()) or {}
-    alias = str(entry.get("alias") or "")
-    if alias and is_local_profile(alias, _load_profile_yaml(paths.profiles_dir / f"{alias}.yml")):
-        path = paths.profiles_dir / f"{alias}.yml"
-        if path.is_file():
+    want = _folder_match_keys(folder, paths)
+    if not want or not paths.profiles_dir.is_dir():
+        return []
+    found: list[Path] = []
+    for path in sorted(paths.profiles_dir.glob("*.yml")):
+        data = _load_profile_yaml(path)
+        if not is_local_profile(path.stem, data):
+            continue
+        if _profile_folder_keys(data, paths) & want:
             found.append(path)
     return found
+
+
+def _collapse_extra_local_profiles(folder: str, keep: str, paths: ModelPaths) -> None:
+    keep_stem = str(keep or "").strip()
+    if not keep_stem:
+        return
+    dest = paths.profiles_dir / f"{keep_stem}.yml"
+    for extra in _local_profiles_for_folder(folder, paths):
+        if extra.resolve() == dest.resolve():
+            continue
+        extra.unlink(missing_ok=True)
+        retarget_profile_refs(extra.stem, keep_stem, paths)
+    from common.phrase_switch import reset_profile_map_cache
+
+    reset_profile_map_cache()
 
 
 def _patch_json_profile(path: Path, old: str, new: str, key: str = "profile") -> None:
@@ -1606,6 +1672,7 @@ def set_profile_alias(body: dict, paths: ModelPaths | None = None) -> dict:
     if existing == wanted:
         if pretty_in:
             _write_profile_pretty(wanted, pretty_in, folder, p)
+        _collapse_extra_local_profiles(folder, wanted, p)
         return {
             "ok": True,
             "alias": wanted,
@@ -1647,6 +1714,7 @@ def set_profile_alias(body: dict, paths: ModelPaths | None = None) -> dict:
         maybe_write_hf_profile(
             folder, alias=wanted, pretty=pretty_in, paths=p
         )
+    _collapse_extra_local_profiles(folder, wanted, p)
     from common.phrase_switch import reset_profile_map_cache
 
     reset_profile_map_cache()
@@ -1697,12 +1765,13 @@ def delete_model(
             raise ModelsError(f"{folder} is not installed", 404)
         if loaded_name == folder:
             raise ModelsError("Unload this model before deleting it", 409)
+        extras = _local_profiles_for_folder(folder, p)
         if dest.is_dir():
             shutil.rmtree(dest)
         else:
             dest.unlink()
         removed = []
-        for profile in _local_profiles_for_folder(folder, p):
+        for profile in extras:
             profile.unlink(missing_ok=True)
             removed.append(profile.stem)
         return {"ok": True, "deleted": folder, "profiles": removed}

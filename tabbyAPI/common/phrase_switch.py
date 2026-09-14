@@ -580,26 +580,62 @@ def profile_ui_labels(names: Optional[list[str]] = None) -> dict[str, str]:
     return labels
 
 
+def _profile_picker_rank(alias: str, entry: dict, names: list[str]) -> tuple[int, int]:
+    """Lower is better: local short name, then hf- local, then shipped."""
+    local = bool(entry.get("local"))
+    hf = str(alias).lower().startswith("hf-")
+    try:
+        idx = names.index(alias)
+    except ValueError:
+        idx = 0
+    if local and not hf:
+        return (0, -idx)
+    if local or hf:
+        return (1, -idx)
+    return (2, -idx)
+
+
 def visible_profile_names(names: Optional[list[str]] = None) -> list[str]:
-    """Dropdown list: hide a shipped alias when a local profile covers the same folder."""
+    """Dropdown list: one profile per weights folder.
+
+    A Hugging Face download writes hf-….yml; renaming it to a short name used to
+    leave the old file in place, so Uncensored (and similar) showed twice.
+    Prefer the local short name, then an hf- profile, and hide a shipped alias
+    when a local profile already covers that folder.
+    """
     if names is None:
         from select_model import available_profiles
 
         names = available_profiles()
     mapping = profile_map()
-    claimed: set[str] = set()
+    groups: dict[str, list[str]] = {}
     for name in names:
         entry = mapping.get(str(name).lower()) or {}
         folder = str(entry.get("folder") or "").strip().lower()
-        if folder and entry.get("local"):
-            claimed.add(folder)
+        if folder:
+            groups.setdefault(folder, []).append(name)
+    winners = {
+        folder: min(
+            group,
+            key=lambda alias: _profile_picker_rank(
+                alias, mapping.get(str(alias).lower()) or {}, names
+            ),
+        )
+        for folder, group in groups.items()
+    }
     out: list[str] = []
+    seen: set[str] = set()
     for name in names:
         entry = mapping.get(str(name).lower()) or {}
         folder = str(entry.get("folder") or "").strip().lower()
-        if folder and folder in claimed and not entry.get("local"):
+        if not folder:
+            out.append(name)
             continue
-        out.append(name)
+        chosen = winners[folder]
+        if name != chosen or chosen in seen:
+            continue
+        seen.add(chosen)
+        out.append(chosen)
     return out
 
 
@@ -753,14 +789,7 @@ def help_text(api_base: Optional[str] = None, request=None) -> str:
     """Markdown user guide returned for a chat line that is only ``help``."""
     profiles = profile_map()
     loaded = current_folder()
-    aliases = []
-    seen = set()
-    for path in sorted(PROFILES_DIR.glob("*.yml")) if PROFILES_DIR.exists() else []:
-        alias = path.stem.lower()
-        if alias in seen:
-            continue
-        seen.add(alias)
-        aliases.append(alias)
+    aliases = visible_profile_names()
 
     base, origin = help_api_urls(api_base, request)
     api_url = base or "your configured /v1 URL"
