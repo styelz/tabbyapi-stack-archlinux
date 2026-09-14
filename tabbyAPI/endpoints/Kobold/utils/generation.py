@@ -14,6 +14,7 @@ from common.networking import (
     request_disconnect_loop,
 )
 from common.utils import unwrap
+from common.vram_recover import generation_abort_message
 from endpoints.Kobold.types.generation import (
     AbortResponse,
     GenerateRequest,
@@ -100,10 +101,8 @@ async def stream_generation(data: GenerateRequest, request: Request):
             yield ServerSentEvent(event="message", data=response.model_dump_json(), sep="\n")
     except ContextLengthExceededError as exc:
         yield get_context_length_generator_error(str(exc))
-    except Exception:
-        yield get_generator_error(
-            f"Kobold generation {data.genkey} aborted. Please check the server console."
-        )
+    except Exception as exc:
+        yield get_generator_error(generation_abort_message(exc, kind="kobold"))
 
 
 async def get_generation(data: GenerateRequest, request: Request):
@@ -125,8 +124,7 @@ async def get_generation(data: GenerateRequest, request: Request):
         raise ContextLengthHTTPException(error_message) from exc
     except Exception as exc:
         error_message = handle_request_error(
-            f"Completion {request.state.id} aborted. Maybe the model was unloaded? "
-            "Please check the server console."
+            generation_abort_message(exc, kind="kobold")
         ).error.message
 
         # Server error if there's a generation exception

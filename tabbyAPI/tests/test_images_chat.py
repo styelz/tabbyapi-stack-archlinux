@@ -1805,7 +1805,7 @@ class LiveCodeStreamTests(unittest.IsolatedAsyncioTestCase):
         from images.chat import _parse_code_stream_payload
 
         payload, err = _parse_code_stream_payload(
-            'data: {"error":{"message":"Chat completion aborted. Please check the server console."}}'
+            'data: {"error":{"message":"Chat completion aborted: the GPU ran out of memory during generation (Allocation on device)."}}'
         )
         self.assertIsNotNone(payload)
         self.assertIn("aborted", err)
@@ -1883,7 +1883,7 @@ class LiveCodeStreamTests(unittest.IsolatedAsyncioTestCase):
 
         async def fake_stream(*args, **kwargs):
             yield '{"choices":[{"delta":{"content":"writing "}}],"model":"qwen"}'
-            yield '{"error":{"message":"Chat completion aborted. Please check the server console."}}'
+            yield '{"error":{"message":"Chat completion aborted: the GPU ran out of memory during generation (Allocation on device)."}}'
             yield "[DONE]"
 
         container = SimpleNamespace(

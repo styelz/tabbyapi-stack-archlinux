@@ -21,6 +21,7 @@ from common.networking import (
     DisconnectHandler,
 )
 from common.utils import unwrap
+from common.vram_recover import generation_abort_message
 from endpoints.OAI.types.chat_completion import (
     ChatCompletionLogprobs,
     ChatCompletionMessage,
@@ -985,7 +986,7 @@ async def stream_generate_chat_completion(
 
     except Exception as e:
         xlogger.error("Error during chat completion", str(e), details=f"\n{str(e)}")
-        yield get_generator_error("Chat completion aborted. Please check the server console.")
+        yield get_generator_error(generation_abort_message(e))
 
     finally:
         await disconnect_handler.cleanup()
@@ -1056,10 +1057,7 @@ async def generate_chat_completion(
         raise ContextLengthHTTPException(error_message) from exc
 
     except Exception as exc:
-        error_message = handle_request_error(
-            f"Chat completion {request.state.id} aborted. Maybe the model was unloaded? "
-            "Please check the server console."
-        ).error.message
+        error_message = handle_request_error(generation_abort_message(exc)).error.message
 
         # Server error if there's a generation exception
         raise HTTPException(503, error_message) from exc

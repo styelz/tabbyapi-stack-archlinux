@@ -22,6 +22,7 @@ from common.networking import (
     handle_request_error,
     DisconnectHandler,
 )
+from common.vram_recover import generation_abort_message
 from endpoints.OAI.types.chat_completion import ChatCompletionLogprobs
 from endpoints.OAI.types.completion import (
     CompletionRequest,
@@ -340,7 +341,7 @@ async def stream_generate_completion(
 
     except Exception as e:
         xlogger.error("Error during completion", str(e), details=f"\n{str(e)}")
-        yield get_generator_error("Completion aborted. Please check the server console.")
+        yield get_generator_error(generation_abort_message(e, kind="completion"))
 
     finally:
         await disconnect_handler.cleanup()
@@ -416,8 +417,7 @@ async def generate_completion(
 
     except Exception as exc:
         error_message = handle_request_error(
-            f"Completion {request.state.id} aborted. Maybe the model was unloaded? "
-            "Please check the server console."
+            generation_abort_message(exc, kind="completion")
         ).error.message
 
         # Server error if there's a generation exception
