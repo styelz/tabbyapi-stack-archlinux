@@ -86,10 +86,10 @@ HUD_IDLE_PEEK_GRACE_S = 1.0
 HUD_HALO_RADIUS = 1
 IDLE_FIELD_HUE_HOLD_S = 300.0
 IDLE_FIELD_HUE_BLEND_S = 40.0
-# Idle only breathes (~0.25 Hz) and drifts a few px/s. Each 4K present is a
-# 33 MB framebuffer write that costs ~20 ms once the core has clocked down
-# between frames, so idle paints at 8 fps; live states use --fps.
-IDLE_FPS = 8
+# Each 4K present is a 33 MB framebuffer write (~20 ms). Spend that when the
+# GPU is idle so the wash and sleepers look smooth; cap it while a job is
+# live so the LLM sampler keeps the core.
+BUSY_FPS = 8
 
 SIN_BITS = 12
 SIN_SIZE = 1 << SIN_BITS
@@ -1594,6 +1594,57 @@ def overlay_amount(scene: dict[str, Any]) -> float:
         return 0.0
 
 
+def scene_is_live(scene: dict[str, Any] | None) -> bool:
+    """True while a job (or its fade) is on screen — spend less CPU then."""
+    if not scene:
+        return False
+    return bool(scene.get("live") or overlay_amount(scene) > 0.04)
+
+
+def paint_fps(fps: int, *, live: bool) -> int:
+    """Idle uses --fps; a live job is capped so Tabby is not interrupted."""
+    want = max(1, min(30, int(fps)))
+    if live:
+        return min(want, BUSY_FPS)
+    return want
+
+
+def field_paint_size(
+    width: int,
+    height: int,
+    *,
+    live: bool,
+    compose: tuple[int, int] | None = None,
+) -> tuple[int, int]:
+    """Busy jobs keep the cheap grid; idle can fill the compose surface."""
+    w = max(64, int(width))
+    h = max(36, int(height))
+    if live or compose is None:
+        return w, h
+    cw, ch = int(compose[0]), int(compose[1])
+    if cw >= w and ch >= h:
+        return cw, ch
+    return w, h
+
+
+def apply_paint_priority(live: bool, prev: bool | None = None) -> bool:
+    """SCHED_BATCH while a job is live so Tabby keeps the core.
+
+    Returns the live flag so the caller can skip the syscall when it has not
+    changed. SCHED_OTHER/BATCH are both allowed without CAP_SYS_NICE.
+    """
+    flag = bool(live)
+    if prev is not None and bool(prev) == flag:
+        return flag
+    try:
+        policy = os.SCHED_BATCH if flag else os.SCHED_OTHER
+        param = os.sched_param(0)
+        os.sched_setscheduler(0, policy, param)
+    except (AttributeError, OSError, PermissionError, ValueError):
+        pass
+    return flag
+
+
 def neuron_overlay_state(scene: dict[str, Any]) -> dict[str, Any] | None:
     """Unit-space graph + fires. None when the overlay has fully faded."""
     overlay = overlay_amount(scene)
@@ -1830,9 +1881,9 @@ _SLEEP_LIFE = 0.56
 _SLEEP_FADE = 0.18
 _SLEEP_SPAN_FRAC = 0.48
 _SLEEP_SPAN_MAX = 520
-# March at most this many px on a side, then smoothscale up. The solids are
-# soft and dim, so 192 reads the same as 256 at 40% less work.
-_SLEEP_RT_MAX = 192
+# March at most this many px on a side, then smoothscale up. Idle has CPU
+# to spare; 256 keeps the solids from looking like scaled blobs.
+_SLEEP_RT_MAX = 256
 _SLEEP_TINT = (56, 84, 132)
 
 
@@ -3196,9 +3247,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=os.environ.get("TABBY_SAVER_URL", "http://127.0.0.1:5000"),
         help="TabbyAPI origin (default TABBY_SAVER_URL or http://127.0.0.1:5000)",
     )
-    parser.add_argument("--fps", type=int, default=int(os.environ.get("TABBY_SAVER_FPS", "24")))
-    parser.add_argument("--width", type=int, default=480, help="Internal field width")
-    parser.add_argument("--height", type=int, default=270, help="Internal field height")
+    parser.add_argument(
+        "--fps",
+        type=int,
+        default=int(os.environ.get("TABBY_SAVER_FPS", "24")),
+        help="Idle field frames per second (busy jobs cap at 8)",
+    )
+    parser.add_argument(
+        "--width",
+        type=int,
+        default=480,
+        help="Internal field width while a job is live (idle uses the compose size)",
+    )
+    parser.add_argument(
+        "--height",
+        type=int,
+        default=270,
+        help="Internal field height while a job is live (idle uses the compose size)",
+    )
     parser.add_argument("--poll", type=float, default=float(os.environ.get("TABBY_SAVER_POLL_S", "1.0")), help="Seconds between idle API polls (busy stays 0.1)")
     parser.add_argument(
         "--idle",
@@ -3318,6 +3384,7 @@ def run_visible_field(
     prev = time.monotonic()
     grace_until = prev if args.window else prev + 0.6
     scene: dict[str, Any] | None = None
+    paint_live: bool | None = None
     try:
         while True:
             now = time.monotonic()
@@ -3372,7 +3439,12 @@ def run_visible_field(
                     data, read_saver_live(), trust_idle_http=True
                 )
             scene = follow.tick(scene_from_state(data, ok), dt, now)
-            field = draw_field(max(64, args.width), max(36, args.height), scene, screen)
+            live = scene_is_live(scene)
+            paint_live = apply_paint_priority(live, paint_live)
+            fw, fh = field_paint_size(
+                args.width, args.height, live=live, compose=screen.get_size()
+            )
+            field = draw_field(fw, fh, scene, screen)
             pygame.transform.scale(field, screen.get_size(), screen)
             draw_sleepers(pygame, screen, scene)
             draw_neurons(pygame, screen, scene)
@@ -3389,13 +3461,7 @@ def run_visible_field(
                 fb.present_surface(pygame, screen)
             else:
                 pygame.display.flip()
-            live = bool(scene and (scene.get("live") or overlay_amount(scene) > 0.04))
-            fps = max(8, min(30, args.fps))
-            if not live:
-                # Idle only breathes and drifts; every 4K present is ~33 MB of
-                # framebuffer writes, so do not spend them on motion nobody sees.
-                fps = min(fps, IDLE_FPS)
-            clock.tick(fps)
+            clock.tick(paint_fps(args.fps, live=live))
     finally:
         _close_display(pygame, fb)
 

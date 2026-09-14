@@ -1709,6 +1709,48 @@ class SaverKioskSceneTests(unittest.TestCase):
         self.assertEqual(args.user_tty, "tty1")
         self.assertEqual(args.saver_tty, "tty8")
 
+    def test_paint_fps_idles_higher_than_live(self):
+        fps = self.kiosk.paint_fps
+        self.assertEqual(fps(24, live=False), 24)
+        self.assertEqual(fps(24, live=True), 8)
+        self.assertEqual(fps(30, live=False), 30)
+        self.assertEqual(fps(30, live=True), self.kiosk.BUSY_FPS)
+        self.assertLess(fps(24, live=True), fps(24, live=False))
+        self.assertEqual(fps(8, live=False), 8)
+        self.assertEqual(fps(8, live=True), 8)
+
+    def test_field_paint_size_fills_compose_when_idle(self):
+        size = self.kiosk.field_paint_size
+        self.assertEqual(size(480, 270, live=True, compose=(1280, 720)), (480, 270))
+        self.assertEqual(size(480, 270, live=False, compose=(1280, 720)), (1280, 720))
+        self.assertEqual(size(480, 270, live=False), (480, 270))
+        self.assertEqual(size(960, 540, live=False, compose=(800, 480)), (960, 540))
+
+    def test_scene_is_live_follows_overlay(self):
+        idle = self.kiosk.scene_from_state(
+            {"gpu_mode": "llm", "profile": "qwen", "busy": False},
+            True,
+        )
+        hot = self.kiosk.scene_from_state(
+            {"gpu_mode": "llm", "kind": "chat", "busy": True, "profile": "qwen"},
+            True,
+        )
+        self.assertFalse(self.kiosk.scene_is_live(idle))
+        self.assertTrue(self.kiosk.scene_is_live(hot))
+        idle["overlay"] = 0.2
+        self.assertTrue(self.kiosk.scene_is_live(idle))
+        self.assertFalse(self.kiosk.scene_is_live(None))
+
+    def test_apply_paint_priority_skips_unchanged(self):
+        with mock.patch.object(self.kiosk.os, "sched_setscheduler") as set_sched:
+            self.assertTrue(self.kiosk.apply_paint_priority(True, None))
+            self.assertTrue(self.kiosk.apply_paint_priority(True, True))
+            self.assertFalse(self.kiosk.apply_paint_priority(False, True))
+            self.assertEqual(set_sched.call_count, 2)
+            policies = [call.args[1] for call in set_sched.call_args_list]
+            self.assertEqual(policies[0], self.kiosk.os.SCHED_BATCH)
+            self.assertEqual(policies[1], self.kiosk.os.SCHED_OTHER)
+
     def test_hud_omits_zeros_when_gpu_cache_miss(self):
         hot = self.kiosk.scene_from_state(
             {"gpu_mode": "llm", "kind": "chat", "busy": True, "profile": "qwen"},
