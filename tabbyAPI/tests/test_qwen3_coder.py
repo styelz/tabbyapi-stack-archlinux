@@ -102,6 +102,27 @@ class ToolArgumentCoerceTests(unittest.TestCase):
         self.assertEqual(first_json_value(doubled), {"path": "about.css"})
         self.assertEqual(json.loads(coerce_tool_arguments(doubled)), {"path": "about.css"})
 
+    def test_dictify_keeps_first_object_for_template_items(self):
+        from endpoints.OAI.utils.tools import dictify_tool_call_arguments
+
+        doubled = '{"path":"index.html","contents":"<html>"}{"path":"index.html","contents":"<html>"}'
+        messages = [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "function": {"name": "Write", "arguments": doubled},
+                    }
+                ],
+            }
+        ]
+        dictify_tool_call_arguments(messages)
+        args = messages[0]["tool_calls"][0]["function"]["arguments"]
+        self.assertIsInstance(args, dict)
+        self.assertEqual(args["path"], "index.html")
+        self.assertEqual(args["contents"], "<html>")
+
 
 if __name__ == "__main__":
     unittest.main()

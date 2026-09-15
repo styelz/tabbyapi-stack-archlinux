@@ -94,6 +94,32 @@ def coerce_tool_arguments(raw) -> str:
     return "" if raw is None else str(raw)
 
 
+def mapping_tool_arguments(raw) -> dict:
+    """Dict form of tool arguments for templates that call |items."""
+    if isinstance(raw, dict):
+        return raw
+    if raw is None:
+        return {}
+    if isinstance(raw, str):
+        return first_json_value(raw)
+    return first_json_value(json.dumps(raw, default=str))
+
+
+def dictify_tool_call_arguments(message_dicts: list) -> None:
+    """Make every tool_call.function.arguments a mapping before Jinja render."""
+    for msg in message_dicts:
+        if not isinstance(msg, dict):
+            continue
+        for tc in msg.get("tool_calls") or []:
+            if not isinstance(tc, dict):
+                continue
+            func = tc.get("function")
+            if isinstance(func, dict):
+                func["arguments"] = mapping_tool_arguments(func.get("arguments"))
+            elif "arguments" in tc:
+                tc["arguments"] = mapping_tool_arguments(tc.get("arguments"))
+
+
 def parse_toolcalls(tool_calls_str: str, tool_format: str) -> List[ToolCall]:
     """
     Dispatch tool call parsing to the appropriate format handler.

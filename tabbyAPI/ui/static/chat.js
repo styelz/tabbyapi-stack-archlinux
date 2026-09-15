@@ -9557,7 +9557,7 @@ function mountChat(root) {
   function outboundAssistant(item, code) {
     const out = { role: "assistant", content: item.content };
     if (code && Array.isArray(item.tool_calls) && item.tool_calls.length) {
-      out.tool_calls = item.tool_calls;
+      out.tool_calls = cleanedToolCalls(item.tool_calls);
       out.content = "";
     }
     return out;
@@ -12451,6 +12451,27 @@ function mountChat(root) {
     return /write|strreplace|search_replace|replace_in_file|apply_patch|edit_notebook|edit_file|delete|rename|optimize/.test(key);
   }
 
+  function isCompleteJsonValue(text) {
+    if (!text) return false;
+    try {
+      JSON.parse(text);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function cleanedToolCalls(raw) {
+    return normalizeToolCalls(raw).map((call) => ({
+      id: call.id,
+      type: "function",
+      function: {
+        name: call.name,
+        arguments: JSON.stringify(call.arguments || {}),
+      },
+    }));
+  }
+
   function mergeToolCallDeltas(existing, incoming) {
     if (!Array.isArray(incoming) || !incoming.length) {
       return Array.isArray(existing) ? existing : [];
@@ -12475,7 +12496,12 @@ function mountChat(root) {
       dest.function = dest.function || {};
       if (fn.name) dest.function.name = fn.name;
       if (typeof fn.arguments === "string") {
-        dest.function.arguments = String(dest.function.arguments || "") + fn.arguments;
+        const prev = String(dest.function.arguments || "");
+        const next = fn.arguments;
+        if (!prev) dest.function.arguments = next;
+        else if (prev === next) dest.function.arguments = prev;
+        else if (isCompleteJsonValue(prev) && isCompleteJsonValue(next)) dest.function.arguments = next;
+        else dest.function.arguments = prev + next;
       } else if (fn.arguments && typeof fn.arguments === "object") {
         dest.function.arguments = fn.arguments;
       }
@@ -12941,7 +12967,7 @@ function mountChat(root) {
       const assistantItem = { role: "assistant", content: assembled, createdAt: Date.now() };
       if (historyRun) assistantItem.historyRun = historyRun;
       if (reasoning) assistantItem.reasoning = reasoning;
-      assistantItem.tool_calls = toolCalls;
+      assistantItem.tool_calls = cleanedToolCalls(toolCalls);
       list.push(assistantItem);
       const userText = lastUserTextFor(chatId);
       const workspace = workspaceId(targetChat) || activeWorkspaceId();

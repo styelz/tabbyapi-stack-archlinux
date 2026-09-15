@@ -40,6 +40,7 @@ from endpoints.OAI.utils.stream_parser import (
     TagStreamParser,
 )
 from endpoints.OAI.utils.tools import (
+    dictify_tool_call_arguments,
     get_toolcall_tags,
     parse_toolcalls,
 )
@@ -321,24 +322,10 @@ async def format_messages_with_template(
         message_dicts.append(message.model_dump(exclude_none=True))
 
     # Pre-template: convert tool_call arguments from JSON strings to dicts.
-    # OpenAI-compatible clients (Kilo, Roo, etc.) send arguments as JSON
-    # strings per the OAI spec, but Qwen3-Coder's template calls
-    # .items() on arguments which requires a dict/mapping.
-    for msg in message_dicts:
-        if msg.get("tool_calls"):
-            for tc in msg["tool_calls"]:
-                func = tc.get("function", {})
-                args = func.get("arguments")
-                if isinstance(args, str):
-                    try:
-                        func["arguments"] = json.loads(args)
-                        # xlogger.debug("Parsed tool call", {"func": func})
-                    except (json.JSONDecodeError, ValueError):
-                        xlogger.warning(
-                            "Failed to parse tool_call arguments JSON "
-                            "string to dict, keeping as string",
-                            {"args": args},
-                        )
+    # OpenAI-compatible clients send arguments as JSON strings per the OAI
+    # spec, but Qwen-family templates call |items on arguments. Concatenated
+    # objects (a complete snapshot sent twice) keep the first mapping.
+    dictify_tool_call_arguments(message_dicts)
 
     # Sort parallel tool results into tool call order for templates that
     # render them positionally

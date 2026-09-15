@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import unittest
 import re
 from pathlib import Path
@@ -406,6 +407,10 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
         self.assertIn("AGENT_DONE_NUDGE", self.src)
         self.assertIn("function mergeToolCallDeltas(existing, incoming)", self.src)
         self.assertIn("toolCalls = mergeToolCallDeltas(toolCalls, event.tool_calls)", self.src)
+        self.assertIn("function cleanedToolCalls(", self.src)
+        self.assertIn("function isCompleteJsonValue(", self.src)
+        self.assertIn("out.tool_calls = cleanedToolCalls(item.tool_calls)", self.src)
+        self.assertIn("assistantItem.tool_calls = cleanedToolCalls(toolCalls)", self.src)
         self.assertIn("function shouldSkipInspectTool(", self.src)
         self.assertIn("out.content = \"\"", self.src.split("function outboundAssistant")[1].split("function outboundTool")[0])
         self.assertIn("heldJobId", self.src)
@@ -567,7 +572,18 @@ def merge_tool_call_deltas(existing, incoming):
             dest_fn["name"] = fn["name"]
         args = fn.get("arguments")
         if isinstance(args, str):
-            dest_fn["arguments"] = str(dest_fn.get("arguments") or "") + args
+            prev = str(dest_fn.get("arguments") or "")
+            if not prev:
+                dest_fn["arguments"] = args
+            elif prev == args:
+                dest_fn["arguments"] = prev
+            else:
+                try:
+                    json.loads(prev)
+                    json.loads(args)
+                    dest_fn["arguments"] = args
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    dest_fn["arguments"] = prev + args
         elif isinstance(args, dict):
             dest_fn["arguments"] = args
     return out
@@ -601,6 +617,22 @@ class MergeToolCallDeltasTests(unittest.TestCase):
             }
         ]
         self.assertEqual(merge_tool_call_deltas([], complete), complete)
+
+    def test_duplicate_complete_snapshot_is_not_concatenated(self):
+        snapshot = {
+            "index": 0,
+            "id": "call_write",
+            "type": "function",
+            "function": {
+                "name": "Write",
+                "arguments": '{"path":"index.html","contents":"<html>"}',
+            },
+        }
+        merged = merge_tool_call_deltas([], [snapshot])
+        merged = merge_tool_call_deltas(merged, [snapshot])
+        args = merged[0]["function"]["arguments"]
+        self.assertEqual(args, snapshot["function"]["arguments"])
+        self.assertNotIn("}{", args)
 
 
 if __name__ == "__main__":
