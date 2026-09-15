@@ -87,7 +87,7 @@ tsctl start|stop|restart      # TabbyAPI user unit
 tsctl status
 tsctl list
 tsctl network host=0.0.0.0
-tsctl screensaver enable      # spare TTY, CPU framebuffer; leave off if a desktop owns the GPU
+tsctl screensaver enable      # spare TTY; display scanout only, no CUDA / extra VRAM
 tsctl gpu status
 tsctl gpu quiet
 ```

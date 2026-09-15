@@ -3,14 +3,18 @@
 
 Does not import TabbyAPI or CUDA. Polls GET /v1/ui/saver/state on localhost.
 Pygame draws into RAM (SDL dummy). Pixels go to /dev/fb0 with the CPU.
+
 Never open kmsdrm/EGL/GL — NVIDIA's kmsdrm driver ignores LIBGL_ALWAYS_SOFTWARE
-and steals SM time from the LLM.
+and steals SM time from the LLM. CUDA/GL heaps would also take VRAM from the
+model. The display engine (scanout, vblank, optional plane scale) is fine: it
+does not run shaders and it retargets the console framebuffer already in VRAM.
 """
 
 from __future__ import annotations
 
 import argparse
 import colorsys
+import ctypes
 import fcntl
 import glob
 import json
@@ -43,8 +47,12 @@ DOWN_TEXT = (232, 96, 90)
 VT_ACTIVATE = 0x5606
 VT_WAITACTIVE = 0x5607
 FBIOGET_VSCREENINFO = 0x4600
+# linux/fb.h FBIO_WAITFORVSYNC _IOW('F', 0x20, __u32) — display engine, not CUDA.
+FBIO_WAITFORVSYNC = 0x40044620
 # In-memory B,G,R,X — what nvidia-drm fbdev and most 32bpp consoles expose.
 XRGB_MASKS = (0x00FF0000, 0x0000FF00, 0x000000FF, 0)
+DRM_CLIENT_CAP_UNIVERSAL_PLANES = 2
+DRM_DISPLAY_MODE_LEN = 32
 KDSETMODE = 0x4B3A
 KD_TEXT = 0
 KD_GRAPHICS = 1
@@ -86,10 +94,13 @@ HUD_IDLE_PEEK_GRACE_S = 1.0
 HUD_HALO_RADIUS = 1
 IDLE_FIELD_HUE_HOLD_S = 300.0
 IDLE_FIELD_HUE_BLEND_S = 40.0
-# Each 4K present is a 33 MB framebuffer write (~20 ms). Spend that when the
-# GPU is idle so the wash and sleepers look smooth; cap it while a job is
-# live so the LLM sampler keeps the core.
+# Each 4K present is a 33 MB framebuffer write (~20 ms) unless the display
+# engine is scaling the compose surface. Spend that when the GPU is idle so
+# the wash and sleepers look smooth; cap it while a job is live so the LLM
+# sampler keeps the core. Cheap presents (windowed or plane scale) may run 60.
 BUSY_FPS = 8
+IDLE_FPS_SOFT = 30
+IDLE_FPS_CHEAP = 60
 
 SIN_BITS = 12
 SIN_SIZE = 1 << SIN_BITS
@@ -167,8 +178,363 @@ def compose_size(fb_w: int, fb_h: int, max_edge: int = 1280) -> tuple[int, int]:
     return max(64, int(round(width * scale))), max(36, int(round(height * scale)))
 
 
+def display_scale_wanted() -> bool:
+    """True unless TABBY_SAVER_DISPLAY_SCALE is an explicit off value."""
+    raw = os.environ.get("TABBY_SAVER_DISPLAY_SCALE", "1").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
+class _DrmModeModeInfo(ctypes.Structure):
+    _fields_ = [
+        ("clock", ctypes.c_uint32),
+        ("hdisplay", ctypes.c_uint16),
+        ("hsync_start", ctypes.c_uint16),
+        ("hsync_end", ctypes.c_uint16),
+        ("htotal", ctypes.c_uint16),
+        ("hskew", ctypes.c_uint16),
+        ("vdisplay", ctypes.c_uint16),
+        ("vsync_start", ctypes.c_uint16),
+        ("vsync_end", ctypes.c_uint16),
+        ("vtotal", ctypes.c_uint16),
+        ("vscan", ctypes.c_uint16),
+        ("vrefresh", ctypes.c_uint32),
+        ("flags", ctypes.c_uint32),
+        ("type", ctypes.c_uint32),
+        ("name", ctypes.c_char * DRM_DISPLAY_MODE_LEN),
+    ]
+
+
+class _DrmModeCrtc(ctypes.Structure):
+    _fields_ = [
+        ("crtc_id", ctypes.c_uint32),
+        ("buffer_id", ctypes.c_uint32),
+        ("x", ctypes.c_uint32),
+        ("y", ctypes.c_uint32),
+        ("width", ctypes.c_uint32),
+        ("height", ctypes.c_uint32),
+        ("mode_valid", ctypes.c_int),
+        ("mode", _DrmModeModeInfo),
+        ("gamma_size", ctypes.c_int),
+    ]
+
+
+class _DrmModeRes(ctypes.Structure):
+    _fields_ = [
+        ("count_fbs", ctypes.c_int),
+        ("fbs", ctypes.POINTER(ctypes.c_uint32)),
+        ("count_crtcs", ctypes.c_int),
+        ("crtcs", ctypes.POINTER(ctypes.c_uint32)),
+        ("count_connectors", ctypes.c_int),
+        ("connectors", ctypes.POINTER(ctypes.c_uint32)),
+        ("count_encoders", ctypes.c_int),
+        ("encoders", ctypes.POINTER(ctypes.c_uint32)),
+        ("min_width", ctypes.c_uint32),
+        ("max_width", ctypes.c_uint32),
+        ("min_height", ctypes.c_uint32),
+        ("max_height", ctypes.c_uint32),
+    ]
+
+
+class _DrmModePlane(ctypes.Structure):
+    _fields_ = [
+        ("count_formats", ctypes.c_uint32),
+        ("formats", ctypes.POINTER(ctypes.c_uint32)),
+        ("plane_id", ctypes.c_uint32),
+        ("crtc_id", ctypes.c_uint32),
+        ("fb_id", ctypes.c_uint32),
+        ("crtc_x", ctypes.c_uint32),
+        ("crtc_y", ctypes.c_uint32),
+        ("x", ctypes.c_uint32),
+        ("y", ctypes.c_uint32),
+        ("possible_crtcs", ctypes.c_uint32),
+        ("gamma_size", ctypes.c_uint32),
+    ]
+
+
+class _DrmModePlaneRes(ctypes.Structure):
+    _fields_ = [
+        ("count_planes", ctypes.c_uint32),
+        ("planes", ctypes.POINTER(ctypes.c_uint32)),
+    ]
+
+
+class _DrmModeFB(ctypes.Structure):
+    _fields_ = [
+        ("fb_id", ctypes.c_uint32),
+        ("width", ctypes.c_uint32),
+        ("height", ctypes.c_uint32),
+        ("pitch", ctypes.c_uint32),
+        ("bpp", ctypes.c_uint32),
+        ("depth", ctypes.c_uint32),
+        ("handle", ctypes.c_uint32),
+    ]
+
+
+def _drm_lib() -> Any | None:
+    try:
+        lib = ctypes.CDLL("libdrm.so.2", use_errno=True)
+    except OSError:
+        return None
+    try:
+        lib.drmSetClientCap.argtypes = [ctypes.c_int, ctypes.c_uint64, ctypes.c_uint64]
+        lib.drmSetClientCap.restype = ctypes.c_int
+        lib.drmModeGetResources.argtypes = [ctypes.c_int]
+        lib.drmModeGetResources.restype = ctypes.c_void_p
+        lib.drmModeFreeResources.argtypes = [ctypes.c_void_p]
+        lib.drmModeFreeResources.restype = None
+        lib.drmModeGetCrtc.argtypes = [ctypes.c_int, ctypes.c_uint32]
+        lib.drmModeGetCrtc.restype = ctypes.c_void_p
+        lib.drmModeFreeCrtc.argtypes = [ctypes.c_void_p]
+        lib.drmModeFreeCrtc.restype = None
+        lib.drmModeGetPlaneResources.argtypes = [ctypes.c_int]
+        lib.drmModeGetPlaneResources.restype = ctypes.c_void_p
+        lib.drmModeFreePlaneResources.argtypes = [ctypes.c_void_p]
+        lib.drmModeFreePlaneResources.restype = None
+        lib.drmModeGetPlane.argtypes = [ctypes.c_int, ctypes.c_uint32]
+        lib.drmModeGetPlane.restype = ctypes.c_void_p
+        lib.drmModeFreePlane.argtypes = [ctypes.c_void_p]
+        lib.drmModeFreePlane.restype = None
+        lib.drmModeSetPlane.argtypes = [
+            ctypes.c_int,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_int32,
+            ctypes.c_int32,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+        ]
+        lib.drmModeSetPlane.restype = ctypes.c_int
+        lib.drmModeGetFB.argtypes = [ctypes.c_int, ctypes.c_uint32]
+        lib.drmModeGetFB.restype = ctypes.c_void_p
+        lib.drmModeFreeFB.argtypes = [ctypes.c_void_p]
+        lib.drmModeFreeFB.restype = None
+        lib.drmModeAddFB.argtypes = [
+            ctypes.c_int,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_uint8,
+            ctypes.c_uint8,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.POINTER(ctypes.c_uint32),
+        ]
+        lib.drmModeAddFB.restype = ctypes.c_int
+        lib.drmModeRmFB.argtypes = [ctypes.c_int, ctypes.c_uint32]
+        lib.drmModeRmFB.restype = ctypes.c_int
+    except AttributeError:
+        return None
+    return lib
+
+
+def _drm_open_card() -> int | None:
+    for path in sorted(glob.glob("/dev/dri/card*")):
+        try:
+            return os.open(path, os.O_RDWR | os.O_CLOEXEC)
+        except OSError:
+            continue
+    return None
+
+
+def _drm_set_plane(
+    lib: Any,
+    fd: int,
+    plane_id: int,
+    crtc_id: int,
+    fb_id: int,
+    crtc_w: int,
+    crtc_h: int,
+    src_w: int,
+    src_h: int,
+) -> bool:
+    """Scale src_w x src_h of fb_id onto the CRTC. Same GEM, no new VRAM."""
+    rc = lib.drmModeSetPlane(
+        fd,
+        plane_id,
+        crtc_id,
+        fb_id,
+        0,
+        0,
+        0,
+        crtc_w,
+        crtc_h,
+        0,
+        0,
+        int(src_w) << 16,
+        int(src_h) << 16,
+    )
+    return rc == 0
+
+
+def try_drm_display_scale(
+    panel_w: int, panel_h: int, src_w: int, src_h: int
+) -> dict[str, int] | None:
+    """Ask the display engine to upscale the compose surface.
+
+    Uses the console framebuffer already in VRAM (optional extra FB id is a
+    view of that same GEM handle). Never creates a dumb buffer, CUDA context,
+    or GL heap. Returns restore state, or None when the driver refuses.
+    """
+    if src_w >= panel_w and src_h >= panel_h:
+        return None
+    if src_w < 64 or src_h < 36:
+        return None
+    lib = _drm_lib()
+    if lib is None:
+        return None
+    fd = _drm_open_card()
+    if fd is None:
+        return None
+    added_fb = 0
+    keep_fd = False
+    res_ptr = crtc_ptr = planes_ptr = None
+    try:
+        lib.drmSetClientCap(fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1)
+        res_ptr = lib.drmModeGetResources(fd)
+        if not res_ptr:
+            return None
+        res = ctypes.cast(res_ptr, ctypes.POINTER(_DrmModeRes)).contents
+        if not (1 <= int(res.count_crtcs) <= 16):
+            return None
+        crtc_id = plane_id = fb_id = crtc_index = -1
+        for idx in range(int(res.count_crtcs)):
+            cid = int(res.crtcs[idx])
+            crtc_ptr = lib.drmModeGetCrtc(fd, cid)
+            if not crtc_ptr:
+                continue
+            crtc = ctypes.cast(crtc_ptr, ctypes.POINTER(_DrmModeCrtc)).contents
+            width, height, buffer_id = int(crtc.width), int(crtc.height), int(crtc.buffer_id)
+            lib.drmModeFreeCrtc(crtc_ptr)
+            crtc_ptr = None
+            if buffer_id and width == panel_w and height == panel_h:
+                crtc_id, fb_id, crtc_index = cid, buffer_id, idx
+                break
+        if crtc_id < 0 or fb_id <= 0:
+            return None
+        planes_ptr = lib.drmModeGetPlaneResources(fd)
+        if not planes_ptr:
+            return None
+        planes = ctypes.cast(planes_ptr, ctypes.POINTER(_DrmModePlaneRes)).contents
+        if not (1 <= int(planes.count_planes) <= 32):
+            return None
+        mask = 1 << crtc_index
+        chosen = 0
+        for idx in range(int(planes.count_planes)):
+            pid = int(planes.planes[idx])
+            plane_ptr = lib.drmModeGetPlane(fd, pid)
+            if not plane_ptr:
+                continue
+            plane = ctypes.cast(plane_ptr, ctypes.POINTER(_DrmModePlane)).contents
+            possible = int(plane.possible_crtcs)
+            on_crtc = int(plane.crtc_id) == crtc_id
+            lib.drmModeFreePlane(plane_ptr)
+            if on_crtc or (possible & mask):
+                chosen = pid
+                if on_crtc:
+                    break
+        if not chosen:
+            return None
+        plane_id = chosen
+        use_fb = fb_id
+        if not _drm_set_plane(lib, fd, plane_id, crtc_id, use_fb, panel_w, panel_h, src_w, src_h):
+            fb_ptr = lib.drmModeGetFB(fd, fb_id)
+            if not fb_ptr:
+                return None
+            fb = ctypes.cast(fb_ptr, ctypes.POINTER(_DrmModeFB)).contents
+            handle, pitch, depth, bpp = (
+                int(fb.handle),
+                int(fb.pitch),
+                int(fb.depth) or 24,
+                int(fb.bpp) or 32,
+            )
+            lib.drmModeFreeFB(fb_ptr)
+            if handle <= 0 or pitch < src_w * 4:
+                return None
+            new_id = ctypes.c_uint32(0)
+            if lib.drmModeAddFB(fd, src_w, src_h, depth, bpp, pitch, handle, ctypes.byref(new_id)) != 0:
+                return None
+            added_fb = int(new_id.value)
+            if not _drm_set_plane(
+                lib, fd, plane_id, crtc_id, added_fb, panel_w, panel_h, src_w, src_h
+            ):
+                lib.drmModeRmFB(fd, added_fb)
+                added_fb = 0
+                return None
+            use_fb = added_fb
+        keep_fd = True
+        return {
+            "fd": fd,
+            "plane_id": plane_id,
+            "crtc_id": crtc_id,
+            "fb_id": fb_id,
+            "use_fb": use_fb,
+            "added_fb": added_fb,
+            "panel_w": int(panel_w),
+            "panel_h": int(panel_h),
+        }
+    except (OSError, ValueError, TypeError, AttributeError):
+        if added_fb:
+            try:
+                lib.drmModeRmFB(fd, added_fb)
+            except Exception:
+                pass
+            added_fb = 0
+        return None
+    finally:
+        if crtc_ptr:
+            lib.drmModeFreeCrtc(crtc_ptr)
+        if planes_ptr:
+            lib.drmModeFreePlaneResources(planes_ptr)
+        if res_ptr:
+            lib.drmModeFreeResources(res_ptr)
+        if not keep_fd:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
+def restore_drm_display_scale(state: dict[str, int] | None) -> None:
+    if not state:
+        return
+    lib = _drm_lib()
+    fd = int(state.get("fd", -1))
+    if lib is None or fd < 0:
+        return
+    try:
+        _drm_set_plane(
+            lib,
+            fd,
+            int(state["plane_id"]),
+            int(state["crtc_id"]),
+            int(state["fb_id"]),
+            int(state["panel_w"]),
+            int(state["panel_h"]),
+            int(state["panel_w"]),
+            int(state["panel_h"]),
+        )
+        added = int(state.get("added_fb") or 0)
+        if added:
+            lib.drmModeRmFB(fd, added)
+    except Exception:
+        pass
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+
+
 class CpuFramebuffer:
-    """CPU present path: mmap /dev/fb0. Does not open DRM, EGL, GL, or NVIDIA."""
+    """CPU present path: mmap /dev/fb0. No EGL, GL, or CUDA.
+
+    Optional DRM plane scale uses the existing scanout buffer (display
+    engine, zero extra VRAM). Vblank waits are FBIO_WAITFORVSYNC on fb0.
+    """
 
     def __init__(
         self,
@@ -182,9 +548,44 @@ class CpuFramebuffer:
         self._staging: Any = None
         self._rows: Any = None
         self._pad_cleared = False
+        self.display_scale = False
+        self._vsync_ok = True
+        self._drm_state: dict[str, int] | None = None
 
     def size(self) -> tuple[int, int]:
         return self.width, self.height
+
+    @property
+    def present_cheap(self) -> bool:
+        return bool(self.display_scale)
+
+    def try_display_scale(self, src_w: int, src_h: int) -> bool:
+        if not display_scale_wanted():
+            return False
+        state = try_drm_display_scale(self.width, self.height, int(src_w), int(src_h))
+        if not state:
+            return False
+        self._drm_state = state
+        self.display_scale = True
+        print(
+            f"tabby-saver: display engine scaling {src_w}x{src_h} -> "
+            f"{self.width}x{self.height} (no extra VRAM)",
+            file=sys.stderr,
+        )
+        return True
+
+    def wait_vblank(self) -> bool:
+        """Sleep until the next display refresh. No CUDA, no extra VRAM."""
+        if not getattr(self, "_vsync_ok", True):
+            return False
+        if int(getattr(self, "fd", -1)) < 0:
+            return False
+        try:
+            fcntl.ioctl(self.fd, FBIO_WAITFORVSYNC, bytearray(4))
+            return True
+        except OSError:
+            self._vsync_ok = False
+            return False
 
     def _fb_rows(self, np_mod: Any) -> Any:
         if self._rows is None:
@@ -203,13 +604,32 @@ class CpuFramebuffer:
             self._staging = pygame_mod.Surface((self.width, height), 0, 32, self.masks)
         return self._staging
 
-    def present_surface(self, pygame_mod: Any, surface: Any) -> None:
-        """Nearest upsample into fb0 with one C scale pass and one row copy.
+    def _present_window(self, rows: Any, src: Any, cw: int, ch: int) -> None:
+        """Write compose pixels into the top-left; the display engine upscales."""
+        rows[:ch, : cw * 4] = src[:, : cw * 4]
 
-        Nearest scaling repeats rows, so when fb height is a multiple of the
-        compose height (4K from 1280x720) only a width-wise scale is needed;
-        numpy then broadcasts each scaled row ky times straight into the
-        mapping at memcpy speed. Other ratios scale to full size first.
+    def _present_integer(self, rows: Any, src: Any, cw: int, ch: int) -> None:
+        """Nearest upsample both axes in one write when the scale is integral."""
+        kx = self.width // cw
+        ky = self.height // ch
+        src_px = src[:, : cw * 4].reshape(ch, cw, 4)
+        pix = rows.reshape(ch, ky, self.stride)[:, :, : self.width * 4]
+        try:
+            dest = pix.reshape(ch, ky, cw, kx, 4)
+        except ValueError:
+            dest = None
+        if dest is not None:
+            dest[:] = src_px[:, None, :, None, :]
+            return
+        for y in range(ch):
+            pix[y, :, :] = src_px[y].repeat(kx, axis=0).reshape(-1)
+
+    def present_surface(self, pygame_mod: Any, surface: Any) -> None:
+        """Copy the compose surface into fb0.
+
+        When the display engine is scaling, only the compose window is written.
+        When both axes divide the panel, numpy repeats pixels straight into the
+        mapping. Other ratios still scale in pygame then copy rows.
 
         The old path pulled the frame through surfarray, gathered a 4K nearest
         upsample in numpy, and wrote four strided byte planes into the mmap.
@@ -217,20 +637,34 @@ class CpuFramebuffer:
         """
         import numpy as np
 
-        row_bytes = self.width * 4
         rows = self._fb_rows(np)
+        cw = max(1, int(surface.get_width()))
         ch = max(1, int(surface.get_height()))
-        ky = self.height // ch if self.height % ch == 0 else 1
-        stage_h = self.height // ky
+        view = surface.get_buffer()
+        src = np.frombuffer(view, dtype=np.uint8).reshape(ch, surface.get_pitch())
+        if getattr(self, "display_scale", False):
+            self._present_window(rows, src, cw, ch)
+            del src, view
+            return
+        if self.width % cw == 0 and self.height % ch == 0:
+            self._present_integer(rows, src, cw, ch)
+            del src, view
+            return
+        row_bytes = self.width * 4
+        ky = 1
+        stage_h = self.height
         stage = self._staging_surface(pygame_mod, stage_h)
         pygame_mod.transform.scale(surface, (self.width, stage_h), stage)
+        del src, view
         view = stage.get_buffer()
         src = np.frombuffer(view, dtype=np.uint8).reshape(stage_h, 1, stage.get_pitch())
         rows.reshape(stage_h, ky, self.stride)[:, :, :row_bytes] = src[:, :, :row_bytes]
-        # Drop the buffer proxy now so the staging surface is unlocked for the next frame.
         del src, view
 
     def close(self) -> None:
+        restore_drm_display_scale(getattr(self, "_drm_state", None))
+        self._drm_state = None
+        self.display_scale = False
         self._staging = None
         self._rows = None
         try:
@@ -1601,9 +2035,14 @@ def scene_is_live(scene: dict[str, Any] | None) -> bool:
     return bool(scene.get("live") or overlay_amount(scene) > 0.04)
 
 
-def paint_fps(fps: int, *, live: bool) -> int:
-    """Idle uses --fps; a live job is capped so Tabby is not interrupted."""
-    want = max(1, min(30, int(fps)))
+def paint_fps(fps: int, *, live: bool, present_cheap: bool = False) -> int:
+    """Idle uses --fps; a live job is capped so Tabby is not interrupted.
+
+    Software 4K presents stay at IDLE_FPS_SOFT. Windowed SDL and display-engine
+    scale can run at IDLE_FPS_CHEAP without a CUDA context or extra VRAM.
+    """
+    cap = IDLE_FPS_CHEAP if present_cheap else IDLE_FPS_SOFT
+    want = max(1, min(cap, int(fps)))
     if live:
         return min(want, BUSY_FPS)
     return want
@@ -2425,6 +2864,12 @@ class _FieldGrid:
 
 
 _FIELD_GRID: dict[tuple[int, int], _FieldGrid] = {}
+# Reused XRGB pixels + pygame Surface. Surfaces die on pygame.quit().
+_FIELD_PAINT: dict[str, Any] = {}
+
+
+def _clear_field_paint() -> None:
+    _FIELD_PAINT.clear()
 
 
 def _field_grid(width: int, height: int, np_mod: Any) -> _FieldGrid:
@@ -2488,9 +2933,41 @@ def _draw_field_numpy(
         v = v_idle + (v_live - v_idle) * f32(mix)
     v *= f32(255.0)
     idx = np_mod.clip(v.astype(np_mod.int32), 0, 254)
-    rgb = np_mod.ascontiguousarray(pal[idx])
-    surf = pygame.image.frombuffer(rgb, (width, height), "RGB")
-    return surf.convert(like) if like is not None else surf.convert()
+    pal_u32 = (
+        pal[:, 0].astype(np_mod.uint32) << 16
+        | pal[:, 1].astype(np_mod.uint32) << 8
+        | pal[:, 2].astype(np_mod.uint32)
+    )
+    masks = XRGB_MASKS
+    if like is not None:
+        getter = getattr(like, "get_masks", None)
+        if getter is not None:
+            try:
+                masks = tuple(getter())
+            except Exception:
+                masks = XRGB_MASKS
+    paint = _FIELD_PAINT.get("cur")
+    if paint is None or paint["w"] != width or paint["h"] != height or paint["masks"] != masks:
+        try:
+            surf = pygame.Surface((width, height), 0, 32, masks)
+        except (ValueError, TypeError, pygame.error):
+            paint = None
+        else:
+            paint = {"w": width, "h": height, "masks": masks, "surf": surf}
+            _FIELD_PAINT["cur"] = paint
+    if paint is None:
+        rgb = np_mod.ascontiguousarray(pal[idx])
+        surf = pygame.image.frombuffer(rgb, (width, height), "RGB")
+        return surf.convert(like) if like is not None else surf.convert()
+    try:
+        pixels = pygame.surfarray.pixels2d(paint["surf"])
+        pixels[:, :] = pal_u32[idx].T
+        del pixels
+        return paint["surf"]
+    except Exception:
+        rgb = np_mod.ascontiguousarray(pal[idx])
+        surf = pygame.image.frombuffer(rgb, (width, height), "RGB")
+        return surf.convert(like) if like is not None else surf.convert()
 
 
 def _draw_field_python(
@@ -3280,7 +3757,9 @@ class InputWatch:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Tabby-stack activity screensaver (CPU framebuffer)")
+    parser = argparse.ArgumentParser(
+        description="Tabby-stack activity screensaver (CPU compose, display-engine present)"
+    )
     parser.add_argument(
         "--window",
         action="store_true",
@@ -3294,8 +3773,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--fps",
         type=int,
-        default=int(os.environ.get("TABBY_SAVER_FPS", "24")),
-        help="Idle field frames per second (busy jobs cap at 8)",
+        default=int(os.environ.get("TABBY_SAVER_FPS", "60")),
+        help="Idle field frames per second (busy jobs cap at 8; software present caps at 30)",
     )
     parser.add_argument(
         "--width",
@@ -3361,6 +3840,7 @@ def _init_display(windowed: bool):
     _SLEEP_CACHE.clear()
     _SLEEP_SURF_CACHE.clear()
     _HUD_LAYER_CACHE.clear()
+    _clear_field_paint()
     pygame.mouse.set_visible(False)
     allowed = [pygame.QUIT, pygame.KEYDOWN, pygame.KEYUP]
     for name in _DISMISS_EVENT_NAMES:
@@ -3374,8 +3854,9 @@ def _init_display(windowed: bool):
         return pygame, screen, None
     fb = CpuFramebuffer()
     pygame.display.set_mode((1, 1))
-    # Same pixel layout as fb0 so present_surface can scale straight into it.
+    # Same pixel layout as fb0 so present_surface can copy straight into it.
     screen = pygame.Surface(compose_size(*fb.size()), 0, 32, fb.masks)
+    fb.try_display_scale(*screen.get_size())
     set_tty_graphics(True)
     return pygame, screen, fb
 
@@ -3386,6 +3867,7 @@ def _close_display(pygame_mod: Any, fb: CpuFramebuffer | None = None) -> None:
     _SLEEP_CACHE.clear()
     _SLEEP_SURF_CACHE.clear()
     _HUD_LAYER_CACHE.clear()
+    _clear_field_paint()
     if fb is not None:
         try:
             fb.close()
@@ -3489,7 +3971,11 @@ def run_visible_field(
                 args.width, args.height, live=live, compose=screen.get_size()
             )
             field = draw_field(fw, fh, scene, screen)
-            pygame.transform.scale(field, screen.get_size(), screen)
+            size = screen.get_size()
+            if field.get_size() == size:
+                screen.blit(field, (0, 0))
+            else:
+                pygame.transform.scale(field, size, screen)
             draw_sleepers(pygame, screen, scene)
             draw_neurons(pygame, screen, scene)
             draw_cycle_fx(pygame, screen, scene)
@@ -3501,11 +3987,14 @@ def run_visible_field(
                 info = pygame.font.Font(None, info_n)
                 font_h = height
             draw_hud(screen, font, small, scene, info)
+            cheap = fb is None or fb.present_cheap
             if fb is not None:
+                if not live:
+                    fb.wait_vblank()
                 fb.present_surface(pygame, screen)
             else:
                 pygame.display.flip()
-            clock.tick(paint_fps(args.fps, live=live))
+            clock.tick(paint_fps(args.fps, live=live, present_cheap=cheap))
     finally:
         _close_display(pygame, fb)
 

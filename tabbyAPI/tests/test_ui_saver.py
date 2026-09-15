@@ -1647,6 +1647,9 @@ class SaverKioskSceneTests(unittest.TestCase):
         fb.masks = self.kiosk.XRGB_MASKS
         fb._staging = fb._rows = None
         fb._pad_cleared = False
+        fb.display_scale = False
+        fb._vsync_ok = True
+        fb._drm_state = None
         return fb
 
     def test_present_surface_scales_into_xrgb_fb_rows(self):
@@ -1683,6 +1686,62 @@ class SaverKioskSceneTests(unittest.TestCase):
         finally:
             pygame.quit()
 
+    def test_present_surface_display_scale_writes_compose_window_only(self):
+        try:
+            import mmap
+
+            import numpy as np
+            import pygame
+        except ImportError:
+            self.skipTest("pygame/numpy")
+        os.environ["SDL_VIDEODRIVER"] = "dummy"
+        pygame.init()
+        try:
+            pygame.display.set_mode((1, 1))
+            fb = self._fake_fb(mmap, 8, 4, 32)
+            fb.display_scale = True
+            screen = pygame.Surface((4, 2), 0, 32, fb.masks)
+            screen.fill((10, 20, 30))
+            fb.present_surface(pygame, screen)
+            rows = np.frombuffer(fb.mem, dtype=np.uint8).reshape(4, 32)
+            self.assertEqual(list(rows[0, 0:3]), [30, 20, 10])
+            self.assertEqual(list(rows[1, 12:15]), [30, 20, 10])
+            # Right of the compose window and rows below it stay untouched.
+            self.assertEqual(list(rows[0, 16:19]), [0xEE, 0xEE, 0xEE])
+            self.assertEqual(list(rows[2, 0:3]), [0xEE, 0xEE, 0xEE])
+            del rows
+            fb.close()
+        finally:
+            pygame.quit()
+
+    def test_wait_vblank_skips_bad_fd(self):
+        fb = self.kiosk.CpuFramebuffer.__new__(self.kiosk.CpuFramebuffer)
+        fb.fd = -1
+        fb._vsync_ok = True
+        self.assertFalse(fb.wait_vblank())
+        self.assertTrue(fb._vsync_ok)
+
+    def test_display_scale_wanted_defaults_on(self):
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("TABBY_SAVER_DISPLAY_SCALE", None)
+            self.assertTrue(self.kiosk.display_scale_wanted())
+        with mock.patch.dict(os.environ, {"TABBY_SAVER_DISPLAY_SCALE": "0"}):
+            self.assertFalse(self.kiosk.display_scale_wanted())
+
+    def test_drm_scale_skips_when_already_1to1(self):
+        self.assertIsNone(self.kiosk.try_drm_display_scale(1280, 720, 1280, 720))
+        self.assertIsNone(self.kiosk.try_drm_display_scale(3840, 2160, 32, 18))
+
+    def test_kiosk_does_not_allocate_cuda_or_gl(self):
+        src = (
+            Path(__file__).resolve().parents[1] / "deploy/arch/tabby-saver.py"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn("CreateDumb", src)
+        self.assertNotIn("cudaMalloc", src)
+        self.assertNotIn("eglCreate", src)
+        self.assertNotIn("SDL_VIDEODRIVER\"] = \"kmsdrm\"", src)
+        self.assertIn("SDL_VIDEODRIVER\"] = \"dummy\"", src)
+
     def test_vt_control_paths_try_own_tty_before_root_only_consoles(self):
         self.assertEqual(
             self.kiosk.vt_control_paths("tty8"),
@@ -1716,10 +1775,12 @@ class SaverKioskSceneTests(unittest.TestCase):
         kiosk._SLEEP_CACHE[("sphere", 0, 0, (1, 2, 3), 160)] = b"\0" * 3
         kiosk._SLEEP_SURF_CACHE[(("sphere", 0, 0, (1, 2, 3), 160), 32)] = object()
         kiosk._HUD_LAYER_CACHE[(1, "12:00:00", (1, 2, 3))] = object()
+        kiosk._FIELD_PAINT["cur"] = {"w": 8, "h": 8}
         kiosk._close_display(None, None)
         self.assertEqual(kiosk._SLEEP_CACHE, {})
         self.assertEqual(kiosk._SLEEP_SURF_CACHE, {})
         self.assertEqual(kiosk._HUD_LAYER_CACHE, {})
+        self.assertEqual(kiosk._FIELD_PAINT, {})
 
     def test_sleep_fade_is_linear_and_shift_ramp_is_cached(self):
         kiosk = self.kiosk
@@ -1746,6 +1807,7 @@ class SaverKioskSceneTests(unittest.TestCase):
         self.assertEqual(args.logout_idle, 5.0)
         self.assertEqual(args.hud_idle, 300.0)
         self.assertEqual(args.poll, 1.0)
+        self.assertEqual(args.fps, 60)
         self.assertEqual(args.width, 480)
         self.assertEqual(args.height, 270)
         args = self.kiosk.parse_args(
@@ -1756,12 +1818,36 @@ class SaverKioskSceneTests(unittest.TestCase):
         self.assertEqual(args.user_tty, "tty1")
         self.assertEqual(args.saver_tty, "tty8")
 
+    def test_draw_field_reuses_xrgb_surface(self):
+        try:
+            import pygame
+        except ImportError:
+            self.skipTest("pygame")
+        os.environ["SDL_VIDEODRIVER"] = "dummy"
+        pygame.init()
+        try:
+            pygame.display.set_mode((1, 1))
+            idle = self.kiosk.scene_from_state(
+                {"gpu_mode": "llm", "profile": "qwen", "busy": False},
+                True,
+            )
+            first = self.kiosk.draw_field(64, 36, idle)
+            second = self.kiosk.draw_field(64, 36, idle)
+            self.assertEqual(first.get_size(), (64, 36))
+            self.assertIs(first, second)
+        finally:
+            self.kiosk._clear_field_paint()
+            pygame.quit()
+
     def test_paint_fps_idles_higher_than_live(self):
         fps = self.kiosk.paint_fps
         self.assertEqual(fps(24, live=False), 24)
         self.assertEqual(fps(24, live=True), 8)
         self.assertEqual(fps(30, live=False), 30)
         self.assertEqual(fps(30, live=True), self.kiosk.BUSY_FPS)
+        self.assertEqual(fps(60, live=False), self.kiosk.IDLE_FPS_SOFT)
+        self.assertEqual(fps(60, live=False, present_cheap=True), 60)
+        self.assertEqual(fps(60, live=True, present_cheap=True), self.kiosk.BUSY_FPS)
         self.assertLess(fps(24, live=True), fps(24, live=False))
         self.assertEqual(fps(8, live=False), 8)
         self.assertEqual(fps(8, live=True), 8)

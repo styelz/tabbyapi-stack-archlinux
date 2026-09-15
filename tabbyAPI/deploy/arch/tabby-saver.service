@@ -25,6 +25,8 @@ StandardError=journal
 SyslogIdentifier=tabby-saver
 AmbientCapabilities=CAP_SYS_TTY_CONFIG
 CapabilityBoundingSet=CAP_SYS_TTY_CONFIG
+# Display-engine scale/vsync is opted in by tabby-saver.py (no CUDA, no extra VRAM).
+# TABBY_SAVER_DISPLAY_SCALE=0 forces the CPU upsample path.
 EnvironmentFile=-__TABBY_DIR__/deploy/arch/tabby.env
 Environment=HOME=__SAVER_HOME__
 Environment=SDL_VIDEODRIVER=dummy
