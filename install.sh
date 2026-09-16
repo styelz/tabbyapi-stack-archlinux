@@ -1754,6 +1754,87 @@ sudo_n_ok() {
   fi
 }
 
+# Disk swap is an OOM cushion so llama.cpp cannot freeze a RAM-full host.
+# KV cache still stays off host RAM (--cache-ram 0). Low swappiness keeps
+# this from becoming the working set.
+ensure_tabby_swap() {
+  local swapfile="${TABBY_SWAPFILE:-/swapfile}"
+  local gib="${TABBY_SWAP_GIB:-8}"
+  local fstype avail_kib need_kib fstab line
+  echo "==> Host swap (${gib}G cushion at $swapfile)" >>"${INSTALL_LOG:-/dev/stderr}"
+  if [[ -r /proc/swaps ]] && awk 'NR>1 { found=1 } END { exit !found }' /proc/swaps; then
+    echo "    Swap already active" >>"${INSTALL_LOG:-/dev/stderr}"
+    _ensure_tabby_swappiness
+    return 0
+  fi
+  if ! sudo_n_ok; then
+    echo "    Skip swap: sudo -n not available" >>"${INSTALL_LOG:-/dev/stderr}"
+    return 0
+  fi
+  if [[ -f "$swapfile" ]]; then
+    if sudo -n swapon "$swapfile" >/dev/null 2>&1; then
+      echo "    Enabled existing $swapfile" >>"${INSTALL_LOG:-/dev/stderr}"
+      _ensure_tabby_swap_fstab "$swapfile"
+      _ensure_tabby_swappiness
+      return 0
+    fi
+    sudo -n swapoff "$swapfile" >/dev/null 2>&1 || true
+    sudo -n rm -f "$swapfile" >/dev/null 2>&1 || true
+  fi
+  need_kib=$((gib * 1024 * 1024 + 2 * 1024 * 1024))
+  avail_kib=$(df -kP / | awk 'NR==2 { print $4 }')
+  if [[ -z "$avail_kib" || "$avail_kib" -lt "$need_kib" ]]; then
+    echo "    Skip swap: not enough free space on /" >>"${INSTALL_LOG:-/dev/stderr}"
+    return 0
+  fi
+  fstype=$(findmnt -n -o FSTYPE / 2>/dev/null || true)
+  if [[ "$fstype" == btrfs ]] && sudo -n btrfs filesystem mkswapfile --help >/dev/null 2>&1; then
+    if ! sudo -n btrfs filesystem mkswapfile --size "${gib}G" --uuid clear "$swapfile"; then
+      echo "    WARNING: btrfs mkswapfile failed" >>"${INSTALL_LOG:-/dev/stderr}"
+      return 0
+    fi
+  else
+    if ! sudo -n dd if=/dev/zero of="$swapfile" bs=1M count=$((gib * 1024)) status=none; then
+      echo "    WARNING: could not allocate $swapfile" >>"${INSTALL_LOG:-/dev/stderr}"
+      sudo -n rm -f "$swapfile" >/dev/null 2>&1 || true
+      return 0
+    fi
+    sudo -n chmod 600 "$swapfile"
+    if command -v chattr >/dev/null 2>&1 && [[ "$fstype" == btrfs ]]; then
+      sudo -n chattr +C "$swapfile" >/dev/null 2>&1 || true
+    fi
+    if ! sudo -n mkswap -U clear "$swapfile" >/dev/null; then
+      echo "    WARNING: mkswap failed" >>"${INSTALL_LOG:-/dev/stderr}"
+      sudo -n rm -f "$swapfile" >/dev/null 2>&1 || true
+      return 0
+    fi
+  fi
+  if ! sudo -n swapon "$swapfile"; then
+    echo "    WARNING: swapon $swapfile failed" >>"${INSTALL_LOG:-/dev/stderr}"
+    return 0
+  fi
+  _ensure_tabby_swap_fstab "$swapfile"
+  _ensure_tabby_swappiness
+  echo "    Swap on ($gib G)" >>"${INSTALL_LOG:-/dev/stderr}"
+}
+
+_ensure_tabby_swap_fstab() {
+  local swapfile="$1"
+  local fstab=/etc/fstab
+  local line="$swapfile none swap defaults 0 0"
+  if sudo -n grep -qE "^[[:space:]]*${swapfile}[[:space:]]" "$fstab" 2>/dev/null; then
+    return 0
+  fi
+  printf '%s\n' "$line" | sudo -n tee -a "$fstab" >/dev/null
+}
+
+_ensure_tabby_swappiness() {
+  local conf=/etc/sysctl.d/99-tabby-swap.conf
+  printf '%s\n' '# Disk swap is an OOM cushion for llama.cpp, not a working set.' 'vm.swappiness = 10' \
+    | sudo -n tee "$conf" >/dev/null
+  sudo -n sysctl -w vm.swappiness=10 >/dev/null 2>&1 || true
+}
+
 ensure_sudo() {
   if [[ "${EUID}" -eq 0 ]]; then
     echo "Do not run as root. Re-run as your user."
@@ -4169,6 +4250,8 @@ if [[ -f "$GPU_UNIT_SRC" ]]; then
   fi
   rm -f "$GPU_TMP"
 fi
+
+ensure_tabby_swap >>"$INSTALL_LOG" 2>&1 || true
 
 if ! sudo -n loginctl enable-linger "$USER" >>"$INSTALL_LOG" 2>&1; then
   echo "WARNING: linger failed. Run: sudo loginctl enable-linger $USER" >> "$INSTALL_LOG"

@@ -50,7 +50,8 @@ fi
 ARGS+=(-ngl "$ngl")
 # Exclusive GPU: one slot. llama.cpp --parallel auto opened 4x 32k KV on
 # qwen38guff, then spilled into --cache-ram (default 8 GiB) until the
-# 32 GB / no-swap host locked. VRAM stayed ~85%.
+# 32 GB host locked. VRAM stayed ~85%. Disk swap is an OOM cushion only;
+# do not put the KV cache in RAM.
 ARGS+=(
   --parallel "${LLAMA_PARALLEL:-1}"
   --fit "${LLAMA_FIT:-on}"

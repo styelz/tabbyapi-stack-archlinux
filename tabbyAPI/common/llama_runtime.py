@@ -23,16 +23,16 @@ DEFAULT_CTX = 32768
 # 16 GB-class GGUFs on a 12 GB card: llama.cpp --parallel auto opened 4
 # slots of 32k F16 KV and spilled into --cache-ram (default 8 GiB). VRAM
 # stayed ~85% while host RAM + 0 swap froze the box during a long reply.
+# --fit + ngl auto already parks extra layers on CPU so 32k KV can occupy
+# the reserved VRAM. Keep cache-ram off; disk swap is only an OOM cushion.
 DEFAULT_PARALLEL = 1
 DEFAULT_FIT = "on"
 DEFAULT_FIT_TARGET_MIB = 2048
 DEFAULT_CACHE_TYPE = "q8_0"
 DEFAULT_FLASH_ATTN = "on"
 DEFAULT_CACHE_RAM_MIB = 0
-GGUF_HEAVY_BYTES = 8 * 1024 * 1024 * 1024
-GGUF_MID_BYTES = 5 * 1024 * 1024 * 1024
-GGUF_HEAVY_CTX = 8192
-GGUF_MID_CTX = 16384
+# Profiles written while heavy GGUFs were hard-capped at 8k / 16k.
+_OLD_AUTO_CTX = frozenset({8192, 16384})
 DUMMY_MODEL = "gpt-4o"
 LLAMA_ALIASES = {
     "llama": "llama",
@@ -167,20 +167,19 @@ def clamp_gguf_ctx(
     *,
     size_bytes: int | None = None,
 ) -> int:
-    """Cap context for GGUFs whose weights barely fit (or do not fit) in VRAM."""
+    """Keep llama.cpp in a 32k window; --fit sizes KV into VRAM via CPU offload.
+
+    model_path and size_bytes are ignored. They remain so callers that passed
+    the GGUF size (the old 8k/16k weight caps) do not break.
+    """
+    del model_path, size_bytes
     try:
         ctx_n = int(ctx or 0)
     except (TypeError, ValueError):
         ctx_n = 0
-    if ctx_n < 256:
+    if ctx_n < 256 or ctx_n in _OLD_AUTO_CTX:
         ctx_n = DEFAULT_CTX
-    size = int(size_bytes) if size_bytes is not None else gguf_weight_bytes(model_path)
-    cap = DEFAULT_CTX
-    if size >= GGUF_HEAVY_BYTES:
-        cap = GGUF_HEAVY_CTX
-    elif size >= GGUF_MID_BYTES:
-        cap = GGUF_MID_CTX
-    return min(ctx_n, cap)
+    return min(ctx_n, DEFAULT_CTX)
 
 
 def llama_launch_flags(
@@ -189,7 +188,7 @@ def llama_launch_flags(
     n_gpu_layers: Any = -1,
     max_seq_len: Any = None,
 ) -> dict[str, Any]:
-    """Flags that keep llama-server from freezing a 12 GB / no-swap host."""
+    """Flags that keep llama-server from freezing a 12 GB host."""
     ctx = clamp_gguf_ctx(max_seq_len, model_path)
     return {
         "max_seq_len": ctx,
