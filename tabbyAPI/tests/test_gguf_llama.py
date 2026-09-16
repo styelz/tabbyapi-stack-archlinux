@@ -307,16 +307,15 @@ class LlamaRuntimeTests(unittest.TestCase):
         self.assertEqual(ngl_arg(12), "12")
         self.assertEqual(ngl_arg("nope"), "auto")
 
-    def test_clamp_gguf_ctx_keeps_32k_and_lifts_old_auto_caps(self):
+    def test_clamp_gguf_ctx_caps_heavy_and_mid_weights(self):
         from common.llama_runtime import clamp_gguf_ctx
 
-        self.assertEqual(clamp_gguf_ctx(32768, size_bytes=13 * 1024**3), 32768)
+        self.assertEqual(clamp_gguf_ctx(32768, size_bytes=13 * 1024**3), 16384)
         self.assertEqual(clamp_gguf_ctx(4096, size_bytes=13 * 1024**3), 4096)
-        self.assertEqual(clamp_gguf_ctx(32768, size_bytes=6 * 1024**3), 32768)
+        self.assertEqual(clamp_gguf_ctx(32768, size_bytes=6 * 1024**3), 16384)
         self.assertEqual(clamp_gguf_ctx(32768, size_bytes=3 * 1024**3), 32768)
-        self.assertEqual(clamp_gguf_ctx(128, size_bytes=13 * 1024**3), 32768)
-        self.assertEqual(clamp_gguf_ctx(8192, size_bytes=13 * 1024**3), 32768)
-        self.assertEqual(clamp_gguf_ctx(16384, size_bytes=6 * 1024**3), 32768)
+        self.assertEqual(clamp_gguf_ctx(128, size_bytes=13 * 1024**3), 16384)
+        self.assertEqual(clamp_gguf_ctx(8192, size_bytes=13 * 1024**3), 8192)
 
     def test_llama_launch_matches_restarts_when_ctx_was_uncapped(self):
         from common.llama_runtime import llama_launch_matches
@@ -341,6 +340,9 @@ class LlamaRuntimeTests(unittest.TestCase):
             "cache_k": "q8_0",
             "cache_v": "q8_0",
             "cache_ram": 0,
+            "batch": 512,
+            "ubatch": 256,
+            "kv_unified": "on",
         }
         self.assertFalse(llama_launch_matches(previous, runtime))
         self.assertTrue(llama_launch_matches(runtime, runtime))
@@ -359,8 +361,11 @@ class LlamaRuntimeTests(unittest.TestCase):
         self.assertEqual(args[args.index("--cache-type-k") + 1], "q8_0")
         self.assertEqual(args[args.index("--cache-type-v") + 1], "q8_0")
         self.assertEqual(args[args.index("--cache-ram") + 1], "0")
+        self.assertEqual(args[args.index("--batch-size") + 1], "512")
+        self.assertEqual(args[args.index("--ubatch-size") + 1], "256")
+        self.assertIn("--kv-unified", args)
 
-    def test_llama_argv_uses_32k_ctx_for_heavy_gguf(self):
+    def test_llama_argv_caps_ctx_for_heavy_gguf(self):
         from common import llama_runtime
 
         gguf = Path("/tmp/Qwen3.8-27B.gguf")
@@ -368,8 +373,8 @@ class LlamaRuntimeTests(unittest.TestCase):
             mock.patch.object(llama_runtime, "llama_server_bin", return_value=Path("/usr/bin/llama-server")),
             mock.patch.object(llama_runtime, "gguf_weight_bytes", return_value=13 * 1024**3),
         ):
-            args = llama_runtime.llama_argv(gguf, max_seq_len=8192)
-        self.assertEqual(args[args.index("-c") + 1], "32768")
+            args = llama_runtime.llama_argv(gguf, max_seq_len=32768)
+        self.assertEqual(args[args.index("-c") + 1], "16384")
 
     def test_guess_chat_template_for_coder_base_and_instruct(self):
         from common.llama_runtime import guess_llama_chat_template, is_gguf_base_name
@@ -618,11 +623,18 @@ class InstallerLlamaTests(unittest.TestCase):
         self.assertIn("--cache-ram", start.read_text(encoding="utf-8"))
         self.assertIn("LLAMA_PARALLEL:-1", start.read_text(encoding="utf-8"))
         self.assertIn("LLAMA_CACHE_RAM:-0", start.read_text(encoding="utf-8"))
+        self.assertIn("--batch-size", start.read_text(encoding="utf-8"))
+        self.assertIn("--kv-unified", start.read_text(encoding="utf-8"))
+        unit = (root / "deploy/arch/llamacpp.service").read_text(encoding="utf-8")
+        self.assertIn("MemoryMax=18G", unit)
+        self.assertIn("OOMScoreAdjust=800", unit)
         src = Path(__file__).resolve().parents[2] / "install.sh"
         text = src.read_text(encoding="utf-8")
         self.assertIn("ensure_tabby_swap()", text)
         self.assertIn("/swapfile", text)
         self.assertIn("vm.swappiness", text)
+        self.assertIn("ensure_earlyoom()", text)
+        self.assertIn("earlyoom", text)
 
     def test_wait_llama_healthy_fails_fast_when_process_dies(self):
         from common import llama_runtime

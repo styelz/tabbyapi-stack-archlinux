@@ -51,7 +51,8 @@ ARGS+=(-ngl "$ngl")
 # Exclusive GPU: one slot. llama.cpp --parallel auto opened 4x 32k KV on
 # qwen38guff, then spilled into --cache-ram (default 8 GiB) until the
 # 32 GB host locked. VRAM stayed ~85%. Disk swap is an OOM cushion only;
-# do not put the KV cache in RAM.
+# do not put the KV cache in RAM. Small batches keep CPU-offload graphs
+# from allocating a second huge arena during a long reply.
 ARGS+=(
   --parallel "${LLAMA_PARALLEL:-1}"
   --fit "${LLAMA_FIT:-on}"
@@ -60,7 +61,12 @@ ARGS+=(
   --cache-type-k "${LLAMA_CACHE_K:-q8_0}"
   --cache-type-v "${LLAMA_CACHE_V:-q8_0}"
   --cache-ram "${LLAMA_CACHE_RAM:-0}"
+  --batch-size "${LLAMA_BATCH:-512}"
+  --ubatch-size "${LLAMA_UBATCH:-256}"
 )
+if [[ "${LLAMA_KV_UNIFIED:-on}" != "off" && "${LLAMA_KV_UNIFIED:-on}" != "0" ]]; then
+  ARGS+=(--kv-unified)
+fi
 if [[ -n "${LLAMA_MMPROJ:-}" ]]; then
   ARGS+=(--mmproj "$LLAMA_MMPROJ")
 fi

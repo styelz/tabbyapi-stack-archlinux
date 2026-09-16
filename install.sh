@@ -1835,6 +1835,28 @@ _ensure_tabby_swappiness() {
   sudo -n sysctl -w vm.swappiness=10 >/dev/null 2>&1 || true
 }
 
+# Kill llama-server before anonymous+mmap growth freezes a 32 GB box.
+# Prefer llama over sshd / systemd so a GGUF leak does not take the host.
+ensure_earlyoom() {
+  echo "==> earlyoom (kill llama-server before the host locks)" >>"${INSTALL_LOG:-/dev/stderr}"
+  if ! sudo_n_ok; then
+    echo "    Skip earlyoom: sudo -n not available" >>"${INSTALL_LOG:-/dev/stderr}"
+    return 0
+  fi
+  if ! sudo -n pacman -S --needed --noconfirm earlyoom >>"${INSTALL_LOG:-/dev/null}" 2>&1; then
+    echo "    WARNING: could not install earlyoom" >>"${INSTALL_LOG:-/dev/stderr}"
+    return 0
+  fi
+  printf '%s\n' \
+    'EARLYOOM_ARGS="-m 10 -s 10 -r 30 --prefer '\''^(llama-server)$'\'' --avoid '\''^(sshd|systemd|login|bash)$'\''"' \
+    | sudo -n tee /etc/default/earlyoom >/dev/null
+  if sudo -n systemctl enable --now earlyoom >>"${INSTALL_LOG:-/dev/null}" 2>&1; then
+    echo "    earlyoom enabled" >>"${INSTALL_LOG:-/dev/stderr}"
+  else
+    echo "    WARNING: could not enable earlyoom" >>"${INSTALL_LOG:-/dev/stderr}"
+  fi
+}
+
 ensure_sudo() {
   if [[ "${EUID}" -eq 0 ]]; then
     echo "Do not run as root. Re-run as your user."
@@ -4252,6 +4274,7 @@ if [[ -f "$GPU_UNIT_SRC" ]]; then
 fi
 
 ensure_tabby_swap >>"$INSTALL_LOG" 2>&1 || true
+ensure_earlyoom >>"$INSTALL_LOG" 2>&1 || true
 
 if ! sudo -n loginctl enable-linger "$USER" >>"$INSTALL_LOG" 2>&1; then
   echo "WARNING: linger failed. Run: sudo loginctl enable-linger $USER" >> "$INSTALL_LOG"

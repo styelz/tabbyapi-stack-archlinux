@@ -20,19 +20,22 @@ LLAMA_ENV_NAME = "llama.env"
 LLAMA_RUNTIME_NAME = "llama_runtime.json"
 DEFAULT_LLAMA_PORT = 5002
 DEFAULT_CTX = 32768
-# 16 GB-class GGUFs on a 12 GB card: llama.cpp --parallel auto opened 4
-# slots of 32k F16 KV and spilled into --cache-ram (default 8 GiB). VRAM
-# stayed ~85% while host RAM + 0 swap froze the box during a long reply.
-# --fit + ngl auto already parks extra layers on CPU so 32k KV can occupy
-# the reserved VRAM. Keep cache-ram off; disk swap is only an OOM cushion.
+# 13 GB GGUF + 32k ctx on a 12 GB / 32 GB host: llama-server's cgroup was
+# already ~15 GiB idle (mmap + CPU layers). A 22k-token chat then wedged
+# the box mid-token with no OOM log. Cap heavy weights at 16k, keep
+# --cache-ram off, and let systemd MemoryMax / earlyoom kill llama first.
 DEFAULT_PARALLEL = 1
 DEFAULT_FIT = "on"
 DEFAULT_FIT_TARGET_MIB = 2048
 DEFAULT_CACHE_TYPE = "q8_0"
 DEFAULT_FLASH_ATTN = "on"
 DEFAULT_CACHE_RAM_MIB = 0
-# Profiles written while heavy GGUFs were hard-capped at 8k / 16k.
-_OLD_AUTO_CTX = frozenset({8192, 16384})
+DEFAULT_BATCH = 512
+DEFAULT_UBATCH = 256
+GGUF_HEAVY_BYTES = 8 * 1024 * 1024 * 1024
+GGUF_MID_BYTES = 5 * 1024 * 1024 * 1024
+GGUF_HEAVY_CTX = 16384
+GGUF_MID_CTX = 16384
 DUMMY_MODEL = "gpt-4o"
 LLAMA_ALIASES = {
     "llama": "llama",
@@ -167,19 +170,20 @@ def clamp_gguf_ctx(
     *,
     size_bytes: int | None = None,
 ) -> int:
-    """Keep llama.cpp in a 32k window; --fit sizes KV into VRAM via CPU offload.
-
-    model_path and size_bytes are ignored. They remain so callers that passed
-    the GGUF size (the old 8k/16k weight caps) do not break.
-    """
-    del model_path, size_bytes
+    """Cap context for GGUFs whose weights already spill into host RAM."""
     try:
         ctx_n = int(ctx or 0)
     except (TypeError, ValueError):
         ctx_n = 0
-    if ctx_n < 256 or ctx_n in _OLD_AUTO_CTX:
+    if ctx_n < 256:
         ctx_n = DEFAULT_CTX
-    return min(ctx_n, DEFAULT_CTX)
+    size = int(size_bytes) if size_bytes is not None else gguf_weight_bytes(model_path)
+    cap = DEFAULT_CTX
+    if size >= GGUF_HEAVY_BYTES:
+        cap = GGUF_HEAVY_CTX
+    elif size >= GGUF_MID_BYTES:
+        cap = GGUF_MID_CTX
+    return min(ctx_n, cap)
 
 
 def llama_launch_flags(
@@ -201,6 +205,9 @@ def llama_launch_flags(
         "cache_k": DEFAULT_CACHE_TYPE,
         "cache_v": DEFAULT_CACHE_TYPE,
         "cache_ram": DEFAULT_CACHE_RAM_MIB,
+        "batch": DEFAULT_BATCH,
+        "ubatch": DEFAULT_UBATCH,
+        "kv_unified": "on",
     }
 
 
@@ -227,6 +234,9 @@ def _launch_signature(data: dict[str, Any]) -> tuple[Any, ...]:
         int(data.get("cache_ram") if data.get("cache_ram") is not None else flags["cache_ram"]),
         str(data.get("flash_attn") or flags["flash_attn"]),
         str(data.get("fit") or flags["fit"]),
+        int(data.get("batch") if data.get("batch") is not None else flags["batch"]),
+        int(data.get("ubatch") if data.get("ubatch") is not None else flags["ubatch"]),
+        str(data.get("kv_unified") or flags["kv_unified"]),
     )
 
 
@@ -264,6 +274,9 @@ def write_llama_runtime(
         "cache_k": flags["cache_k"],
         "cache_v": flags["cache_v"],
         "cache_ram": flags["cache_ram"],
+        "batch": flags["batch"],
+        "ubatch": flags["ubatch"],
+        "kv_unified": flags["kv_unified"],
     }
     dest = llama_runtime_path()
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -284,6 +297,9 @@ def write_llama_runtime(
         f"LLAMA_CACHE_K={flags['cache_k']}",
         f"LLAMA_CACHE_V={flags['cache_v']}",
         f"LLAMA_CACHE_RAM={flags['cache_ram']}",
+        f"LLAMA_BATCH={flags['batch']}",
+        f"LLAMA_UBATCH={flags['ubatch']}",
+        f"LLAMA_KV_UNIFIED={flags['kv_unified']}",
     ]
     bin_path = llama_server_bin()
     if bin_path:
@@ -349,7 +365,13 @@ def llama_argv(
         flags["cache_v"],
         "--cache-ram",
         str(flags["cache_ram"]),
+        "--batch-size",
+        str(flags["batch"]),
+        "--ubatch-size",
+        str(flags["ubatch"]),
     ]
+    if str(flags["kv_unified"]).lower() in {"1", "on", "true", "yes"}:
+        args.append("--kv-unified")
     if mmproj:
         args.extend(["--mmproj", str(mmproj)])
     template = guess_llama_chat_template(model_path, chat_template)

@@ -11,6 +11,13 @@ RestartSec=5
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=llamacpp
+Nice=10
+OOMScoreAdjust=800
+OOMPolicy=kill
+MemoryAccounting=yes
+MemoryHigh=16G
+MemoryMax=18G
+MemorySwapMax=2G
 
 # Do not enable at boot. GPU is exclusive. Tabby starts this unit on
 # startup when gpu_mode.json is llama (last GGUF), or via a GGUF switch.
