@@ -134,13 +134,21 @@ def llm_forward_client() -> tuple[bool, Optional[httpx.AsyncClient]]:
 
 
 def _rewrite_llama_stream(result: StreamingResponse) -> StreamingResponse:
-    from sidecar.llama_adapter import rewrite_sse_line
+    from sidecar.llama_adapter import note_llama_sse_line, rewrite_sse_line
 
     upstream = result.body_iterator
+    request_id = f"llama:{id(result)}"
+    try:
+        from common.live_decode import note_prefill
+
+        note_prefill(request_id)
+    except Exception:
+        pass
 
     async def _rewrite():
         in_think = False
         state: dict = {}
+        tokens = 0
         try:
             async for chunk in upstream:
                 text = (
@@ -154,6 +162,7 @@ def _rewrite_llama_stream(result: StreamingResponse) -> StreamingResponse:
                         rewritten, in_think = rewrite_sse_line(
                             line.rstrip("\n"), in_think=in_think, state=state
                         )
+                        tokens = note_llama_sse_line(rewritten, request_id, tokens)
                         out_parts.append(
                             rewritten + ("\n" if line.endswith("\n") else "")
                         )
@@ -161,6 +170,12 @@ def _rewrite_llama_stream(result: StreamingResponse) -> StreamingResponse:
                         out_parts.append(line)
                 yield "".join(out_parts).encode("utf-8")
         finally:
+            try:
+                from common.live_decode import clear as clear_decode
+
+                clear_decode(request_id)
+            except Exception:
+                pass
             closer = getattr(upstream, "aclose", None)
             if closer is not None:
                 await closer()

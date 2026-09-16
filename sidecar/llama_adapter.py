@@ -469,3 +469,61 @@ def rewrite_sse_line(
     choices[0]["delta"] = delta
     event["choices"] = choices
     return "data: " + json.dumps(event), in_think
+
+
+def completion_tokens_from_sse_line(line: str, prev: int) -> int:
+    """Best token count from one llama.cpp SSE data line."""
+    raw = (line or "").strip()
+    if not raw.startswith("data:"):
+        return prev
+    data = raw[5:].strip()
+    if not data or data == "[DONE]":
+        return prev
+    try:
+        event = json.loads(data)
+    except ValueError:
+        return prev
+    if not isinstance(event, dict):
+        return prev
+    usage = event.get("usage")
+    if isinstance(usage, dict) and usage.get("completion_tokens") is not None:
+        try:
+            return max(prev, int(usage.get("completion_tokens") or 0))
+        except (TypeError, ValueError):
+            pass
+    timings = event.get("timings")
+    if isinstance(timings, dict) and timings.get("predicted_n") is not None:
+        try:
+            return max(prev, int(timings.get("predicted_n") or 0))
+        except (TypeError, ValueError):
+            pass
+    choices = event.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        return prev
+    choice = choices[0]
+    delta = choice.get("delta") if isinstance(choice.get("delta"), dict) else {}
+    message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
+    has_out = False
+    for blob in (delta, message):
+        if not blob:
+            continue
+        if blob.get("content") or blob.get("reasoning_content") or blob.get("tool_calls"):
+            has_out = True
+            break
+    if has_out:
+        return prev + 1
+    return prev
+
+
+def note_llama_sse_line(line: str, request_id: str, tokens: int) -> int:
+    """Push llama SSE progress into the kiosk live_decode counters."""
+    nxt = completion_tokens_from_sse_line(line, tokens)
+    if nxt == tokens:
+        return tokens
+    try:
+        from common.live_decode import note_decode
+
+        note_decode(request_id, nxt)
+    except Exception:
+        pass
+    return nxt

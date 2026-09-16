@@ -455,11 +455,23 @@ async def saver_state() -> dict[str, Any]:
     queue = stack_queue_snapshot("")
     ensure_gpu_cache()
     job = active_mcp_image_job()
+    decode = decode_snapshot()
+    if gpu_mode == "llama":
+        from common.llama_live import snapshot as llama_decode_snapshot
+
+        slots = llama_decode_snapshot()
+        slot_tokens = _int_ge0(slots.get("tokens"))
+        decode_tokens = _int_ge0(decode.get("tokens"))
+        if slots.get("busy") and (
+            slot_tokens > decode_tokens
+            or str(decode.get("stage") or "idle") not in {"prefill", "decode"}
+        ):
+            decode = slots
     weather = _compose_weather(
         switching=switching,
         restarting=restarting,
         queue=queue if isinstance(queue, dict) else {},
-        decode=decode_snapshot(),
+        decode=decode,
         job=job,
         flights=iter_live_flights(),
     )

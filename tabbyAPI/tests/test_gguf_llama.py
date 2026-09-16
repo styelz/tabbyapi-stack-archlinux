@@ -6,7 +6,12 @@ from unittest import mock
 
 from common.llama_runtime import ngl_arg
 from common.model import validate_backend
-from sidecar.llama_adapter import adapt_chat_payload, cut_at_stop, rewrite_sse_line
+from sidecar.llama_adapter import (
+    adapt_chat_payload,
+    completion_tokens_from_sse_line,
+    cut_at_stop,
+    rewrite_sse_line,
+)
 
 
 class FakeHF:
@@ -279,6 +284,25 @@ class LlamaAdapterTests(unittest.TestCase):
         self.assertEqual(delta["reasoning_content"], "plan")
         self.assertEqual(delta["content"], "hello")
         self.assertFalse(state.get("stopped"))
+
+    def test_completion_tokens_from_sse_counts_deltas_and_usage(self):
+        first = completion_tokens_from_sse_line(
+            'data: {"choices":[{"delta":{"content":"Hi"}}]}',
+            0,
+        )
+        self.assertEqual(first, 1)
+        used = completion_tokens_from_sse_line(
+            'data: {"choices":[{"delta":{}}],"usage":{"completion_tokens":40}}',
+            first,
+        )
+        self.assertEqual(used, 40)
+        timed = completion_tokens_from_sse_line(
+            'data: {"choices":[{"delta":{}}],"timings":{"predicted_n":41}}',
+            used,
+        )
+        self.assertEqual(timed, 41)
+        done = completion_tokens_from_sse_line("data: [DONE]", timed)
+        self.assertEqual(done, 41)
 
     def test_rewrite_sse_stop_inside_think_does_not_blank_later_content(self):
         state = {}
@@ -658,3 +682,75 @@ class InstallerLlamaTests(unittest.TestCase):
         ):
             self.assertFalse(llama_runtime._wait_llama_healthy(180))
         self.assertLess(clock["t"], 10)
+
+
+class LlamaLiveTests(unittest.TestCase):
+    def tearDown(self):
+        from common.llama_live import reset_for_tests
+
+        reset_for_tests()
+
+    def test_weather_from_slots_decode(self):
+        from common.llama_live import weather_from_slots
+
+        weather = weather_from_slots(
+            [
+                {
+                    "id": 0,
+                    "is_processing": True,
+                    "id_task": 181,
+                    "n_prompt_tokens": 23189,
+                    "n_prompt_tokens_processed": 23189,
+                    "next_token": [{"has_next_token": True, "n_decoded": 3546}],
+                }
+            ]
+        )
+        self.assertEqual(weather["stage"], "decode")
+        self.assertEqual(weather["tokens"], 3546)
+        self.assertTrue(weather["busy"])
+
+    def test_weather_from_slots_prefill(self):
+        from common.llama_live import weather_from_slots
+
+        weather = weather_from_slots(
+            [
+                {
+                    "is_processing": True,
+                    "n_prompt_tokens": 8000,
+                    "n_prompt_tokens_processed": 1200,
+                    "next_token": [{"has_next_token": True, "n_decoded": 0}],
+                }
+            ]
+        )
+        self.assertEqual(weather["stage"], "prefill")
+        self.assertEqual(weather["tokens"], 0)
+
+    def test_weather_from_slots_idle(self):
+        from common.llama_live import weather_from_slots
+
+        self.assertEqual(weather_from_slots([{"is_processing": False}])["stage"], "idle")
+
+    def test_snapshot_accumulates_run_across_tasks(self):
+        from common import llama_live
+
+        first = {
+            "busy": True,
+            "tokens": 40,
+            "run_tokens": 40,
+            "stage": "decode",
+            "task_id": 1,
+        }
+        second = {
+            "busy": True,
+            "tokens": 15,
+            "run_tokens": 15,
+            "stage": "decode",
+            "task_id": 2,
+        }
+        with mock.patch.object(llama_live, "_fetch_slots", return_value=["x"]):
+            with mock.patch.object(llama_live, "weather_from_slots", return_value=first):
+                self.assertEqual(llama_live.snapshot()["run_tokens"], 40)
+            with mock.patch.object(llama_live, "weather_from_slots", return_value=second):
+                out = llama_live.snapshot()
+                self.assertEqual(out["tokens"], 15)
+                self.assertEqual(out["run_tokens"], 55)

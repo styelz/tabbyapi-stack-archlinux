@@ -332,6 +332,7 @@ class SaverSanitizeTests(unittest.IsolatedAsyncioTestCase):
             mock.patch("ui.manager.cached_nvidia_stats", return_value={}),
             mock.patch("ui.manager.ensure_gpu_cache"),
             mock.patch("common.live_decode.snapshot", return_value={"tokens": 0, "stage": "idle"}),
+            mock.patch("common.llama_live.snapshot", return_value={"busy": False, "tokens": 0, "stage": "idle"}),
             mock.patch("images.jobs.active_mcp_image_job", return_value=None),
             mock.patch("ui.flight.iter_live_flights", return_value=[]),
             mock.patch("common.phrase_switch.switch_lock_held", return_value=False),
@@ -349,6 +350,35 @@ class SaverSanitizeTests(unittest.IsolatedAsyncioTestCase):
             payload = await saver.saver_state()
         self.assertEqual(payload["gpu_mode"], "llama")
         self.assertEqual(payload["profile"], "dsc67b")
+
+    async def test_saver_state_llama_slots_fill_token_hud(self):
+        snap = mock.Mock(return_value={"busy": True, "kind": "code", "live": True})
+        slots = {"busy": True, "tokens": 3546, "run_tokens": 3546, "stage": "decode"}
+        with (
+            mock.patch("ui.occupancy.snapshot", snap),
+            mock.patch("ui.manager.cached_nvidia_stats", return_value={}),
+            mock.patch("ui.manager.ensure_gpu_cache"),
+            mock.patch("common.live_decode.snapshot", return_value={"tokens": 0, "stage": "prefill"}),
+            mock.patch("common.llama_live.snapshot", return_value=slots),
+            mock.patch("images.jobs.active_mcp_image_job", return_value=None),
+            mock.patch("ui.flight.iter_live_flights", return_value=[]),
+            mock.patch("common.phrase_switch.switch_lock_held", return_value=False),
+            mock.patch("common.phrase_switch.switch_lock_name", return_value=""),
+            mock.patch("common.gpu_mode.read_mode", return_value={"mode": "llama", "profile": "llama"}),
+            mock.patch("common.gpu_mode.llama_up", return_value=True),
+            mock.patch("common.phrase_switch.llama_up", return_value=True),
+            mock.patch("common.gpu_mode.comfy_up", return_value=False),
+            mock.patch("images.jobs.loaded_tabby_name", return_value=None),
+            mock.patch("common.phrase_switch.profile_alias_for_model", return_value=None),
+            mock.patch("common.phrase_switch.last_llm_profile_name", return_value="llama"),
+            mock.patch("select_model.last_llama_profile", return_value="llama"),
+            mock.patch("select_model.last_profile", return_value="llama"),
+        ):
+            payload = await saver.saver_state()
+        self.assertEqual(payload["gpu_mode"], "llama")
+        self.assertEqual(payload["stage"], "decode")
+        self.assertEqual(payload["tokens"], 3546)
+        self.assertEqual(payload["run_tokens"], 3546)
 
     async def test_saver_state_unloaded_llama_is_idle(self):
         snap = mock.Mock(return_value={"busy": False, "kind": None, "live": False})
