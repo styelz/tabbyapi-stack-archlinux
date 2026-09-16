@@ -5127,6 +5127,12 @@ figure.shot .open { display: block; }
   max-height: 1.75rem;
   padding: 0.2rem 0.375rem;
   font-variant-numeric: tabular-nums;
+  appearance: textfield;
+}
+.models-ctx input::-webkit-outer-spin-button,
+.models-ctx input::-webkit-inner-spin-button {
+  appearance: none;
+  margin: 0;
 }
 .models-badge {
   display: inline-flex;

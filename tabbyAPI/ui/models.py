@@ -864,6 +864,7 @@ def library_llms(paths: ModelPaths | None = None, loaded: str | None = None) -> 
         if dest.startswith("tabby/models/"):
             catalog_folders[Path(dest).name] = str(item_id)
     rows = []
+    shared_ctx = shared_context_len(p)
     if not p.models_dir.is_dir():
         return rows
     try:
@@ -891,7 +892,7 @@ def library_llms(paths: ModelPaths | None = None, loaded: str | None = None) -> 
                 "loaded": (not embed) and loaded == child.name,
                 "catalog_id": catalog_folders.get(child.name),
                 "local_profile": bool(entry.get("local")),
-                "max_seq_len": entry.get("max_seq_len"),
+                "max_seq_len": shared_ctx or entry.get("max_seq_len"),
             }
         )
     return rows
@@ -1658,24 +1659,36 @@ def _write_profile_pretty(alias: str, pretty: str, folder: str, paths: ModelPath
     reset_profile_map_cache()
 
 
-def _last_profile_name(paths: ModelPaths) -> str:
-    last_path = paths.profiles_dir / "last.json"
-    try:
-        data = json.loads(last_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, TypeError):
-        return ""
-    if not isinstance(data, dict):
-        return ""
-    return str(data.get("profile") or "").strip()
-
-
-def _sync_config_context(alias: str, seq: int, model_cfg: dict, paths: ModelPaths) -> None:
-    if _last_profile_name(paths) != alias:
-        return
+def _gguf_backend(model_cfg: dict | None) -> bool:
     backend = str((model_cfg or {}).get("backend") or "").lower()
-    if backend in {"llamacpp", "llama", "llama.cpp", "gguf"}:
-        return
-    config_path = Path(paths.root) / "config.yml"
+    return backend in {"llamacpp", "llama", "llama.cpp", "gguf"}
+
+
+def _config_path(paths: ModelPaths) -> Path:
+    return Path(paths.root) / "config.yml"
+
+
+def shared_context_len(paths: ModelPaths | None = None) -> int | None:
+    p = paths or default_paths()
+    config_path = _config_path(p)
+    if not config_path.is_file():
+        return None
+    from select_model import load_yaml
+
+    try:
+        _yaml, config = load_yaml(config_path)
+    except (OSError, Exception):
+        return None
+    if not isinstance(config, dict):
+        return None
+    section = config.get("model")
+    if not isinstance(section, dict):
+        return None
+    return optional_seq_len(section.get("cache_size") or section.get("max_seq_len"))
+
+
+def _write_config_context(seq: int, paths: ModelPaths) -> None:
+    config_path = _config_path(paths)
     if not config_path.is_file():
         return
     from select_model import load_yaml, save_yaml
@@ -1690,6 +1703,30 @@ def _sync_config_context(alias: str, seq: int, model_cfg: dict, paths: ModelPath
     section["max_seq_len"] = seq
     section["cache_size"] = seq
     save_yaml(yaml, config, config_path)
+
+
+def _write_profile_context(src: Path, seq: int) -> None:
+    data = _load_profile_yaml(src) if src.is_file() else {}
+    if not data:
+        return
+    model_cfg = data.get("model")
+    if not isinstance(model_cfg, dict):
+        model_cfg = {}
+        data["model"] = model_cfg
+    model_cfg["max_seq_len"] = seq
+    if not _gguf_backend(model_cfg):
+        model_cfg["cache_size"] = seq
+    _write_profile_yaml(src, data)
+
+
+def write_shared_context(seq: int, paths: ModelPaths | None = None) -> int:
+    p = paths or default_paths()
+    parsed = parse_seq_len(seq)
+    _write_config_context(parsed, p)
+    if p.profiles_dir.is_dir():
+        for src in sorted(p.profiles_dir.glob("*.yml")):
+            _write_profile_context(src, parsed)
+    return parsed
 
 
 def set_profile_context(body: dict, paths: ModelPaths | None = None) -> dict:
@@ -1726,14 +1763,10 @@ def set_profile_context(body: dict, paths: ModelPaths | None = None) -> dict:
     if not isinstance(model_cfg, dict):
         model_cfg = {}
         data["model"] = model_cfg
-    model_cfg["max_seq_len"] = seq
-    backend = str(model_cfg.get("backend") or "").lower()
-    if backend not in {"llamacpp", "llama", "llama.cpp", "gguf"}:
-        model_cfg["cache_size"] = seq
     if folder:
         model_cfg.setdefault("model_name", folder)
     _write_profile_yaml(src, data)
-    _sync_config_context(existing, seq, model_cfg, p)
+    write_shared_context(seq, p)
     from common.phrase_switch import reset_profile_map_cache
 
     reset_profile_map_cache()

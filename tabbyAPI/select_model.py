@@ -536,6 +536,12 @@ def apply_profile(name: str):
         return profile
 
     yaml, config = load_yaml(CONFIG_PATH)
+    model_section = config.get("model") if isinstance(config.get("model"), dict) else {}
+    keep_context = {
+        key: model_section[key]
+        for key in ("max_seq_len", "cache_size")
+        if key in model_section
+    }
 
     pretty = profile.pop("pretty", name)
     for key in list(profile):
@@ -552,6 +558,16 @@ def apply_profile(name: str):
             config[section] = {}
         for key, value in values.items():
             config[section][key] = value
+    if keep_context:
+        section = config.get("model")
+        if not isinstance(section, dict):
+            config["model"] = {}
+            section = config["model"]
+        for key in ("max_seq_len", "cache_size"):
+            if key in keep_context:
+                section[key] = keep_context[key]
+            else:
+                section.pop(key, None)
 
     save_yaml(yaml, config, CONFIG_PATH)
     write_last(name)

@@ -298,6 +298,24 @@ class LibraryAndDeleteTests(unittest.TestCase):
             data = library_state(paths, loaded="")
             self.assertEqual(data["llms"][0]["max_seq_len"], 32768)
 
+    def test_library_prefers_settings_context(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            paths = _paths(root)
+            _llm_folder(paths.models_dir, "Qwen3.5-9B-exl3-4.00bpw")
+            (paths.profiles_dir / "qwen.yml").write_text(
+                "pretty: Qwen 9B\nmodel:\n  model_name: Qwen3.5-9B-exl3-4.00bpw\n"
+                "  max_seq_len: 262144\n  cache_size: 262144\n",
+                encoding="utf-8",
+            )
+            (root / "config.yml").write_text(
+                "model:\n  model_name: Qwen3.5-9B-exl3-4.00bpw\n"
+                "  max_seq_len: 32768\n  cache_size: 32768\n",
+                encoding="utf-8",
+            )
+            data = library_state(paths, loaded="")
+            self.assertEqual(data["llms"][0]["max_seq_len"], 32768)
+
     def test_set_profile_context_writes_exl_and_gguf(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -334,12 +352,13 @@ class LibraryAndDeleteTests(unittest.TestCase):
                 )
             self.assertEqual(exl["max_seq_len"], 32768)
             self.assertEqual(exl["alias"], "qwen")
-            saved = (paths.profiles_dir / "qwen.yml").read_text(encoding="utf-8")
-            self.assertIn("max_seq_len: 32768", saved)
-            self.assertIn("cache_size: 32768", saved)
-            cfg = (root / "config.yml").read_text(encoding="utf-8")
-            self.assertIn("max_seq_len: 32768", cfg)
             self.assertEqual(gguf["max_seq_len"], 65536)
+            saved = (paths.profiles_dir / "qwen.yml").read_text(encoding="utf-8")
+            self.assertIn("max_seq_len: 65536", saved)
+            self.assertIn("cache_size: 65536", saved)
+            cfg = (root / "config.yml").read_text(encoding="utf-8")
+            self.assertIn("max_seq_len: 65536", cfg)
+            self.assertIn("cache_size: 65536", cfg)
             gguf_yml = (paths.profiles_dir / "biggguf.yml").read_text(encoding="utf-8")
             self.assertIn("max_seq_len: 65536", gguf_yml)
             self.assertNotIn("cache_size:", gguf_yml)
@@ -1013,6 +1032,9 @@ class ModelsJsTests(unittest.TestCase):
         self.assertIn("function contextField", text)
         self.assertIn("models/context", text)
         self.assertIn("data-ctx-folder", text)
+        self.assertIn('type="text"', text)
+        self.assertIn('autocomplete="off"', text)
+        self.assertIn("tabby-context-tokens", text)
 
 
 if __name__ == "__main__":

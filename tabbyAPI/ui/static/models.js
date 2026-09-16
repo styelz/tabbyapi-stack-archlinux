@@ -254,7 +254,7 @@ function mountModels(root) {
     const value = Number.isFinite(seq) && seq > 0 ? String(Math.round(seq)) : "";
     return `<div class="models-ctx">
       <span>Context</span>
-      <input type="number" min="256" step="256" inputmode="numeric" placeholder="32768" aria-label="Context window in tokens" title="Context window in tokens" value="${TabbyUI.escapeHtml(value)}" data-ctx-folder="${TabbyUI.escapeHtml(row.folder || row.id)}" data-ctx-profile="${TabbyUI.escapeHtml(row.profile || "")}" data-ctx-current="${TabbyUI.escapeHtml(value)}" />
+      <input type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore="true" data-lpignore="true" data-form-type="other" name="tabby-context-tokens" placeholder="32768" aria-label="Context window in tokens" title="Context window in tokens. Same value as Settings → model." value="${TabbyUI.escapeHtml(value)}" data-ctx-folder="${TabbyUI.escapeHtml(row.folder || row.id)}" data-ctx-profile="${TabbyUI.escapeHtml(row.profile || "")}" data-ctx-current="${TabbyUI.escapeHtml(value)}" />
     </div>`;
   }
 
@@ -583,8 +583,10 @@ function mountModels(root) {
         body: { folder, profile, max_seq_len: Number(next) },
       });
       const saved = data && data.max_seq_len != null ? String(data.max_seq_len) : next;
-      input.value = saved;
-      input.setAttribute("data-ctx-current", saved);
+      libBody.querySelectorAll("input[data-ctx-folder]").forEach((el) => {
+        el.value = saved;
+        el.setAttribute("data-ctx-current", saved);
+      });
       if (data && data.profile) input.setAttribute("data-ctx-profile", data.profile);
       else if (data && data.alias) input.setAttribute("data-ctx-profile", data.alias);
       showOk(
