@@ -5117,22 +5117,16 @@ figure.shot .open { display: block; }
   color: var(--muted);
   white-space: nowrap;
 }
-.models-ctx input {
-  width: 5.75rem;
-  flex: 0 0 5.75rem;
+.models-ctx select {
+  width: 5.25rem;
+  flex: 0 0 5.25rem;
   min-width: 0;
   max-width: 100%;
   height: 1.75rem;
   min-height: 1.75rem;
   max-height: 1.75rem;
-  padding: 0.2rem 0.375rem;
+  padding: 0.15rem 0.25rem;
   font-variant-numeric: tabular-nums;
-  appearance: textfield;
-}
-.models-ctx input::-webkit-outer-spin-button,
-.models-ctx input::-webkit-inner-spin-button {
-  appearance: none;
-  margin: 0;
 }
 .models-badge {
   display: inline-flex;

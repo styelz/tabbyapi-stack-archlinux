@@ -189,40 +189,6 @@ class ReadyFolderTests(unittest.TestCase):
             self.assertIn("cache_size: 32768", yml)
             self.assertIn("max_seq_len: 32768", yml)
 
-    def test_apply_profile_keeps_settings_context(self):
-        with tempfile.TemporaryDirectory() as raw:
-            root = Path(raw)
-            profiles = root / "model_profiles"
-            models = root / "models" / "Qwen3.8-27B-exl3-SC_3.00bpw"
-            profiles.mkdir()
-            models.mkdir(parents=True)
-            (models / "config.json").write_text("{}", encoding="utf-8")
-            (profiles / "qwen38.yml").write_text(
-                "pretty: Qwen 27B\nmodel:\n  model_name: Qwen3.8-27B-exl3-SC_3.00bpw\n"
-                "  max_seq_len: 262144\n  cache_size: 262144\n  autosplit_reserve: [384]\n",
-                encoding="utf-8",
-            )
-            config = root / "config.yml"
-            config.write_text(
-                "model:\n  model_name: other\n  max_seq_len: 32768\n  cache_size: 32768\n",
-                encoding="utf-8",
-            )
-            with (
-                mock.patch.object(select_model, "ROOT", root),
-                mock.patch.object(select_model, "PROFILES_DIR", profiles),
-                mock.patch.object(select_model, "CONFIG_PATH", config),
-                mock.patch.object(select_model, "LAST_PATH", profiles / "last.json"),
-                mock.patch(
-                    "common.switch_times.detect_gpu",
-                    return_value={"vram_mib": 12288, "label": "12 GB"},
-                ),
-            ):
-                select_model.apply_profile("qwen38")
-            saved = config.read_text(encoding="utf-8")
-            self.assertIn("cache_size: 32768", saved)
-            self.assertIn("max_seq_len: 32768", saved)
-            self.assertNotIn("262144", saved)
-
 
 class GgufProfileTests(unittest.TestCase):
     def test_folder_ready_with_gguf_file(self):

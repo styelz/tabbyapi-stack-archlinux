@@ -382,8 +382,7 @@ def tabby_schema() -> list[dict[str, Any]]:
         if name == "model":
             description = (
                 f"{description} A profile switch overwrites load keys "
-                "(tool_format, reasoning). Context and cache stay in sync "
-                "with the Models page."
+                "(context, cache, tool_format, reasoning)."
             ).strip()
         sections.append(
             {
@@ -722,21 +721,6 @@ def _apply_tabby(updates: dict[str, dict[str, Any]]) -> None:
             for key, value in (row or {}).items():
                 data[section][key] = value
     _atomic_yaml(yaml, data)
-
-
-def _sync_model_context(tabby: dict[str, Any]) -> None:
-    model = tabby.get("model")
-    if not isinstance(model, dict):
-        return
-    from ui.models import ModelPaths, optional_seq_len, write_shared_context
-
-    seq = optional_seq_len(model.get("cache_size") or model.get("max_seq_len"))
-    if seq is None:
-        return
-    write_shared_context(
-        seq,
-        ModelPaths(root=CONFIG_PATH.parent, profiles_dir=CONFIG_PATH.parent / "model_profiles"),
-    )
 
 
 def _reload_live() -> None:
@@ -1232,7 +1216,6 @@ def save_settings(body: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(tabby, dict):
             raise SettingsError("tabby must be an object")
         _apply_tabby(tabby)
-        _sync_model_context(tabby)
     if system is not None:
         if not isinstance(system, dict):
             raise SettingsError("system must be an object")

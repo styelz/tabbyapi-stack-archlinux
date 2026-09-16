@@ -80,6 +80,7 @@ function mountModels(root) {
   let hfAlias = "";
   let hfPretty = "";
   let repoSeq = 0;
+  let contextChoices = [];
   const JOB_DONE_TTL_MS = 90 * 1000;
   const JOB_DONE_HIDE_MS = 8 * 1000;
   const JOB_DISMISS_KEY = "tabby-models-dismissed-job";
@@ -248,13 +249,35 @@ function mountModels(root) {
     return rows;
   }
 
+  function contextLabel(raw) {
+    const n = Number(raw);
+    if (Number.isInteger(n) && n > 0 && n % 1024 === 0) return `${n / 1024}k`;
+    return String(raw);
+  }
+
   function contextField(row) {
     if (row.kind !== "llm" || !row.installed || row.partial) return "";
     const seq = Number(row.max_seq_len);
     const value = Number.isFinite(seq) && seq > 0 ? String(Math.round(seq)) : "";
+    const seen = new Set();
+    const choices = [];
+    const add = (item) => {
+      const key = String(item);
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      choices.push(key);
+    };
+    if (value) add(value);
+    (contextChoices || []).forEach(add);
+    const opts = choices
+      .map((item) => {
+        const picked = item === value ? " selected" : "";
+        return `<option value="${TabbyUI.escapeHtml(item)}"${picked}>${TabbyUI.escapeHtml(contextLabel(item))}</option>`;
+      })
+      .join("");
     return `<div class="models-ctx">
       <span>Context</span>
-      <input type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore="true" data-lpignore="true" data-form-type="other" name="tabby-context-tokens" placeholder="32768" aria-label="Context window in tokens" title="Context window in tokens. Same value as Settings → model." value="${TabbyUI.escapeHtml(value)}" data-ctx-folder="${TabbyUI.escapeHtml(row.folder || row.id)}" data-ctx-profile="${TabbyUI.escapeHtml(row.profile || "")}" data-ctx-current="${TabbyUI.escapeHtml(value)}" />
+      <select autocomplete="off" aria-label="Context window in tokens" title="Context window for this model" data-ctx-folder="${TabbyUI.escapeHtml(row.folder || row.id)}" data-ctx-profile="${TabbyUI.escapeHtml(row.profile || "")}" data-ctx-current="${TabbyUI.escapeHtml(value)}">${opts}</select>
     </div>`;
   }
 
@@ -272,6 +295,9 @@ function mountModels(root) {
     tokenHint.textContent = data.has_token
       ? ""
       : "Set a Hugging Face token in Settings for gated repos.";
+    contextChoices = Array.isArray(data.context_choices) && data.context_choices.length
+      ? data.context_choices
+      : [];
     const rows = libraryRows(data);
     libEmpty.hidden = rows.length > 0;
     const rowHtml = (row) => {
@@ -583,10 +609,8 @@ function mountModels(root) {
         body: { folder, profile, max_seq_len: Number(next) },
       });
       const saved = data && data.max_seq_len != null ? String(data.max_seq_len) : next;
-      libBody.querySelectorAll("input[data-ctx-folder]").forEach((el) => {
-        el.value = saved;
-        el.setAttribute("data-ctx-current", saved);
-      });
+      input.value = saved;
+      input.setAttribute("data-ctx-current", saved);
       if (data && data.profile) input.setAttribute("data-ctx-profile", data.profile);
       else if (data && data.alias) input.setAttribute("data-ctx-profile", data.alias);
       showOk(
@@ -600,7 +624,7 @@ function mountModels(root) {
   }
 
   libBody.addEventListener("change", async (event) => {
-    const input = event.target.closest("input[data-ctx-folder]");
+    const input = event.target.closest("[data-ctx-folder]");
     if (!input) return;
     try {
       await saveContext(input);
@@ -611,7 +635,7 @@ function mountModels(root) {
   });
 
   libBody.addEventListener("keydown", (event) => {
-    const input = event.target.closest("input[data-ctx-folder]");
+    const input = event.target.closest("[data-ctx-folder]");
     if (!input) return;
     if (event.key === "Enter") {
       event.preventDefault();

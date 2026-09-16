@@ -86,39 +86,6 @@ class SettingsJsTests(unittest.TestCase):
         self.assertIn("contextLabel", src)
 
 
-class SharedContextSyncTests(unittest.TestCase):
-    def test_save_settings_writes_profiles(self):
-        import tempfile
-
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            config = root / "config.yml"
-            profiles = root / "model_profiles"
-            profiles.mkdir()
-            config.write_text(
-                "model:\n  model_name: Qwen\n  max_seq_len: 8192\n  cache_size: 8192\n",
-                encoding="utf-8",
-            )
-            (profiles / "qwen.yml").write_text(
-                "pretty: Qwen\nmodel:\n  model_name: Qwen\n  max_seq_len: 8192\n  cache_size: 8192\n",
-                encoding="utf-8",
-            )
-            with mock.patch.object(settings, "CONFIG_PATH", config):
-                with mock.patch.object(settings, "_reload_live"):
-                    with mock.patch.object(
-                        settings,
-                        "load_settings",
-                        return_value={"ok": True, "tabby": [], "restart_hint": "hint"},
-                    ):
-                        settings.save_settings(
-                            {"tabby": {"model": {"max_seq_len": 32768, "cache_size": 32768}}}
-                        )
-            self.assertIn("max_seq_len: 32768", config.read_text(encoding="utf-8"))
-            yml = (profiles / "qwen.yml").read_text(encoding="utf-8")
-            self.assertIn("max_seq_len: 32768", yml)
-            self.assertIn("cache_size: 32768", yml)
-
-
 class ContextLenChoicesTests(unittest.TestCase):
     def test_model_context_fields_use_8k_steps(self):
         steps = list(range(8192, 262144 + 1, 8192))
