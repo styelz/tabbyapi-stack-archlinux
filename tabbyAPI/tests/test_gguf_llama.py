@@ -307,6 +307,68 @@ class LlamaRuntimeTests(unittest.TestCase):
         self.assertEqual(ngl_arg(12), "12")
         self.assertEqual(ngl_arg("nope"), "auto")
 
+    def test_clamp_gguf_ctx_caps_heavy_and_mid_weights(self):
+        from common.llama_runtime import clamp_gguf_ctx
+
+        self.assertEqual(clamp_gguf_ctx(32768, size_bytes=13 * 1024**3), 8192)
+        self.assertEqual(clamp_gguf_ctx(4096, size_bytes=13 * 1024**3), 4096)
+        self.assertEqual(clamp_gguf_ctx(32768, size_bytes=6 * 1024**3), 16384)
+        self.assertEqual(clamp_gguf_ctx(32768, size_bytes=3 * 1024**3), 32768)
+        self.assertEqual(clamp_gguf_ctx(128, size_bytes=13 * 1024**3), 8192)
+
+    def test_llama_launch_matches_restarts_when_ctx_was_uncapped(self):
+        from common.llama_runtime import llama_launch_matches
+
+        previous = {
+            "model": "/models/big.gguf",
+            "max_seq_len": 32768,
+            "chat_template": "",
+            "mmproj": "",
+            "n_gpu_layers": -1,
+        }
+        runtime = {
+            "model": "/models/big.gguf",
+            "max_seq_len": 8192,
+            "chat_template": "",
+            "mmproj": "",
+            "n_gpu_layers": -1,
+            "parallel": 1,
+            "fit": "on",
+            "fit_target": 2048,
+            "flash_attn": "on",
+            "cache_k": "q8_0",
+            "cache_v": "q8_0",
+            "cache_ram": 0,
+        }
+        self.assertFalse(llama_launch_matches(previous, runtime))
+        self.assertTrue(llama_launch_matches(runtime, runtime))
+        self.assertFalse(llama_launch_matches({}, runtime))
+
+    def test_llama_argv_uses_one_slot_and_vram_headroom(self):
+        from common import llama_runtime
+
+        gguf = Path("/tmp/Qwen3.8-27B.gguf")
+        with mock.patch.object(llama_runtime, "llama_server_bin", return_value=Path("/usr/bin/llama-server")):
+            args = llama_runtime.llama_argv(gguf, max_seq_len=32768)
+        self.assertEqual(args[args.index("--parallel") + 1], "1")
+        self.assertEqual(args[args.index("--fit") + 1], "on")
+        self.assertEqual(args[args.index("--fit-target") + 1], "2048")
+        self.assertEqual(args[args.index("--flash-attn") + 1], "on")
+        self.assertEqual(args[args.index("--cache-type-k") + 1], "q8_0")
+        self.assertEqual(args[args.index("--cache-type-v") + 1], "q8_0")
+        self.assertEqual(args[args.index("--cache-ram") + 1], "0")
+
+    def test_llama_argv_caps_ctx_for_heavy_gguf(self):
+        from common import llama_runtime
+
+        gguf = Path("/tmp/Qwen3.8-27B.gguf")
+        with (
+            mock.patch.object(llama_runtime, "llama_server_bin", return_value=Path("/usr/bin/llama-server")),
+            mock.patch.object(llama_runtime, "gguf_weight_bytes", return_value=13 * 1024**3),
+        ):
+            args = llama_runtime.llama_argv(gguf, max_seq_len=32768)
+        self.assertEqual(args[args.index("-c") + 1], "8192")
+
     def test_guess_chat_template_for_coder_base_and_instruct(self):
         from common.llama_runtime import guess_llama_chat_template, is_gguf_base_name
 
@@ -549,6 +611,11 @@ class InstallerLlamaTests(unittest.TestCase):
         self.assertIn('ngl=auto', start.read_text(encoding="utf-8"))
         self.assertIn("LLAMA_CHAT_TEMPLATE", start.read_text(encoding="utf-8"))
         self.assertIn("--chat-template", start.read_text(encoding="utf-8"))
+        self.assertIn("--parallel", start.read_text(encoding="utf-8"))
+        self.assertIn("--fit-target", start.read_text(encoding="utf-8"))
+        self.assertIn("--cache-ram", start.read_text(encoding="utf-8"))
+        self.assertIn("LLAMA_PARALLEL:-1", start.read_text(encoding="utf-8"))
+        self.assertIn("LLAMA_CACHE_RAM:-0", start.read_text(encoding="utf-8"))
 
     def test_wait_llama_healthy_fails_fast_when_process_dies(self):
         from common import llama_runtime

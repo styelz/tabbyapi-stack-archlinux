@@ -20,6 +20,19 @@ LLAMA_ENV_NAME = "llama.env"
 LLAMA_RUNTIME_NAME = "llama_runtime.json"
 DEFAULT_LLAMA_PORT = 5002
 DEFAULT_CTX = 32768
+# 16 GB-class GGUFs on a 12 GB card: llama.cpp --parallel auto opened 4
+# slots of 32k F16 KV and spilled into --cache-ram (default 8 GiB). VRAM
+# stayed ~85% while host RAM + 0 swap froze the box during a long reply.
+DEFAULT_PARALLEL = 1
+DEFAULT_FIT = "on"
+DEFAULT_FIT_TARGET_MIB = 2048
+DEFAULT_CACHE_TYPE = "q8_0"
+DEFAULT_FLASH_ATTN = "on"
+DEFAULT_CACHE_RAM_MIB = 0
+GGUF_HEAVY_BYTES = 8 * 1024 * 1024 * 1024
+GGUF_MID_BYTES = 5 * 1024 * 1024 * 1024
+GGUF_HEAVY_CTX = 8192
+GGUF_MID_CTX = 16384
 DUMMY_MODEL = "gpt-4o"
 LLAMA_ALIASES = {
     "llama": "llama",
@@ -128,6 +141,102 @@ def ngl_arg(n_gpu_layers: Any) -> str:
     return str(value)
 
 
+def gguf_weight_bytes(model_path: Path | str | None) -> int:
+    """Size of the GGUF weights file, or the largest non-mmproj GGUF in a folder."""
+    if not model_path:
+        return 0
+    path = Path(model_path)
+    try:
+        if path.is_file():
+            return int(path.stat().st_size)
+        if not path.is_dir():
+            return 0
+        sizes = [
+            int(item.stat().st_size)
+            for item in path.glob("*.gguf")
+            if item.is_file() and "mmproj" not in item.name.lower()
+        ]
+        return max(sizes) if sizes else 0
+    except OSError:
+        return 0
+
+
+def clamp_gguf_ctx(
+    ctx: Any,
+    model_path: Path | str | None = None,
+    *,
+    size_bytes: int | None = None,
+) -> int:
+    """Cap context for GGUFs whose weights barely fit (or do not fit) in VRAM."""
+    try:
+        ctx_n = int(ctx or 0)
+    except (TypeError, ValueError):
+        ctx_n = 0
+    if ctx_n < 256:
+        ctx_n = DEFAULT_CTX
+    size = int(size_bytes) if size_bytes is not None else gguf_weight_bytes(model_path)
+    cap = DEFAULT_CTX
+    if size >= GGUF_HEAVY_BYTES:
+        cap = GGUF_HEAVY_CTX
+    elif size >= GGUF_MID_BYTES:
+        cap = GGUF_MID_CTX
+    return min(ctx_n, cap)
+
+
+def llama_launch_flags(
+    model_path: Path | str,
+    *,
+    n_gpu_layers: Any = -1,
+    max_seq_len: Any = None,
+) -> dict[str, Any]:
+    """Flags that keep llama-server from freezing a 12 GB / no-swap host."""
+    ctx = clamp_gguf_ctx(max_seq_len, model_path)
+    return {
+        "max_seq_len": ctx,
+        "n_gpu_layers": n_gpu_layers,
+        "ngl": ngl_arg(n_gpu_layers),
+        "parallel": DEFAULT_PARALLEL,
+        "fit": DEFAULT_FIT,
+        "fit_target": DEFAULT_FIT_TARGET_MIB,
+        "flash_attn": DEFAULT_FLASH_ATTN,
+        "cache_k": DEFAULT_CACHE_TYPE,
+        "cache_v": DEFAULT_CACHE_TYPE,
+        "cache_ram": DEFAULT_CACHE_RAM_MIB,
+    }
+
+
+def _launch_signature(data: dict[str, Any]) -> tuple[Any, ...]:
+    flags = llama_launch_flags(
+        str(data.get("model") or ""),
+        n_gpu_layers=data.get("n_gpu_layers", -1),
+        max_seq_len=data.get("max_seq_len"),
+    )
+    try:
+        model = str(Path(str(data.get("model") or "")).resolve())
+    except OSError:
+        model = str(data.get("model") or "")
+    return (
+        model,
+        str(data.get("chat_template") or ""),
+        str(data.get("mmproj") or ""),
+        flags["ngl"],
+        int(data.get("max_seq_len") or flags["max_seq_len"]),
+        int(data.get("parallel") if data.get("parallel") is not None else flags["parallel"]),
+        int(data.get("fit_target") if data.get("fit_target") is not None else flags["fit_target"]),
+        str(data.get("cache_k") or flags["cache_k"]),
+        str(data.get("cache_v") or flags["cache_v"]),
+        int(data.get("cache_ram") if data.get("cache_ram") is not None else flags["cache_ram"]),
+        str(data.get("flash_attn") or flags["flash_attn"]),
+        str(data.get("fit") or flags["fit"]),
+    )
+
+
+def llama_launch_matches(previous: dict[str, Any], runtime: dict[str, Any]) -> bool:
+    if not previous or not runtime:
+        return False
+    return _launch_signature(previous) == _launch_signature(runtime)
+
+
 def write_llama_runtime(
     model_path: Path,
     *,
@@ -137,9 +246,10 @@ def write_llama_runtime(
     mmproj: Optional[str] = None,
     chat_template: Optional[str] = None,
 ) -> dict[str, Any]:
-    ctx = int(max_seq_len or DEFAULT_CTX)
-    if ctx < 256:
-        ctx = DEFAULT_CTX
+    flags = llama_launch_flags(
+        model_path, n_gpu_layers=n_gpu_layers, max_seq_len=max_seq_len
+    )
+    ctx = int(flags["max_seq_len"])
     template = guess_llama_chat_template(model_path, chat_template)
     data = {
         "model": str(model_path.resolve()),
@@ -148,6 +258,13 @@ def write_llama_runtime(
         "max_seq_len": ctx,
         "mmproj": str(mmproj) if mmproj else "",
         "chat_template": template,
+        "parallel": flags["parallel"],
+        "fit": flags["fit"],
+        "fit_target": flags["fit_target"],
+        "flash_attn": flags["flash_attn"],
+        "cache_k": flags["cache_k"],
+        "cache_v": flags["cache_v"],
+        "cache_ram": flags["cache_ram"],
     }
     dest = llama_runtime_path()
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -155,12 +272,19 @@ def write_llama_runtime(
     env_lines = [
         f"LLAMA_MODEL={shlex.quote(data['model'])}",
         f"LLAMA_CTX={ctx}",
-        f"LLAMA_NGL={ngl_arg(n_gpu_layers)}",
+        f"LLAMA_NGL={flags['ngl']}",
         f"LLAMA_PORT={llama_port()}",
         f"LLAMA_HOST={llama_host()}",
         f"LLAMA_ALIAS={DUMMY_MODEL}",
         f"LLAMA_MMPROJ={shlex.quote(data['mmproj']) if data['mmproj'] else ''}",
         f"LLAMA_CHAT_TEMPLATE={shlex.quote(template) if template else ''}",
+        f"LLAMA_PARALLEL={flags['parallel']}",
+        f"LLAMA_FIT={flags['fit']}",
+        f"LLAMA_FIT_TARGET={flags['fit_target']}",
+        f"LLAMA_FLASH_ATTN={flags['flash_attn']}",
+        f"LLAMA_CACHE_K={flags['cache_k']}",
+        f"LLAMA_CACHE_V={flags['cache_v']}",
+        f"LLAMA_CACHE_RAM={flags['cache_ram']}",
     ]
     bin_path = llama_server_bin()
     if bin_path:
@@ -194,7 +318,9 @@ def llama_argv(
             "llama-server is not installed. The installer builds it next to ComfyUI, "
             "or set LLAMA_SERVER to the binary."
         )
-    ctx = int(max_seq_len or DEFAULT_CTX)
+    flags = llama_launch_flags(
+        model_path, n_gpu_layers=n_gpu_layers, max_seq_len=max_seq_len
+    )
     args = [
         str(server),
         "--host",
@@ -207,9 +333,23 @@ def llama_argv(
         "-m",
         str(model_path),
         "-c",
-        str(ctx),
+        str(flags["max_seq_len"]),
         "-ngl",
-        ngl_arg(n_gpu_layers),
+        flags["ngl"],
+        "--parallel",
+        str(flags["parallel"]),
+        "--fit",
+        flags["fit"],
+        "--fit-target",
+        str(flags["fit_target"]),
+        "--flash-attn",
+        flags["flash_attn"],
+        "--cache-type-k",
+        flags["cache_k"],
+        "--cache-type-v",
+        flags["cache_v"],
+        "--cache-ram",
+        str(flags["cache_ram"]),
     ]
     if mmproj:
         args.extend(["--mmproj", str(mmproj)])
@@ -408,13 +548,12 @@ def start_llama_if_needed(
         chat_template=chat_template,
     )
     template = str(runtime.get("chat_template") or "")
-    same_template = str(previous.get("chat_template") or "") == template
-    if llama_up() and _same_model(path) and same_template:
+    if llama_up() and llama_launch_matches(previous, runtime):
         print("  llama-server already running this GGUF")
         return
     if llama_up() or llama_pids():
-        if llama_up() and _same_model(path) and not same_template:
-            print("  chat template changed; restarting llama-server")
+        if llama_up() and _same_model(path):
+            print("  llama-server flags changed; restarting llama-server")
         stop_llama()
     print(f"  Starting llama-server ({path.name})...")
     log_path = ROOT / "llama-server.log"

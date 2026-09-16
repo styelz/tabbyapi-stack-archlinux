@@ -454,6 +454,16 @@ class LibraryAndDeleteTests(unittest.TestCase):
             self.assertEqual(data["model"]["n_gpu_layers"], -1)
             self.assertEqual(data["model"]["model_name"], folder.name)
             self.assertNotIn("chat_template", data["model"])
+            self.assertEqual(data["model"]["max_seq_len"], 32768)
+
+    def test_gguf_profile_defaults_cap_ctx_for_heavy_weights(self):
+        with tempfile.TemporaryDirectory() as raw:
+            folder = Path(raw) / "Qwen3.8-27B-Uncensored-IQ4-XS-MTP-16GB-VRAM-GGUF"
+            folder.mkdir()
+            (folder / "weights.gguf").write_bytes(b"gguf")
+            with mock.patch("common.llama_runtime.gguf_weight_bytes", return_value=13 * 1024**3):
+                data = ui_models.profile_defaults_from_config(folder)
+            self.assertEqual(data["model"]["max_seq_len"], 8192)
 
     def test_gguf_coder_base_sets_deepseek_template(self):
         with tempfile.TemporaryDirectory() as raw:

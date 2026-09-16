@@ -48,6 +48,18 @@ if [[ -z "$ngl" || "$ngl" == "-1" || "$ngl" == "999" ]]; then
   ngl=auto
 fi
 ARGS+=(-ngl "$ngl")
+# Exclusive GPU: one slot. llama.cpp --parallel auto opened 4x 32k KV on
+# qwen38guff, then spilled into --cache-ram (default 8 GiB) until the
+# 32 GB / no-swap host locked. VRAM stayed ~85%.
+ARGS+=(
+  --parallel "${LLAMA_PARALLEL:-1}"
+  --fit "${LLAMA_FIT:-on}"
+  --fit-target "${LLAMA_FIT_TARGET:-2048}"
+  --flash-attn "${LLAMA_FLASH_ATTN:-on}"
+  --cache-type-k "${LLAMA_CACHE_K:-q8_0}"
+  --cache-type-v "${LLAMA_CACHE_V:-q8_0}"
+  --cache-ram "${LLAMA_CACHE_RAM:-0}"
+)
 if [[ -n "${LLAMA_MMPROJ:-}" ]]; then
   ARGS+=(--mmproj "$LLAMA_MMPROJ")
 fi

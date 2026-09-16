@@ -1267,17 +1267,18 @@ def profile_defaults_from_config(
         pretty_name = pretty or _pretty_label(folder.name) or folder.name
         mmproj = next((p for p in ggufs if "mmproj" in p.name.lower()), None)
         weights = [p for p in ggufs if p != mmproj]
+        from common.llama_runtime import clamp_gguf_ctx, guess_llama_chat_template
+
+        ctx = clamp_gguf_ctx(max_seq, weights[0] if weights else folder)
         model = {
             "backend": "llamacpp",
             "model_name": folder.name,
             "n_gpu_layers": -1,
-            "max_seq_len": max_seq,
+            "max_seq_len": ctx,
             "vision": bool(mmproj),
         }
         if mmproj:
             model["mmproj"] = mmproj.name
-        from common.llama_runtime import guess_llama_chat_template
-
         template = guess_llama_chat_template(weights[0] if weights else folder)
         if template:
             model["chat_template"] = template
