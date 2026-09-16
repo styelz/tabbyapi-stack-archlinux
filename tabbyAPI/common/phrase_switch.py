@@ -91,6 +91,13 @@ REFUSE_IMAGES_RE = re.compile(
     r"without\s+(?:any\s+)?(?:new\s+)?(?:images?|pictures?|photos?)"
     r")\b"
 )
+# Hidden Code continue/summary lines. They are not the user's ask.
+CODE_AGENT_NUDGE_RE = re.compile(
+    r"(?is)^\s*(?:"
+    r"Continue\.\s+You stopped without changing files\."
+    r"|The file edits already landed\."
+    r")"
+)
 IMAGE_COUNT_RE = re.compile(
     r"(?is)^\s*(?:please\s+)?(?:can you\s+|could you\s+)?"
     r"(?:generate|draw|imagine|create|make|render|give\s+me)?"
@@ -260,11 +267,19 @@ def _content_text(content) -> str:
     return "\n".join(parts)
 
 
+def is_code_agent_nudge(text: str) -> bool:
+    """True for hidden Code continue/summary user lines, not a typed ask."""
+    return bool(CODE_AGENT_NUDGE_RE.search((text or "").strip()))
+
+
 def last_user_raw(data: ChatCompletionRequest) -> str:
     for message in reversed(data.messages or []):
         if message.role != "user":
             continue
-        return _content_text(message.content)
+        text = _content_text(message.content)
+        if is_code_agent_nudge(text):
+            continue
+        return text
     return ""
 
 
@@ -1529,7 +1544,7 @@ def has_new_user_after_image(data: ChatCompletionRequest) -> bool:
             "Image is ready" in content or "/images/generated-" in content
         ):
             last_image = index
-        if message.role == "user":
+        if message.role == "user" and not is_code_agent_nudge(content):
             last_user = index
     return last_user > last_image
 

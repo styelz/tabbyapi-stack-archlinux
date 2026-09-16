@@ -403,6 +403,7 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
         self.assertIn("normalizeAgent((opts && opts.agent) || codeAgent)", self.src)
         self.assertIn("activityFromPrompt(outboundText, sendAgent)", self.src)
         self.assertIn("AGENT_EMPTY_NUDGE", self.src)
+        self.assertNotIn("Do not generate images unless they asked.", self.src)
         self.assertIn("agentEmptyNudges", self.src)
         self.assertIn("AGENT_DONE_NUDGE", self.src)
         self.assertIn("function mergeToolCallDeltas(existing, incoming)", self.src)

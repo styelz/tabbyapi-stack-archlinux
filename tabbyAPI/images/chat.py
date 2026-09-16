@@ -38,7 +38,12 @@ from images.paths import (
     planned_dest_fact_list,
     tool_result_has_pngs,
 )
-from images.plan import ImageTurnPlan, classify_image_turn, plan_from_extracted
+from images.plan import (
+    ImageTurnPlan,
+    classify_image_turn,
+    llm_plan_images,
+    plan_from_extracted,
+)
 
 JOB_MARK = "tabby-image-job:"
 STATUS_MARK = "tabby-image-status:"
@@ -72,6 +77,12 @@ _EXPLICIT_NEW_RE = re.compile(
     r"(?:(?:real|gpu|new)\s+)*"
     r"(?:an?\s+)?"
     r"(?:images?|pictures?|photos?|pics?|logo|hero(?:\s+photo)?|header\s+photo)\b|"
+    r"\b(?:images?|pictures?|photos?|pics?)\s+"
+    r"(?:should\s+be\s+|must\s+be\s+|to\s+be\s+|need\s+to\s+be\s+)?"
+    r"generated\b|"
+    r"\bgenerated\s+by\s+comfy(?:ui)?\b|"
+    r"\b(?:use|via|with|through)\s+comfy(?:ui)?\b|"
+    r"\bunique\s+images?\s+for\s+each\b|"
     r"\b(?:redo|recreate)\b|"
     r"\breplace\s+the\s+(?:logo|hero(?:\s+(?:image|photo))?|header\s+(?:image|photo)|image|photo)\b|"
     r"\bnew\s+(?:logo|hero(?:\s+photo)?|header\s+photo)\b"
@@ -1916,6 +1927,15 @@ async def handle(
         existing = _existing_raster_paths(job, rasters, owner, chat_id)
         plan = _upgrade_missing_named_dests(plan, ask, existing, owner, chat_id)
         plan = _apply_approved_asset_dests(plan, ask)
+        if (
+            (plan.action != "generate" or not plan.items)
+            and _explicit_new_rasters(data)
+        ):
+            fallback = await llm_plan_images(ask, disconnect_handler)
+            if fallback:
+                plan = ImageTurnPlan(
+                    action="generate", items=fallback, from_model=True
+                )
         if plan.action == "reuse":
             _inject_existing_image_facts(data, job, rasters)
             return None

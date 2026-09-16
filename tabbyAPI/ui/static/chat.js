@@ -657,7 +657,7 @@ function mountChat(root) {
   const PLAN_PLACEHOLDER = "Describe what to plan. Review it, then click Build to implement.";
   const BUILD_PROMPT = "Implement the approved plan above. Do not wait for more confirmation.";
   const AGENT_EMPTY_NUDGE =
-    "Continue. You stopped without changing files. Apply the user's last request now with Write or StrReplace, then give a short summary. Do not generate images unless they asked.";
+    "Continue. You stopped without changing files. Apply the user's last request now with Write or StrReplace, then give a short summary.";
   const AGENT_DONE_NUDGE =
     "The file edits already landed. Reply with a short summary only. Do not call tools.";
   const SKIP_INSPECT_RESULT =
