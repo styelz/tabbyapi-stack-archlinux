@@ -1382,6 +1382,7 @@ class SceneFollow:
         self.vram = 0.0
         self.temp = 40.0
         self.cpu = 0.0
+        self.ram = 0.0
         self.st = 0.0
         # Wall-clock seed so a restart is not always the same blue/pink family.
         self.hue = (time.time() * 0.007) % 1.0
@@ -1407,6 +1408,7 @@ class SceneFollow:
         self.stage = "idle"
         self.has_gpu = False
         self.has_cpu = False
+        self.has_ram = False
         self.image_n = 0.0
         self.image_of = 0.0
         self.image_file = ""
@@ -1499,6 +1501,7 @@ class SceneFollow:
             self.temp, float(target["temp"]), dt, 0.55 if (want_live or held) else 1.6
         )
         self.cpu = _exp_approach(self.cpu, float(target.get("cpu") or 0.0), dt, 1.6)
+        self.ram = _exp_approach(self.ram, float(target.get("ram") or 0.0), dt, 1.6)
         self.st += self.speed * dt
         dest = str(target.get("palette") or "idle")
         if dest not in self.weights:
@@ -1539,6 +1542,7 @@ class SceneFollow:
         self.stage = stage_now
         self.has_gpu = bool(target.get("has_gpu"))
         self.has_cpu = bool(target.get("has_cpu"))
+        self.has_ram = bool(target.get("has_ram"))
         self.image_n = _exp_approach(
             self.image_n, float(target.get("image_n") or 0.0), dt, 0.4
         )
@@ -1652,6 +1656,7 @@ class SceneFollow:
             "vram": self.vram,
             "temp": self.temp,
             "cpu": self.cpu,
+            "ram": self.ram,
             "connected": self.connected,
             "overlay": self.overlay,
             "cycle": self.cycle,
@@ -1663,6 +1668,7 @@ class SceneFollow:
             "stage": self.stage,
             "has_gpu": self.has_gpu,
             "has_cpu": self.has_cpu,
+            "has_ram": self.has_ram,
             "image_n": self.image_n,
             "image_of": self.image_of,
             "image_file": self.image_file,
@@ -1696,12 +1702,15 @@ def scene_from_state(
     vram_raw = gpu.get("vram_pct")
     temp_raw = gpu.get("temperature_c")
     cpu_raw = host.get("cpu_pct")
+    ram_raw = host.get("ram_pct")
     has_gpu = any(value is not None and value != "" for value in (util_raw, vram_raw, temp_raw))
     has_cpu = cpu_raw is not None and cpu_raw != ""
+    has_ram = ram_raw is not None and ram_raw != ""
     util = _num(util_raw) if util_raw is not None else 0.0
     vram = _num(vram_raw) if vram_raw is not None else 0.0
     temp = _num(temp_raw, 40.0) if temp_raw is not None else 40.0
     cpu = _num(cpu_raw) if has_cpu else 0.0
+    ram = _num(ram_raw) if has_ram else 0.0
     kind = str(data.get("kind") or "")
     mode = str(data.get("gpu_mode") or "").strip() or "—"
     profile = profile_from_state(data) or str(data.get("profile") or "").strip() or "—"
@@ -1817,9 +1826,11 @@ def scene_from_state(
         "vram": vram,
         "temp": temp,
         "cpu": cpu,
+        "ram": ram,
         "connected": connected,
         "has_gpu": has_gpu,
         "has_cpu": has_cpu,
+        "has_ram": has_ram,
         "tokens": tokens,
         "run_tokens": max(
             _num(data.get("run_tokens")) if data.get("run_tokens") is not None else tokens,
@@ -3045,10 +3056,16 @@ def draw_field(
 
 HUD_CLOCK_SLOT = "00:00:00"
 HUD_CPU_SLOT = "CPU 100%"
+HUD_RAM_SLOT = "RAM 100%"
+HUD_CPU_RAM_SLOT = "CPU 100%   RAM 100%"
 HUD_WHISPER_GPU_SLOT = "VRAM 100%   100°C"
 HUD_WHISPER_SLOT = "CPU 100%   VRAM 100%   100°C"
+HUD_WHISPER_RAM_SLOT = "CPU 100%   RAM 100%   VRAM 100%   100°C"
+HUD_WHISPER_RAM_GPU_SLOT = "RAM 100%   VRAM 100%   100°C"
 HUD_STATS_GPU_SLOT = "GPU 100%   VRAM 100%   100°C"
 HUD_STATS_SLOT = "CPU 100%   GPU 100%   VRAM 100%   100°C"
+HUD_STATS_RAM_SLOT = "CPU 100%   RAM 100%   GPU 100%   VRAM 100%   100°C"
+HUD_STATS_RAM_GPU_SLOT = "RAM 100%   GPU 100%   VRAM 100%   100°C"
 
 
 def _hud_pct(value: Any) -> str:
@@ -3059,44 +3076,70 @@ def _hud_pct(value: Any) -> str:
     return f"{number:3d}%"
 
 
-def hud_whisper_text(scene: dict[str, Any]) -> str:
+def _hud_temp(scene: dict[str, Any]) -> str:
+    try:
+        temp = int(round(float(scene.get("temp") or 0.0)))
+    except (TypeError, ValueError):
+        temp = 0
+    return f"{temp:3d}°C"
+
+
+def _hud_metric_parts(scene: dict[str, Any], *, idle: bool) -> list[str]:
     parts: list[str] = []
     if scene.get("has_cpu"):
         parts.append(f"CPU {_hud_pct(scene.get('cpu'))}")
+    if scene.get("has_ram"):
+        parts.append(f"RAM {_hud_pct(scene.get('ram'))}")
     if scene.get("has_gpu"):
+        if not idle:
+            parts.append(f"GPU {_hud_pct(scene.get('util'))}")
         parts.append(f"VRAM {_hud_pct(scene.get('vram'))}")
-        try:
-            temp = int(round(float(scene.get("temp") or 0.0)))
-        except (TypeError, ValueError):
-            temp = 0
-        parts.append(f"{temp:3d}°C")
-    return "   ".join(parts)
+        parts.append(_hud_temp(scene))
+    return parts
+
+
+def hud_whisper_text(scene: dict[str, Any]) -> str:
+    return "   ".join(_hud_metric_parts(scene, idle=True))
 
 
 def hud_stats_text(scene: dict[str, Any]) -> str:
-    parts: list[str] = []
-    if scene.get("has_cpu"):
-        parts.append(f"CPU {_hud_pct(scene.get('cpu'))}")
-    if scene.get("has_gpu"):
-        parts.append(f"GPU {_hud_pct(scene.get('util'))}")
-        parts.append(f"VRAM {_hud_pct(scene.get('vram'))}")
-        try:
-            temp = int(round(float(scene.get("temp") or 0.0)))
-        except (TypeError, ValueError):
-            temp = 0
-        parts.append(f"{temp:3d}°C")
-    return "   ".join(parts)
+    return "   ".join(_hud_metric_parts(scene, idle=False))
 
 
 def hud_metric_slot(scene: dict[str, Any], *, idle: bool) -> str:
     has_cpu = bool(scene.get("has_cpu"))
+    has_ram = bool(scene.get("has_ram"))
     has_gpu = bool(scene.get("has_gpu"))
+    if idle:
+        if has_cpu and has_ram and has_gpu:
+            return HUD_WHISPER_RAM_SLOT
+        if has_cpu and has_gpu:
+            return HUD_WHISPER_SLOT
+        if has_ram and has_gpu:
+            return HUD_WHISPER_RAM_GPU_SLOT
+        if has_gpu:
+            return HUD_WHISPER_GPU_SLOT
+        if has_cpu and has_ram:
+            return HUD_CPU_RAM_SLOT
+        if has_cpu:
+            return HUD_CPU_SLOT
+        if has_ram:
+            return HUD_RAM_SLOT
+        return ""
+    if has_cpu and has_ram and has_gpu:
+        return HUD_STATS_RAM_SLOT
     if has_cpu and has_gpu:
-        return HUD_WHISPER_SLOT if idle else HUD_STATS_SLOT
+        return HUD_STATS_SLOT
+    if has_ram and has_gpu:
+        return HUD_STATS_RAM_GPU_SLOT
     if has_gpu:
-        return HUD_WHISPER_GPU_SLOT if idle else HUD_STATS_GPU_SLOT
+        return HUD_STATS_GPU_SLOT
+    if has_cpu and has_ram:
+        return HUD_CPU_RAM_SLOT
     if has_cpu:
         return HUD_CPU_SLOT
+    if has_ram:
+        return HUD_RAM_SLOT
     return ""
 
 
@@ -3129,6 +3172,7 @@ def hud_caption(text: str) -> str:
         "llm": "LLM",
         "cpu": "CPU",
         "gpu": "GPU",
+        "ram": "RAM",
         "vram": "VRAM",
         "comfy": "Comfy",
         "comfyui": "ComfyUI",

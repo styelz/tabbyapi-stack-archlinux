@@ -182,6 +182,7 @@ def sanitize_status(raw: dict[str, Any]) -> dict[str, Any]:
         },
         "host": {
             "cpu_pct": host.get("cpu_pct"),
+            "ram_pct": host.get("ram_pct"),
         },
     }
     leaked = _LEAK_KEYS.intersection(payload)

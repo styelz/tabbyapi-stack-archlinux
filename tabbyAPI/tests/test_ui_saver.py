@@ -134,7 +134,7 @@ class SaverSanitizeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["gpu"]["vram_pct"], 58)
         self.assertEqual(payload["gpu"]["temperature_c"], 64)
         self.assertEqual(payload["host"]["cpu_pct"], 12.3)
-        self.assertNotIn("ram_pct", payload["host"])
+        self.assertEqual(payload["host"]["ram_pct"], 40.0)
         self.assertNotIn("load1", payload["host"])
         self.assertEqual(payload["tokens"], 12)
         self.assertEqual(payload["stage"], "decode")
@@ -169,6 +169,7 @@ class SaverSanitizeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(payload["kind"])
         self.assertIsNone(payload["gpu"]["vram_pct"])
         self.assertIsNone(payload["host"]["cpu_pct"])
+        self.assertIsNone(payload["host"]["ram_pct"])
         self.assertEqual(payload["stage"], "idle")
         self.assertEqual(payload["tokens"], 0)
         self.assertEqual(payload["waiters"], 0)
@@ -321,7 +322,7 @@ class SaverSanitizeTests(unittest.IsolatedAsyncioTestCase):
         ):
             payload = await saver.saver_state()
         self.assertEqual(payload["host"]["cpu_pct"], 22.5)
-        self.assertNotIn("ram_pct", payload["host"])
+        self.assertEqual(payload["host"]["ram_pct"], 40.0)
         self.assertNotIn("load1", payload["host"])
 
     async def test_saver_state_llama_mode_uses_llama_profile(self):
@@ -746,7 +747,7 @@ class SaverKioskSceneTests(unittest.TestCase):
                 "profile": "qwen",
                 "busy": False,
                 "gpu": {"utilization_pct": 3, "vram_pct": 70, "temperature_c": 41},
-                "host": {"cpu_pct": 28.4},
+                "host": {"cpu_pct": 28.4, "ram_pct": 41.2},
             },
             True,
         )
@@ -755,7 +756,7 @@ class SaverKioskSceneTests(unittest.TestCase):
         idle_screen = _FakeScreen()
         self.kiosk.draw_hud(idle_screen, _FakeFont(), _FakeFont(), idle)
         idle_text = " ".join(str(item) for item in idle_screen.blits)
-        self.assertIn("CPU  28%   VRAM  70%    41°C", idle_text)
+        self.assertIn("CPU  28%   RAM  41%   VRAM  70%    41°C", idle_text)
         hot = self.kiosk.scene_from_state(
             {
                 "gpu_mode": "llm",
@@ -763,30 +764,32 @@ class SaverKioskSceneTests(unittest.TestCase):
                 "busy": True,
                 "profile": "qwen",
                 "gpu": {"utilization_pct": 62, "vram_pct": 70, "temperature_c": 61},
-                "host": {"cpu_pct": 28.4},
+                "host": {"cpu_pct": 28.4, "ram_pct": 41.2},
             },
             True,
         )
         hot_screen = _FakeScreen()
         self.kiosk.draw_hud(hot_screen, _FakeFont(), _FakeFont(), hot)
         hot_text = " ".join(str(item) for item in hot_screen.blits)
-        self.assertIn("CPU  28%   GPU  62%   VRAM  70%    61°C", hot_text)
+        self.assertIn("CPU  28%   RAM  41%   GPU  62%   VRAM  70%    61°C", hot_text)
         self.assertTrue(hot["has_cpu"])
+        self.assertTrue(hot["has_ram"])
         self.assertAlmostEqual(hot["cpu"], 28.4)
+        self.assertAlmostEqual(hot["ram"], 41.2)
         cpu_only = self.kiosk.scene_from_state(
             {
                 "gpu_mode": "llm",
                 "kind": "chat",
                 "busy": True,
                 "profile": "qwen",
-                "host": {"cpu_pct": 7},
+                "host": {"cpu_pct": 7, "ram_pct": 12},
             },
             True,
         )
         cpu_screen = _FakeScreen()
         self.kiosk.draw_hud(cpu_screen, _FakeFont(), _FakeFont(), cpu_only)
         cpu_text = " ".join(str(item) for item in cpu_screen.blits)
-        self.assertIn("CPU   7%", cpu_text)
+        self.assertIn("CPU   7%   RAM  12%", cpu_text)
         self.assertNotIn("GPU 0%", cpu_text)
         self.assertNotIn("VRAM 0%", cpu_text)
 
@@ -1896,6 +1899,7 @@ class SaverKioskSceneTests(unittest.TestCase):
         self.assertNotIn("GPU 0%", text)
         self.assertNotIn("VRAM 0%", text)
         self.assertNotIn("CPU 0%", text)
+        self.assertNotIn("RAM 0%", text)
         self.assertIn("Thinking", text)
 
     def test_hud_type_is_large_with_a_halo(self):
