@@ -730,6 +730,24 @@ class LlamaLiveTests(unittest.TestCase):
 
         self.assertEqual(weather_from_slots([{"is_processing": False}])["stage"], "idle")
 
+    def test_weather_from_slots_idle_ignores_stale_has_next_token(self):
+        from common.llama_live import weather_from_slots
+
+        weather = weather_from_slots(
+            [
+                {
+                    "is_processing": False,
+                    "n_prompt_tokens": 20036,
+                    "n_prompt_tokens_processed": 0,
+                    "next_token": [
+                        {"has_next_token": True, "n_remain": -1, "n_decoded": 0}
+                    ],
+                }
+            ]
+        )
+        self.assertEqual(weather["stage"], "idle")
+        self.assertFalse(weather["busy"])
+
     def test_snapshot_accumulates_run_across_tasks(self):
         from common import llama_live
 

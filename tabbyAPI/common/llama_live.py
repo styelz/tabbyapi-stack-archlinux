@@ -49,12 +49,9 @@ def slot_n_decoded(slot: dict[str, Any]) -> int:
 
 
 def slot_is_processing(slot: dict[str, Any]) -> bool:
-    if slot.get("is_processing") is True:
-        return True
-    nxt = slot.get("next_token")
-    if isinstance(nxt, list) and nxt and isinstance(nxt[0], dict):
-        return bool(nxt[0].get("has_next_token"))
-    return False
+    # Idle llama-server slots still publish has_next_token=true. Only the
+    # processing flag means a prompt is actually on the GPU.
+    return slot.get("is_processing") is True
 
 
 def weather_from_slots(payload: Any) -> dict[str, Any]:
