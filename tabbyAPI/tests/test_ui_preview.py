@@ -55,6 +55,26 @@ class PreviewTests(unittest.TestCase):
         self.assertEqual(preview.spa_fallback_rels("js/app.js"), [])
         self.assertEqual(preview.spa_fallback_rels("about/"), [])
 
+    def test_preview_csp_blocks_extension_scripts(self):
+        csp = preview.SANDBOX_CSP
+        self.assertIn("script-src", csp)
+        self.assertIn("https:", csp)
+        self.assertNotIn("chrome-extension", csp)
+        self.assertNotIn("moz-extension", csp)
+        self.assertNotIn("allow-same-origin", csp)
+        embed = preview.sandbox_csp(allow_same_origin=True)
+        self.assertIn("allow-same-origin", embed)
+        self.assertTrue(
+            preview.preview_embed_allows_storage(
+                {"Sec-Fetch-Dest": "iframe", "Sec-Fetch-Site": "same-origin"}
+            )
+        )
+        self.assertFalse(
+            preview.preview_embed_allows_storage(
+                {"Sec-Fetch-Dest": "document", "Sec-Fetch-Site": "none"}
+            )
+        )
+
     def test_guess_media_type_webp(self):
         self.assertEqual(workspace.guess_media_type(Path("images/logo.webp")), "image/webp")
         self.assertEqual(workspace.guess_media_type(Path("images/hero.png")), "image/png")

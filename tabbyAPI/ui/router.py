@@ -1872,11 +1872,14 @@ def _preview_owner(username: str, chat_id: str, token: str) -> tuple[str, str]:
     return owner
 
 
-def _preview_headers() -> dict[str, str]:
-    from ui.preview import SANDBOX_CSP
+def _preview_headers(request: Request | None = None) -> dict[str, str]:
+    from ui.preview import preview_embed_allows_storage, sandbox_csp
 
+    headers = dict(request.headers) if request is not None else {}
     return {
-        "Content-Security-Policy": SANDBOX_CSP,
+        "Content-Security-Policy": sandbox_csp(
+            allow_same_origin=preview_embed_allows_storage(headers)
+        ),
         "X-Content-Type-Options": "nosniff",
         "Referrer-Policy": "no-referrer",
         "Cache-Control": "no-store",
@@ -1961,7 +1964,7 @@ async def ui_code_preview(
             if not entry:
                 raise HTTPException(404, "File not found.") from exc
             return RedirectResponse(f"{request.url.path}{quote(entry)}", status_code=307)
-    headers = _preview_headers()
+    headers = _preview_headers(request)
     if is_html_name(file_path.name):
         return Response(
             content=html_preview_bytes(

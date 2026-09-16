@@ -28,11 +28,38 @@ MAX_TOKENS = 200
 STORAGE_MAX_BYTES = 256 * 1024
 STORAGE_ROUTE = "__tabby_storage"
 STORAGE_FILE_SUFFIX = ".preview-storage.json"
-# No allow-same-origin: the page must not reach the console DOM or its cookies.
-SANDBOX_CSP = (
-    "sandbox allow-scripts allow-forms allow-modals allow-popups "
-    "allow-top-navigation-by-user-activation"
+# No allow-same-origin on top-level previews: that would be the console origin
+# and cookies. Same-origin iframe embeds set credentialless + allow-same-origin
+# so native localStorage works without parent DOM access.
+# script-src omits chrome-extension: so wallet injects cannot throw on Storage.
+_SANDBOX_FLAGS = (
+    "allow-scripts allow-forms allow-modals allow-popups "
+    "allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation"
 )
+_SANDBOX_REST = (
+    "default-src 'self' https: http: data: blob: ws: wss:; "
+    "script-src 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' 'self' https: http: blob: data:; "
+    "style-src 'unsafe-inline' 'self' https: http: data:; "
+    "img-src * data: blob:; media-src * data: blob:; font-src * data: blob:; "
+    "connect-src 'self' https: http: ws: wss: blob:; "
+    "frame-src https: http: blob: data:; worker-src 'self' blob:; object-src 'none'"
+)
+
+
+def sandbox_csp(*, allow_same_origin: bool = False) -> str:
+    flags = _SANDBOX_FLAGS
+    if allow_same_origin:
+        flags = f"allow-same-origin {flags}"
+    return f"sandbox {flags}; {_SANDBOX_REST}"
+
+
+SANDBOX_CSP = sandbox_csp()
+
+
+def preview_embed_allows_storage(headers: dict[str, str] | None) -> bool:
+    """True when the console iframe is loading this document (not a top-level tab)."""
+    raw = {str(key).lower(): str(value or "").lower() for key, value in (headers or {}).items()}
+    return raw.get("sec-fetch-dest") == "iframe" and raw.get("sec-fetch-site") == "same-origin"
 STORAGE_CORS = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "POST, OPTIONS",

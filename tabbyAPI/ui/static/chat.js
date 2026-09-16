@@ -530,7 +530,7 @@ function mountChat(root) {
   const previewReloadBtn = root.querySelector("#chat-preview-reload");
   const previewTabBtn = root.querySelector("#chat-preview-tab");
   const previewCloseBtn = root.querySelector("#chat-preview-close");
-  const PREVIEW_SANDBOX = "allow-scripts allow-forms allow-modals allow-popups allow-top-navigation-by-user-activation";
+    const PREVIEW_SANDBOX = "allow-scripts allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation";
   const termPane = root.querySelector("#chat-term");
   const termHost = root.querySelector("#chat-term-xterm");
   const termNote = root.querySelector("#chat-term-note");
@@ -6161,7 +6161,12 @@ function mountChat(root) {
     if (tab.frame && tab.frame.isConnected) return tab.frame;
     const frame = document.createElement("iframe");
     frame.title = "Site preview";
-    frame.sandbox = PREVIEW_SANDBOX;
+    if ("credentialless" in HTMLIFrameElement.prototype) {
+      frame.credentialless = true;
+      frame.sandbox = `${PREVIEW_SANDBOX} allow-same-origin`;
+    } else {
+      frame.sandbox = PREVIEW_SANDBOX;
+    }
     frame.dataset.btab = tab.id;
     frame.classList.toggle("is-idle", tab.id !== activeBrowserTab);
     if (previewFrames) previewFrames.appendChild(frame);
