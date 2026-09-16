@@ -216,6 +216,29 @@ def sanitize_folder_name(raw: str) -> str:
     return out[:180]
 
 
+MIN_SEQ_LEN = 256
+MAX_SEQ_LEN = 262144
+
+
+def optional_seq_len(raw: Any) -> int | None:
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value >= MIN_SEQ_LEN else None
+
+
+def parse_seq_len(raw: Any) -> int:
+    value = optional_seq_len(raw)
+    if value is None:
+        raise ModelsError("Context must be a number of at least 256 tokens")
+    if value > MAX_SEQ_LEN:
+        raise ModelsError(f"Context cannot exceed {MAX_SEQ_LEN} tokens")
+    if value % 256:
+        raise ModelsError("Context must be a multiple of 256")
+    return value
+
+
 def normalize_alias(raw: str) -> str:
     alias = str(raw or "").strip().lower()
     if alias.endswith(".yml"):
@@ -802,7 +825,8 @@ def _profile_map(profiles_dir: Path, models_dir: Path | None = None) -> dict[str
         if not isinstance(data, dict):
             continue
         alias = path.stem
-        raw_folder = str(((data.get("model") or {}) or {}).get("model_name") or "")
+        model_cfg = data.get("model") if isinstance(data.get("model"), dict) else {}
+        raw_folder = str((model_cfg or {}).get("model_name") or "")
         folder = _weights_folder(raw_folder, models) if raw_folder else ""
         pretty = str(data.get("pretty") or folder or raw_folder or alias)
         ov = overrides.get(alias.lower()) or {}
@@ -816,6 +840,9 @@ def _profile_map(profiles_dir: Path, models_dir: Path | None = None) -> dict[str
             "pretty": pretty,
             "local": is_local_profile(alias, data),
             "path": str(path),
+            "max_seq_len": optional_seq_len(
+                model_cfg.get("cache_size") or model_cfg.get("max_seq_len")
+            ),
         }
         mapping[alias.lower()] = entry
         if folder:
@@ -864,6 +891,7 @@ def library_llms(paths: ModelPaths | None = None, loaded: str | None = None) -> 
                 "loaded": (not embed) and loaded == child.name,
                 "catalog_id": catalog_folders.get(child.name),
                 "local_profile": bool(entry.get("local")),
+                "max_seq_len": entry.get("max_seq_len"),
             }
         )
     return rows
@@ -1628,6 +1656,95 @@ def _write_profile_pretty(alias: str, pretty: str, folder: str, paths: ModelPath
     from common.phrase_switch import reset_profile_map_cache
 
     reset_profile_map_cache()
+
+
+def _last_profile_name(paths: ModelPaths) -> str:
+    last_path = paths.profiles_dir / "last.json"
+    try:
+        data = json.loads(last_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    return str(data.get("profile") or "").strip()
+
+
+def _sync_config_context(alias: str, seq: int, model_cfg: dict, paths: ModelPaths) -> None:
+    if _last_profile_name(paths) != alias:
+        return
+    backend = str((model_cfg or {}).get("backend") or "").lower()
+    if backend in {"llamacpp", "llama", "llama.cpp", "gguf"}:
+        return
+    config_path = Path(paths.root) / "config.yml"
+    if not config_path.is_file():
+        return
+    from select_model import load_yaml, save_yaml
+
+    yaml, config = load_yaml(config_path)
+    if not isinstance(config, dict):
+        return
+    section = config.get("model")
+    if not isinstance(section, dict):
+        config["model"] = {}
+        section = config["model"]
+    section["max_seq_len"] = seq
+    section["cache_size"] = seq
+    save_yaml(yaml, config, config_path)
+
+
+def set_profile_context(body: dict, paths: ModelPaths | None = None) -> dict:
+    p = paths or default_paths()
+    folder = str((body or {}).get("folder") or (body or {}).get("id") or "").strip()
+    current = str((body or {}).get("profile") or "").strip()
+    seq = parse_seq_len((body or {}).get("max_seq_len") or (body or {}).get("context"))
+    if folder:
+        folder = sanitize_folder_name(folder)
+    elif current:
+        entry = _profile_map(p.profiles_dir, models_dir=p.models_dir).get(current.lower()) or {}
+        folder = str(entry.get("folder") or "")
+        if not folder:
+            raise ModelsError(f"Unknown profile {current!r}", 404)
+    else:
+        raise ModelsError("folder or profile is required")
+
+    dest_folder = (p.models_dir / folder).resolve()
+    models_root = p.models_dir.resolve()
+    if dest_folder != models_root and models_root not in dest_folder.parents:
+        raise ModelsError("Path is outside the models directory")
+    if not dest_folder.is_dir():
+        raise ModelsError(f"{folder} is not installed", 404)
+
+    existing = profile_alias_for_folder(folder, p) or maybe_write_hf_profile(folder, paths=p)
+    if not existing:
+        raise ModelsError("Could not create a profile for this model", 500)
+    src = p.profiles_dir / f"{existing}.yml"
+    data = _load_profile_yaml(src) if src.is_file() else {}
+    if not data:
+        data = profile_defaults_from_config(dest_folder)
+        data["local"] = True
+    model_cfg = data.get("model")
+    if not isinstance(model_cfg, dict):
+        model_cfg = {}
+        data["model"] = model_cfg
+    model_cfg["max_seq_len"] = seq
+    backend = str(model_cfg.get("backend") or "").lower()
+    if backend not in {"llamacpp", "llama", "llama.cpp", "gguf"}:
+        model_cfg["cache_size"] = seq
+    if folder:
+        model_cfg.setdefault("model_name", folder)
+    _write_profile_yaml(src, data)
+    _sync_config_context(existing, seq, model_cfg, p)
+    from common.phrase_switch import reset_profile_map_cache
+
+    reset_profile_map_cache()
+    loaded_name = None if paths is not None else _loaded_folder()
+    return {
+        "ok": True,
+        "alias": existing,
+        "folder": folder,
+        "max_seq_len": seq,
+        "loaded": bool(loaded_name and loaded_name == folder),
+    }
 
 
 def set_profile_alias(body: dict, paths: ModelPaths | None = None) -> dict:

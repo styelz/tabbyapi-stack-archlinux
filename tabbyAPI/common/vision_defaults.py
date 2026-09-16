@@ -144,7 +144,6 @@ def decide_kv_cache(
         weight_mib=weight_mib,
         folder_name=folder_name,
     ):
-        seq = min(seq, TIGHT_KV_TOKENS)
         reserve = TIGHT_AUTOSPLIT_RESERVE_MIB
     return {
         "max_seq_len": seq,
@@ -161,10 +160,10 @@ def clamp_model_kv(
     weight_mib: int = 0,
     folder_name: str = "",
 ) -> bool:
-    """Shrink an already-written profile's KV on a packed 12 GB load.
+    """Do not shrink cache_size or max_seq_len.
 
-    Never raises cache_size or max_seq_len. Bumps autosplit_reserve when
-    the current reserve is below the tight budget.
+    Bumps autosplit_reserve when the current reserve is below the tight
+    budget on a packed 12 GB load.
     """
     if not isinstance(model, dict):
         return False
@@ -187,15 +186,6 @@ def clamp_model_kv(
         folder_name=folder_name or str(model.get("model_name") or ""),
     )
     changed = False
-    for key in ("cache_size", "max_seq_len"):
-        try:
-            current = int(model.get(key) or 0)
-        except (TypeError, ValueError):
-            current = 0
-        wanted = int(decided[key])
-        if current <= 0 or current > wanted:
-            model[key] = wanted
-            changed = True
     reserve = model.get("autosplit_reserve")
     wanted_reserve = decided["autosplit_reserve"]
     current_reserve = 0.0

@@ -20,10 +20,8 @@ LLAMA_ENV_NAME = "llama.env"
 LLAMA_RUNTIME_NAME = "llama_runtime.json"
 DEFAULT_LLAMA_PORT = 5002
 DEFAULT_CTX = 32768
-# 13 GB GGUF + 32k ctx on a 12 GB / 32 GB host: llama-server's cgroup was
-# already ~15 GiB idle (mmap + CPU layers). A 22k-token chat then wedged
-# the box mid-token with no OOM log. Cap heavy weights at 16k, keep
-# --cache-ram off, and let systemd MemoryMax / earlyoom kill llama first.
+# Keep --cache-ram off and let systemd MemoryMax / earlyoom kill llama first.
+# Context length comes from the profile / Settings max_seq_len.
 DEFAULT_PARALLEL = 1
 DEFAULT_FIT = "on"
 DEFAULT_FIT_TARGET_MIB = 2048
@@ -32,10 +30,6 @@ DEFAULT_FLASH_ATTN = "on"
 DEFAULT_CACHE_RAM_MIB = 0
 DEFAULT_BATCH = 512
 DEFAULT_UBATCH = 256
-GGUF_HEAVY_BYTES = 8 * 1024 * 1024 * 1024
-GGUF_MID_BYTES = 5 * 1024 * 1024 * 1024
-GGUF_HEAVY_CTX = 16384
-GGUF_MID_CTX = 16384
 DUMMY_MODEL = "gpt-4o"
 LLAMA_ALIASES = {
     "llama": "llama",
@@ -170,20 +164,14 @@ def clamp_gguf_ctx(
     *,
     size_bytes: int | None = None,
 ) -> int:
-    """Cap context for GGUFs whose weights already spill into host RAM."""
+    """Normalize a configured context. Weight size is ignored."""
     try:
         ctx_n = int(ctx or 0)
     except (TypeError, ValueError):
         ctx_n = 0
     if ctx_n < 256:
         ctx_n = DEFAULT_CTX
-    size = int(size_bytes) if size_bytes is not None else gguf_weight_bytes(model_path)
-    cap = DEFAULT_CTX
-    if size >= GGUF_HEAVY_BYTES:
-        cap = GGUF_HEAVY_CTX
-    elif size >= GGUF_MID_BYTES:
-        cap = GGUF_MID_CTX
-    return min(ctx_n, cap)
+    return ctx_n
 
 
 def llama_launch_flags(

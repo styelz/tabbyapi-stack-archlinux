@@ -307,14 +307,14 @@ class LlamaRuntimeTests(unittest.TestCase):
         self.assertEqual(ngl_arg(12), "12")
         self.assertEqual(ngl_arg("nope"), "auto")
 
-    def test_clamp_gguf_ctx_caps_heavy_and_mid_weights(self):
+    def test_clamp_gguf_ctx_keeps_configured_length(self):
         from common.llama_runtime import clamp_gguf_ctx
 
-        self.assertEqual(clamp_gguf_ctx(32768, size_bytes=13 * 1024**3), 16384)
+        self.assertEqual(clamp_gguf_ctx(32768, size_bytes=13 * 1024**3), 32768)
         self.assertEqual(clamp_gguf_ctx(4096, size_bytes=13 * 1024**3), 4096)
-        self.assertEqual(clamp_gguf_ctx(32768, size_bytes=6 * 1024**3), 16384)
+        self.assertEqual(clamp_gguf_ctx(32768, size_bytes=6 * 1024**3), 32768)
         self.assertEqual(clamp_gguf_ctx(32768, size_bytes=3 * 1024**3), 32768)
-        self.assertEqual(clamp_gguf_ctx(128, size_bytes=13 * 1024**3), 16384)
+        self.assertEqual(clamp_gguf_ctx(128, size_bytes=13 * 1024**3), 32768)
         self.assertEqual(clamp_gguf_ctx(8192, size_bytes=13 * 1024**3), 8192)
 
     def test_llama_launch_matches_restarts_when_ctx_was_uncapped(self):
@@ -365,7 +365,7 @@ class LlamaRuntimeTests(unittest.TestCase):
         self.assertEqual(args[args.index("--ubatch-size") + 1], "256")
         self.assertIn("--kv-unified", args)
 
-    def test_llama_argv_caps_ctx_for_heavy_gguf(self):
+    def test_llama_argv_keeps_configured_ctx_for_heavy_gguf(self):
         from common import llama_runtime
 
         gguf = Path("/tmp/Qwen3.8-27B.gguf")
@@ -374,7 +374,7 @@ class LlamaRuntimeTests(unittest.TestCase):
             mock.patch.object(llama_runtime, "gguf_weight_bytes", return_value=13 * 1024**3),
         ):
             args = llama_runtime.llama_argv(gguf, max_seq_len=32768)
-        self.assertEqual(args[args.index("-c") + 1], "16384")
+        self.assertEqual(args[args.index("-c") + 1], "32768")
 
     def test_guess_chat_template_for_coder_base_and_instruct(self):
         from common.llama_runtime import guess_llama_chat_template, is_gguf_base_name

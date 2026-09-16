@@ -225,6 +225,7 @@ function mountModels(root) {
         folder: llm && (llm.folder || llm.id),
         local_profile: Boolean(llm && llm.local_profile),
         loaded: Boolean(llm && llm.loaded),
+        max_seq_len: llm && llm.max_seq_len,
         size_bytes: Number((llm && llm.size_bytes) || pick.size_bytes || 0),
         disk_gib: pick.disk_gib,
         min_vram_mib: pick.min_vram_mib,
@@ -245,6 +246,16 @@ function mountModels(root) {
       return String(a.pretty || a.id).localeCompare(String(b.pretty || b.id));
     });
     return rows;
+  }
+
+  function contextField(row) {
+    if (row.kind !== "llm" || !row.installed || row.partial) return "";
+    const seq = Number(row.max_seq_len);
+    const value = Number.isFinite(seq) && seq > 0 ? String(Math.round(seq)) : "";
+    return `<div class="models-ctx">
+      <span>Context</span>
+      <input type="number" min="256" step="256" inputmode="numeric" placeholder="32768" aria-label="Context window in tokens" title="Context window in tokens" value="${TabbyUI.escapeHtml(value)}" data-ctx-folder="${TabbyUI.escapeHtml(row.folder || row.id)}" data-ctx-profile="${TabbyUI.escapeHtml(row.profile || "")}" data-ctx-current="${TabbyUI.escapeHtml(value)}" />
+    </div>`;
   }
 
   function actionSlot(html) {
@@ -302,7 +313,7 @@ function mountModels(root) {
           ? `<button type="button" class="btn danger" data-del="${id}">Delete</button>`
           : "";
         return `<tr data-id="${id}" data-kind="${TabbyUI.escapeHtml(row.kind)}" data-catalog="${catalogId}">
-          <td><strong>${name}</strong><div class="muted models-sub">${sub}</div></td>
+          <td><strong>${name}</strong><div class="muted models-sub">${sub}</div>${contextField(row)}</td>
           <td class="muted models-kind">${kind}</td>
           <td class="num">${TabbyUI.escapeHtml(size)}</td>
           <td class="models-actions">${actionSlot(primary)}${actionSlot(del)}</td>
@@ -558,6 +569,53 @@ function mountModels(root) {
     if (seq !== repoSeq || !target.isConnected) return;
     paintRepo(data, target);
   }
+
+  async function saveContext(input) {
+    const folder = input.getAttribute("data-ctx-folder") || "";
+    const profile = input.getAttribute("data-ctx-profile") || "";
+    const next = String(input.value || "").trim();
+    const current = String(input.getAttribute("data-ctx-current") || "").trim();
+    if (!folder || !next || next === current) return;
+    input.disabled = true;
+    try {
+      const data = await TabbyUI.api("models/context", {
+        method: "POST",
+        body: { folder, profile, max_seq_len: Number(next) },
+      });
+      const saved = data && data.max_seq_len != null ? String(data.max_seq_len) : next;
+      input.value = saved;
+      input.setAttribute("data-ctx-current", saved);
+      if (data && data.profile) input.setAttribute("data-ctx-profile", data.profile);
+      else if (data && data.alias) input.setAttribute("data-ctx-profile", data.alias);
+      showOk(
+        data && data.loaded
+          ? `Context set to ${saved}. Load the model again to apply it.`
+          : `Context set to ${saved}.`
+      );
+    } finally {
+      input.disabled = false;
+    }
+  }
+
+  libBody.addEventListener("change", async (event) => {
+    const input = event.target.closest("input[data-ctx-folder]");
+    if (!input) return;
+    try {
+      await saveContext(input);
+    } catch (exc) {
+      input.value = input.getAttribute("data-ctx-current") || "";
+      showError(exc.message || String(exc));
+    }
+  });
+
+  libBody.addEventListener("keydown", (event) => {
+    const input = event.target.closest("input[data-ctx-folder]");
+    if (!input) return;
+    if (event.key === "Enter") {
+      event.preventDefault();
+      input.blur();
+    }
+  });
 
   libBody.addEventListener("click", async (event) => {
     const del = event.target.closest("[data-del]");

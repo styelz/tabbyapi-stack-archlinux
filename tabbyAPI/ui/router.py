@@ -506,6 +506,20 @@ async def ui_models_delete(request: Request, _admin: str = Depends(require_ui_ad
         _models_http(exc)
 
 
+@router.post("/models/context", include_in_schema=False)
+async def ui_models_context(request: Request, _admin: str = Depends(require_ui_admin)):
+    from ui.models import ModelsError, set_profile_context
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    try:
+        return await asyncio.to_thread(set_profile_context, body)
+    except ModelsError as exc:
+        _models_http(exc)
+
+
 @router.post("/models/alias", include_in_schema=False)
 async def ui_models_alias(request: Request, _admin: str = Depends(require_ui_admin)):
     from ui.models import ModelsError, set_profile_alias

@@ -29,7 +29,9 @@ from ui.models import (
     recover_stale_job,
     sanitize_folder_name,
     search_models,
+    parse_seq_len,
     set_profile_alias,
+    set_profile_context,
     start_download,
     write_job,
 )
@@ -281,6 +283,75 @@ class LibraryAndDeleteTests(unittest.TestCase):
             self.assertFalse(flux["installed"])
             self.assertEqual(flux["kind"], "image")
             self.assertIn("free_bytes", data["disk"])
+            self.assertIsNone(data["llms"][0]["max_seq_len"])
+
+    def test_library_includes_profile_context(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            paths = _paths(root)
+            _llm_folder(paths.models_dir, "Qwen3.5-9B-exl3-4.00bpw")
+            (paths.profiles_dir / "qwen.yml").write_text(
+                "pretty: Qwen 9B\nmodel:\n  model_name: Qwen3.5-9B-exl3-4.00bpw\n"
+                "  max_seq_len: 32768\n  cache_size: 32768\n",
+                encoding="utf-8",
+            )
+            data = library_state(paths, loaded="")
+            self.assertEqual(data["llms"][0]["max_seq_len"], 32768)
+
+    def test_set_profile_context_writes_exl_and_gguf(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            paths = _paths(root)
+            _llm_folder(paths.models_dir, "Qwen3.5-9B-exl3-4.00bpw")
+            (paths.profiles_dir / "qwen.yml").write_text(
+                "pretty: Qwen 9B\nmodel:\n  model_name: Qwen3.5-9B-exl3-4.00bpw\n"
+                "  max_seq_len: 8192\n  cache_size: 8192\n",
+                encoding="utf-8",
+            )
+            (root / "config.yml").write_text(
+                "model:\n  model_name: Qwen3.5-9B-exl3-4.00bpw\n  max_seq_len: 8192\n",
+                encoding="utf-8",
+            )
+            (paths.profiles_dir / "last.json").write_text(
+                '{"profile": "qwen"}\n', encoding="utf-8"
+            )
+            folder = paths.models_dir / "Some-20B"
+            folder.mkdir()
+            (folder / "weights.gguf").write_bytes(b"gguf")
+            (paths.profiles_dir / "biggguf.yml").write_text(
+                "pretty: Some 20B\nmodel:\n  backend: llamacpp\n"
+                "  model_name: Some-20B\n  max_seq_len: 8192\n",
+                encoding="utf-8",
+            )
+            with mock.patch("common.phrase_switch.reset_profile_map_cache"):
+                exl = set_profile_context(
+                    {"folder": "Qwen3.5-9B-exl3-4.00bpw", "max_seq_len": 32768},
+                    paths=paths,
+                )
+                gguf = set_profile_context(
+                    {"folder": "Some-20B", "max_seq_len": 65536},
+                    paths=paths,
+                )
+            self.assertEqual(exl["max_seq_len"], 32768)
+            self.assertEqual(exl["alias"], "qwen")
+            saved = (paths.profiles_dir / "qwen.yml").read_text(encoding="utf-8")
+            self.assertIn("max_seq_len: 32768", saved)
+            self.assertIn("cache_size: 32768", saved)
+            cfg = (root / "config.yml").read_text(encoding="utf-8")
+            self.assertIn("max_seq_len: 32768", cfg)
+            self.assertEqual(gguf["max_seq_len"], 65536)
+            gguf_yml = (paths.profiles_dir / "biggguf.yml").read_text(encoding="utf-8")
+            self.assertIn("max_seq_len: 65536", gguf_yml)
+            self.assertNotIn("cache_size:", gguf_yml)
+
+    def test_parse_seq_len_rejects_bad_values(self):
+        self.assertEqual(parse_seq_len(32768), 32768)
+        with self.assertRaises(ui_models.ModelsError):
+            parse_seq_len(100)
+        with self.assertRaises(ui_models.ModelsError):
+            parse_seq_len(300)
+        with self.assertRaises(ui_models.ModelsError):
+            parse_seq_len(300000)
 
     def test_library_lists_gguf_folder_without_config(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -456,14 +527,14 @@ class LibraryAndDeleteTests(unittest.TestCase):
             self.assertNotIn("chat_template", data["model"])
             self.assertEqual(data["model"]["max_seq_len"], 32768)
 
-    def test_gguf_profile_defaults_cap_ctx_for_heavy_weights(self):
+    def test_gguf_profile_defaults_keep_configured_ctx_for_heavy_weights(self):
         with tempfile.TemporaryDirectory() as raw:
             folder = Path(raw) / "Qwen3.8-27B-Uncensored-IQ4-XS-MTP-16GB-VRAM-GGUF"
             folder.mkdir()
             (folder / "weights.gguf").write_bytes(b"gguf")
             with mock.patch("common.llama_runtime.gguf_weight_bytes", return_value=13 * 1024**3):
                 data = ui_models.profile_defaults_from_config(folder)
-            self.assertEqual(data["model"]["max_seq_len"], 16384)
+            self.assertEqual(data["model"]["max_seq_len"], 32768)
 
     def test_gguf_coder_base_sets_deepseek_template(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -933,6 +1004,15 @@ class JobStateTests(unittest.TestCase):
                 with self.assertRaises(ModelsError) as caught:
                     delete_model({"kind": "llm", "id": "Downloading"}, paths=paths, loaded="")
             self.assertEqual(caught.exception.status, 409)
+
+
+class ModelsJsTests(unittest.TestCase):
+    def test_library_has_context_field(self):
+        src = Path(__file__).resolve().parents[1] / "ui" / "static" / "models.js"
+        text = src.read_text(encoding="utf-8")
+        self.assertIn("function contextField", text)
+        self.assertIn("models/context", text)
+        self.assertIn("data-ctx-folder", text)
 
 
 if __name__ == "__main__":

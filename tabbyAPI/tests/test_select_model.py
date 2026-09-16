@@ -156,7 +156,7 @@ class ReadyFolderTests(unittest.TestCase):
             self.assertEqual(aliases["qwen38"], "qwen38")
             self.assertEqual(aliases["custom-exl3"], "qwen38")
 
-    def test_apply_profile_clamps_27b_kv_on_12gb(self):
+    def test_apply_profile_keeps_configured_kv(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             profiles = root / "model_profiles"
@@ -183,10 +183,11 @@ class ReadyFolderTests(unittest.TestCase):
             ):
                 select_model.apply_profile("qwen38")
             saved = config.read_text(encoding="utf-8")
-            self.assertIn("cache_size: 16384", saved)
+            self.assertIn("cache_size: 32768", saved)
+            self.assertIn("max_seq_len: 32768", saved)
             yml = (profiles / "qwen38.yml").read_text(encoding="utf-8")
-            self.assertIn("cache_size: 16384", yml)
-            self.assertIn("768", yml)
+            self.assertIn("cache_size: 32768", yml)
+            self.assertIn("max_seq_len: 32768", yml)
 
 
 class GgufProfileTests(unittest.TestCase):
