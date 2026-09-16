@@ -1925,7 +1925,13 @@ async def ui_code_preview(
     an opaque origin, and such a document does not send SameSite=Lax cookies
     with its own subresource requests.
     """
-    from ui.preview import STORAGE_ROUTE, html_preview_bytes, is_html_name, persist_url_for
+    from ui.preview import (
+        STORAGE_ROUTE,
+        html_preview_bytes,
+        is_html_name,
+        persist_url_for,
+        spa_fallback_rels,
+    )
     from ui.workspace import guess_media_type, resolve_preview_file, site_entry
 
     user, cid = _preview_owner(username, chat_id, token)
@@ -1941,11 +1947,20 @@ async def ui_code_preview(
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     except FileNotFoundError as exc:
-        # Root of a project that keeps its page elsewhere, e.g. site/index.html.
-        entry = site_entry(user, cid) if rel == "index.html" else ""
-        if not entry:
-            raise HTTPException(404, "File not found.") from exc
-        return RedirectResponse(f"{request.url.path}{quote(entry)}", status_code=307)
+        file_path = None
+        for candidate in spa_fallback_rels(rel):
+            try:
+                file_path = resolve_preview_file(user, cid, candidate)
+                rel = candidate
+                break
+            except (FileNotFoundError, ValueError):
+                continue
+        if file_path is None:
+            # Root of a project that keeps its page elsewhere, e.g. site/index.html.
+            entry = site_entry(user, cid) if rel == "index.html" else ""
+            if not entry:
+                raise HTTPException(404, "File not found.") from exc
+            return RedirectResponse(f"{request.url.path}{quote(entry)}", status_code=307)
     headers = _preview_headers()
     if is_html_name(file_path.name):
         return Response(

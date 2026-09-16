@@ -107,6 +107,24 @@ def is_html_name(name: str) -> bool:
     return Path(name).suffix.lower() in {".html", ".htm"}
 
 
+def spa_fallback_rels(rel: str) -> list[str]:
+    """Extra preview paths to try when a hash/history route has no file."""
+    posix = str(rel or "").replace("\\", "/").lstrip("/")
+    if not posix or posix.endswith("/"):
+        return []
+    name = posix.rsplit("/", 1)[-1]
+    if "." in name:
+        return []
+    out: list[str] = [f"{posix}/index.html", "index.html"]
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for item in out:
+        if item not in seen:
+            seen.add(item)
+            uniq.append(item)
+    return uniq
+
+
 def persist_url_for(rel: str) -> str:
     """Relative URL from this preview page to the token storage route."""
     parts = [part for part in str(rel or "").replace("\\", "/").split("/") if part]
@@ -217,7 +235,7 @@ def _storage_shim(storage: dict[str, str], persist_url: str) -> str:
         "get length(){return keys.length;}"
         "};"
         "}"
-        "function usable(name){"
+        "function nativeWorks(name){"
         "try{"
         "var store=window[name];"
         "if(!store||typeof store.getItem!=='function')return false;"
@@ -226,12 +244,23 @@ def _storage_shim(storage: dict[str, str], persist_url: str) -> str:
         "}catch(err){return false;}"
         "}"
         "function install(name,seed,persist){"
-        "if(usable(name))return;"
+        "if(nativeWorks(name))return;"
+        "var mem=memoryStorage(seed,persist);"
+        "function overlay(obj){"
         "try{"
-        "Object.defineProperty(window,name,{"
-        "configurable:true,enumerable:true,value:memoryStorage(seed,persist)"
+        "Object.defineProperty(obj,name,{"
+        "configurable:true,enumerable:true,"
+        "get:function(){return mem;},"
+        "set:function(){}"
         "});"
-        "}catch(err){}"
+        "return true;"
+        "}catch(err){return false;}"
+        "}"
+        "try{delete window[name];}catch(err){}"
+        "overlay(window);"
+        "try{overlay(Window.prototype);}catch(err){}"
+        "try{window[name]=mem;}catch(err){}"
+        "overlay(window);"
         "}"
         'install("localStorage",SEED,true);'
         'install("sessionStorage",null,false);'

@@ -43,9 +43,17 @@ class PreviewTests(unittest.TestCase):
         out = preview.inject_storage_shim(html, {"k": "v"}, "__tabby_storage")
         self.assertIn("data-tabby-preview-storage", out)
         self.assertIn("localStorage", out)
+        self.assertIn("get:function(){return mem;}", out)
+        self.assertIn("Window.prototype", out)
         again = preview.inject_storage_shim(out, {"k": "v"}, "__tabby_storage")
         self.assertEqual(out.count("data-tabby-preview-storage"), 1)
         self.assertEqual(again, out)
+
+    def test_spa_fallback_rels_for_hash_routes(self):
+        self.assertEqual(preview.spa_fallback_rels("movies"), ["movies/index.html", "index.html"])
+        self.assertEqual(preview.spa_fallback_rels("index.html"), [])
+        self.assertEqual(preview.spa_fallback_rels("js/app.js"), [])
+        self.assertEqual(preview.spa_fallback_rels("about/"), [])
 
     def test_guess_media_type_webp(self):
         self.assertEqual(workspace.guess_media_type(Path("images/logo.webp")), "image/webp")
