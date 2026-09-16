@@ -28,6 +28,10 @@ SECRET_KEYS = frozenset(
     }
 )
 
+# Settings UI: 8k … 256k in 8k (8192-token) steps.
+CONTEXT_LEN_CHOICES = list(range(8192, 262144 + 1, 8192))
+CONTEXT_LEN_FIELDS = frozenset({"max_seq_len", "cache_size"})
+
 SYSTEM_FIELDS = (
     {
         "name": "COMFYUI_DIR",
@@ -365,6 +369,13 @@ def tabby_schema() -> list[dict[str, Any]]:
             if spec["kind"] == "bool" and spec.get("optional") and spec.get("default") is None:
                 spec["kind"] = "select"
                 spec["choices"] = ["true", "false"]
+                spec["blank"] = "auto"
+            if field_name in CONTEXT_LEN_FIELDS:
+                spec["choices"] = (
+                    [-1] + list(CONTEXT_LEN_CHOICES)
+                    if field_name == "max_seq_len"
+                    else list(CONTEXT_LEN_CHOICES)
+                )
                 spec["blank"] = "auto"
             fields.append(spec)
         description = (model_cls.__doc__ or "").strip().split("\n", 1)[0]

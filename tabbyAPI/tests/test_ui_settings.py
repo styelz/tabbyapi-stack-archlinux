@@ -82,6 +82,25 @@ class SettingsJsTests(unittest.TestCase):
         self.assertIn("section === \"screensaver\"", src)
         self.assertIn("data.updates", src)
         self.assertIn("section === \"updates\"", src)
+        self.assertIn("function selectHtml", src)
+        self.assertIn("contextLabel", src)
+
+
+class ContextLenChoicesTests(unittest.TestCase):
+    def test_model_context_fields_use_8k_steps(self):
+        steps = list(range(8192, 262144 + 1, 8192))
+        self.assertEqual(settings.CONTEXT_LEN_CHOICES, steps)
+        self.assertEqual(len(steps), 32)
+        self.assertEqual(steps[0], 8192)
+        self.assertEqual(steps[-1], 262144)
+        model = next(section for section in settings.tabby_schema() if section["name"] == "model")
+        fields = {field["name"]: field for field in model["fields"]}
+        self.assertEqual(fields["max_seq_len"]["choices"], [-1] + steps)
+        self.assertEqual(fields["cache_size"]["choices"], steps)
+        self.assertEqual(fields["max_seq_len"]["blank"], "auto")
+        self.assertEqual(fields["cache_size"]["blank"], "auto")
+        self.assertEqual(fields["max_seq_len"]["kind"], "int")
+        self.assertEqual(fields["cache_size"]["kind"], "int")
 
 
 class AutoUpdateSettingsTests(unittest.TestCase):

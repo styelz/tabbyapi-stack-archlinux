@@ -71,6 +71,46 @@ function mountSettings(root) {
     return String(value);
   }
 
+  function choiceValue(choice) {
+    if (choice && typeof choice === "object" && "value" in choice) return String(choice.value);
+    return String(choice);
+  }
+
+  function contextLabel(raw) {
+    const n = Number(raw);
+    if (raw === "-1") return "from model";
+    if (Number.isInteger(n) && n > 0 && n % 1024 === 0) return `${n / 1024}k`;
+    return String(raw);
+  }
+
+  function selectHtml(id, field, value) {
+    const current = value == null || value === "" ? "" : String(value);
+    const seen = new Set();
+    const choices = [];
+    (field.choices || []).forEach((choice) => {
+      const item = choiceValue(choice);
+      if (seen.has(item)) return;
+      seen.add(item);
+      choices.push(choice);
+    });
+    if (current && !seen.has(current)) choices.unshift(current);
+    const blank = field.blank != null ? `<option value="">${TabbyUI.escapeHtml(field.blank)}</option>` : "";
+    const ctx = field.name === "max_seq_len" || field.name === "cache_size";
+    const opts = choices
+      .map((choice) => {
+        const item = choiceValue(choice);
+        const label = choice && typeof choice === "object" && choice.label
+          ? String(choice.label)
+          : ctx
+            ? contextLabel(item)
+            : item;
+        const picked = current === item ? " selected" : "";
+        return `<option value="${TabbyUI.escapeHtml(item)}"${picked}>${TabbyUI.escapeHtml(label)}</option>`;
+      })
+      .join("");
+    return `<select id="${id}">${blank}${opts}</select>`;
+  }
+
   function sameValue(a, b) {
     return JSON.stringify(a) === JSON.stringify(b);
   }
@@ -83,17 +123,8 @@ function mountSettings(root) {
       const on = value === true || value === "true";
       return `<input id="${id}" type="checkbox"${on ? " checked" : ""} />`;
     }
-    if (kind === "select") {
-      const choices = field.choices || [];
-      const current = value == null || value === "" ? "" : String(value);
-      const blank = field.blank != null ? `<option value="">${TabbyUI.escapeHtml(field.blank)}</option>` : "";
-      const opts = choices
-        .map((choice) => {
-          const picked = current === String(choice) ? " selected" : "";
-          return `<option value="${TabbyUI.escapeHtml(String(choice))}"${picked}>${TabbyUI.escapeHtml(String(choice))}</option>`;
-        })
-        .join("");
-      return `<select id="${id}">${blank}${opts}</select>`;
+    if (kind === "select" || (kind === "int" && field.choices && field.choices.length)) {
+      return selectHtml(id, field, value);
     }
     if (kind === "json") {
       const text = value == null || value === "" ? "" : JSON.stringify(value, null, 2);
