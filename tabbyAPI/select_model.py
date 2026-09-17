@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parent
 PROFILES_DIR = ROOT / "model_profiles"
 CONFIG_PATH = ROOT / "config.yml"
 LAST_PATH = PROFILES_DIR / "last.json"
+SETTINGS_MODEL_KEYS = ("vision", "vision_offload")
 CATALOG_PATH = ROOT / "deploy" / "arch" / "models.json"
 
 
@@ -495,9 +496,99 @@ def retarget_startup_model(model_name: str | None) -> tuple[str | None, bool]:
     return folder, changed
 
 
+def settings_model_path() -> Path:
+    return PROFILES_DIR / "settings_model.yml"
+
+
+def load_settings_model_overrides() -> dict:
+    """Vision flags last saved in Settings. Empty until the admin clicks Save."""
+    path = settings_model_path()
+    if not path.is_file():
+        return {}
+    _yaml, data = load_yaml(path)
+    if not isinstance(data, dict):
+        return {}
+    return {key: data[key] for key in SETTINGS_MODEL_KEYS if key in data}
+
+
+def effective_settings_model_overrides(load_kwargs: dict | None = None) -> dict:
+    """Sidecar from Settings Save, or config.yml vision:true from a Save that predates the sidecar."""
+    overrides = load_settings_model_overrides()
+    if overrides:
+        return overrides
+    src = load_kwargs if isinstance(load_kwargs, dict) else {}
+    if src.get("vision") is not True:
+        return {}
+    out = {"vision": True}
+    if "vision_offload" in src:
+        out["vision_offload"] = src["vision_offload"]
+    return out
+
+
+def remember_settings_model(updates: dict) -> dict:
+    """Persist Settings vision/vision_offload so a later profile switch cannot wipe them."""
+    if not isinstance(updates, dict):
+        return load_settings_model_overrides()
+    current = load_settings_model_overrides()
+    changed = False
+    for key in SETTINGS_MODEL_KEYS:
+        if key not in updates:
+            continue
+        current[key] = updates[key]
+        changed = True
+    if not changed:
+        return current
+    path = settings_model_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    yaml = YAML()
+    yaml.preserve_quotes = True
+    yaml.width = 4096
+    with path.open("w", encoding="utf-8") as handle:
+        yaml.dump(current, handle)
+    return current
+
+
+def apply_settings_model_overrides(model_cfg: dict, overrides: dict | None = None) -> dict:
+    if not isinstance(model_cfg, dict):
+        return model_cfg
+    extra = overrides if overrides is not None else load_settings_model_overrides()
+    for key, value in extra.items():
+        model_cfg[key] = value
+    return model_cfg
+
+
+def sync_settings_overlay(config: dict | None = None) -> None:
+    """Write Settings vision flags into the loaded model's tabby_config.yml."""
+    overrides = load_settings_model_overrides()
+    if not overrides:
+        return
+    if config is None and CONFIG_PATH.is_file():
+        _yaml, config = load_yaml(CONFIG_PATH)
+    model = config.get("model") if isinstance(config, dict) else None
+    if not isinstance(model, dict):
+        return
+    model_name = model.get("model_name")
+    if not model_name:
+        return
+    dest = ROOT / "models" / str(model_name) / "tabby_config.yml"
+    if dest.is_file():
+        yaml, overlay = load_yaml(dest)
+        if not isinstance(overlay, dict):
+            overlay = {}
+        section = overlay.get("model")
+        if not isinstance(section, dict):
+            section = {}
+            overlay["model"] = section
+        apply_settings_model_overrides(section, overrides)
+        save_yaml(yaml, overlay, dest)
+        return
+    write_tabby_overlay({"model": {"model_name": model_name, **overrides}})
+
+
 def write_tabby_overlay(profile: dict):
     """Write per-folder tabby_config.yml so /v1/model/load picks up tool/reasoning settings."""
     model_cfg = dict(profile.get("model") or {})
+    apply_settings_model_overrides(model_cfg)
     model_name = model_cfg.pop("model_name", None)
     if not model_name:
         return
@@ -541,6 +632,12 @@ def apply_profile(name: str):
     for key in list(profile):
         if key in PROFILE_META_KEYS or not isinstance(profile.get(key), dict):
             profile.pop(key, None)
+    model_now = config.get("model") if isinstance(config, dict) else None
+    overrides = effective_settings_model_overrides(
+        model_now if isinstance(model_now, dict) else None
+    )
+    if isinstance(profile.get("model"), dict):
+        apply_settings_model_overrides(profile["model"], overrides)
     write_tabby_overlay(profile)
     for section, values in profile.items():
         if not isinstance(values, dict):
@@ -552,6 +649,10 @@ def apply_profile(name: str):
             config[section] = {}
         for key, value in values.items():
             config[section][key] = value
+    if overrides:
+        if not isinstance(config.get("model"), dict):
+            config["model"] = {}
+        apply_settings_model_overrides(config["model"], overrides)
 
     save_yaml(yaml, config, CONFIG_PATH)
     write_last(name)
@@ -574,6 +675,7 @@ def disable_profile_vision(name: str, *, apply: bool = True) -> dict:
         model_cfg = {}
         data["model"] = model_cfg
     model_cfg["vision"] = False
+    remember_settings_model({"vision": False})
     pretty = str(data.get("pretty") or name)
     if "vision off" not in pretty.lower():
         from common.switch_times import gpu_label

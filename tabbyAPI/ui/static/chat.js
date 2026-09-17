@@ -13366,6 +13366,21 @@ function mountChat(root) {
     }
   }
 
+  function pendingHasImage() {
+    if (pendingImage) return true;
+    return pendingFiles.some((file) => file && file.kind === "image");
+  }
+
+  async function maybeWarnBlindVision() {
+    if (!pendingHasImage() || !TabbyUI.modelVisionOff()) return true;
+    const switchToQwen = await TabbyUI.alertVisionOffImage(TabbyUI.lastGpuStatus);
+    if (switchToQwen) {
+      startQwenSwitch();
+      return false;
+    }
+    return true;
+  }
+
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     stopMic();
@@ -13396,6 +13411,7 @@ function mountChat(root) {
     if (!text && !pendingImage && !pendingFiles.length) return;
     void (async () => {
       if (!(await maybeDownloadForSwitch(text))) return;
+      if (!(await maybeWarnBlindVision())) return;
       resetRecall();
       input.value = "";
       resizeInput();

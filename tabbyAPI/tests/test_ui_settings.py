@@ -33,6 +33,14 @@ class UiSettingsSaveTests(unittest.TestCase):
         self.assertTrue(data["ok"])
         self.assertNotIn("reload_warning", data)
 
+    def test_save_keeps_settings_vision(self):
+        src = Path(__file__).resolve().parents[1] / "ui" / "settings.py"
+        text = src.read_text(encoding="utf-8")
+        self.assertIn("remember_settings_model", text)
+        self.assertIn("sync_settings_overlay", text)
+        models = Path(__file__).resolve().parents[1] / "common" / "config_models.py"
+        self.assertIn("A Save here wins over the loaded profile", models.read_text(encoding="utf-8"))
+
 
 class ScreensaverSettingsTests(unittest.TestCase):
     def test_load_includes_screensaver_section(self):

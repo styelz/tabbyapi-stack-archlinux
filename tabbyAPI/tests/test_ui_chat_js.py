@@ -546,10 +546,23 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
         self.assertIn('textContent = missing ? "Download"', status_src)
         self.assertIn("offerMissingModelDownload", status_src)
         self.assertIn("maybeDownloadForSwitch", self.src)
+        self.assertIn("maybeWarnBlindVision", self.src)
         self.assertIn("missingProfileToken", self.src)
         self.assertIn("Not installed — download", self.src)
         self.assertNotIn("You can watch progress on the Models page.", app_src)
         self.assertNotIn("location.hash = \"#models\"", status_src)
+
+    def test_vision_off_image_warns_before_send(self):
+        utils = Path(__file__).resolve().parents[1] / "ui" / "static" / "utils.js"
+        utils_src = utils.read_text(encoding="utf-8")
+        self.assertIn("function modelVisionOff(", utils_src)
+        self.assertIn("function alertVisionOffImage(", utils_src)
+        self.assertIn("This model cannot see pictures", utils_src)
+        self.assertIn("Switch to qwen", utils_src)
+        self.assertIn("Vision off — pictures are not seen", utils_src)
+        self.assertIn("function maybeWarnBlindVision(", self.src)
+        self.assertIn("pendingHasImage()", self.src)
+        self.assertIn("startQwenSwitch()", self.src)
 
 
 def merge_tool_call_deltas(existing, incoming):

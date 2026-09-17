@@ -721,6 +721,14 @@ def _apply_tabby(updates: dict[str, dict[str, Any]]) -> None:
             for key, value in (row or {}).items():
                 data[section][key] = value
     _atomic_yaml(yaml, data)
+    model_updates = updates.get("model")
+    if isinstance(model_updates, dict) and any(
+        key in model_updates for key in ("vision", "vision_offload")
+    ):
+        from select_model import remember_settings_model, sync_settings_overlay
+
+        remember_settings_model(model_updates)
+        sync_settings_overlay(data if isinstance(data, dict) else None)
 
 
 def _reload_live() -> None:

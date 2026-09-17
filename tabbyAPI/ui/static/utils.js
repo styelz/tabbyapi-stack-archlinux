@@ -1404,6 +1404,12 @@
     });
   }
 
+  function modelVisionOff(data) {
+    const status = data || window.TabbyUI.lastGpuStatus || {};
+    const card = status.model || {};
+    return card.use_vision === false;
+  }
+
   function thinkingOnlyStatus(data) {
     const status = data || window.TabbyUI.lastGpuStatus || {};
     if (status.thinking_only) return true;
@@ -1427,6 +1433,21 @@
     if (thinkingOnlyStatus(status)) return "thinking";
     if (status.writes_files === false && !codingFamilyStatus(status)) return "no_tools";
     return "";
+  }
+
+  function alertVisionOffImage(data) {
+    const status = data || window.TabbyUI.lastGpuStatus || {};
+    const profile = String(status.profile || "").trim();
+    const pretty = profilePrettyName(profile, status) || profile || "This model";
+    return confirmModal({
+      title: "This model cannot see pictures",
+      text:
+        pretty +
+        " has vision off, so it will not see your screenshot.\n" +
+        "Switch to qwen to look at it, or send the text only.",
+      yes: "Switch to qwen",
+      no: "Send anyway",
+    });
   }
 
   function alertThinkingOnlyWrite(data, detail) {
@@ -2090,6 +2111,8 @@
     thinkingOnlyStatus,
     codingFamilyStatus,
     codeWriteBlockKind,
+    modelVisionOff,
+    alertVisionOffImage,
     alertThinkingOnlyWrite,
     confirmModal,
     promptModal,
@@ -2246,6 +2269,9 @@
       if (data.profile && pretty && data.profile !== pretty) parts.push(data.profile);
       if (data.tabby_model && data.tabby_model !== pretty && data.tabby_model !== label) {
         parts.push(data.tabby_model);
+      }
+      if (data.model && data.model.use_vision === false) {
+        parts.push("Vision off — pictures are not seen");
       }
       chip.title = parts.join(" · ");
       chip.setAttribute("aria-label", `GPU and model: ${text}`);

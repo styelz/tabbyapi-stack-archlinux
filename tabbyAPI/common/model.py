@@ -133,6 +133,17 @@ async def apply_load_defaults(model_path: pathlib.Path, **kwargs):
     }
 
     merged_kwargs = deep_merge_dicts(defaults, kwargs, inline_overrides)
+    try:
+        from select_model import (
+            apply_settings_model_overrides,
+            effective_settings_model_overrides,
+        )
+
+        apply_settings_model_overrides(
+            merged_kwargs, effective_settings_model_overrides(kwargs)
+        )
+    except Exception:
+        pass
 
     xlogger.debug(
         "Applying load defaults",

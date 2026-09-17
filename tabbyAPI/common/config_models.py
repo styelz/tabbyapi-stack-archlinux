@@ -356,7 +356,10 @@ class ModelConfig(BaseConfigModel):
     )
     vision: Optional[bool] = Field(
         False,
-        description=("Enables vision support if the model supports it. (default: False)"),
+        description=(
+            "Enables vision support if the model supports it. (default: False)\n"
+            "A Save here wins over the loaded profile. Restart the API to load the vision tower."
+        ),
     )
     vision_offload: Optional[bool] = Field(
         False,

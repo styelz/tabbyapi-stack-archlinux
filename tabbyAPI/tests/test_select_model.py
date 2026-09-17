@@ -189,6 +189,87 @@ class ReadyFolderTests(unittest.TestCase):
             self.assertIn("cache_size: 32768", yml)
             self.assertIn("max_seq_len: 32768", yml)
 
+    def test_effective_overrides_use_config_vision_true(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            profiles = root / "model_profiles"
+            profiles.mkdir()
+            with mock.patch.object(select_model, "PROFILES_DIR", profiles):
+                self.assertEqual(
+                    select_model.effective_settings_model_overrides(
+                        {"vision": True, "vision_offload": True}
+                    ),
+                    {"vision": True, "vision_offload": True},
+                )
+                self.assertEqual(
+                    select_model.effective_settings_model_overrides({"vision": False}),
+                    {},
+                )
+
+    def test_apply_profile_keeps_settings_vision(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            profiles = root / "model_profiles"
+            models = root / "models" / "Custom-exl3"
+            profiles.mkdir()
+            models.mkdir(parents=True)
+            (models / "config.json").write_text("{}", encoding="utf-8")
+            (profiles / "qwen38.yml").write_text(
+                "pretty: Custom\nmodel:\n  model_name: Custom-exl3\n  vision: false\n",
+                encoding="utf-8",
+            )
+            config = root / "config.yml"
+            config.write_text(
+                "model:\n  model_name: other\n  vision: true\n  vision_offload: true\n",
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(select_model, "ROOT", root),
+                mock.patch.object(select_model, "PROFILES_DIR", profiles),
+                mock.patch.object(select_model, "CONFIG_PATH", config),
+                mock.patch.object(select_model, "LAST_PATH", profiles / "last.json"),
+            ):
+                select_model.remember_settings_model(
+                    {"vision": True, "vision_offload": True}
+                )
+                profile = select_model.apply_profile("qwen38")
+            saved = config.read_text(encoding="utf-8")
+            overlay = (models / "tabby_config.yml").read_text(encoding="utf-8")
+            self.assertTrue(profile["model"]["vision"])
+            self.assertTrue(profile["model"]["vision_offload"])
+            self.assertIn("vision: true", saved)
+            self.assertIn("vision_offload: true", saved)
+            self.assertIn("vision: true", overlay)
+            self.assertIn("vision_offload: true", overlay)
+
+    def test_apply_profile_keeps_config_vision_without_sidecar(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            profiles = root / "model_profiles"
+            models = root / "models" / "Custom-exl3"
+            profiles.mkdir()
+            models.mkdir(parents=True)
+            (models / "config.json").write_text("{}", encoding="utf-8")
+            (profiles / "qwen38.yml").write_text(
+                "pretty: Custom\nmodel:\n  model_name: Custom-exl3\n  vision: false\n",
+                encoding="utf-8",
+            )
+            config = root / "config.yml"
+            config.write_text(
+                "model:\n  model_name: other\n  vision: true\n  vision_offload: true\n",
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(select_model, "ROOT", root),
+                mock.patch.object(select_model, "PROFILES_DIR", profiles),
+                mock.patch.object(select_model, "CONFIG_PATH", config),
+                mock.patch.object(select_model, "LAST_PATH", profiles / "last.json"),
+            ):
+                profile = select_model.apply_profile("qwen38")
+            self.assertTrue(profile["model"]["vision"])
+            overlay = (models / "tabby_config.yml").read_text(encoding="utf-8")
+            self.assertIn("vision: true", overlay)
+
 
 class GgufProfileTests(unittest.TestCase):
     def test_folder_ready_with_gguf_file(self):

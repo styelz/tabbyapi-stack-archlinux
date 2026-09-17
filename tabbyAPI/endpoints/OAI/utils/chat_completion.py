@@ -295,6 +295,41 @@ def _sort_tool_messages(message_dicts: List[dict]):
             message_dicts[run_start:i] = run
 
 
+# When vision is off, image_url parts used to vanish. The model then claims
+# the screenshot never arrived. Keep one honest placeholder per message.
+VISION_OFF_IMAGE_NOTE = (
+    "[The user attached an image. You cannot see it because vision is off "
+    "on this loaded model. Do not say the image failed to send. Tell them "
+    "it arrived, you cannot view pictures on this model, and they can "
+    "switch to qwen to look at it.]"
+)
+
+
+def flatten_message_text(parts, *, use_vision: bool, image_aliases: Optional[List[str]] = None) -> str:
+    """Join OpenAI content parts. Blind image_url parts become a visible note."""
+    aliases = list(image_aliases or [])
+    alias_i = 0
+    chunks: List[str] = []
+    saw_blind_image = False
+    for part in parts or []:
+        kind = part.get("type") if isinstance(part, dict) else getattr(part, "type", None)
+        if kind == "text":
+            text = part.get("text") if isinstance(part, dict) else getattr(part, "text", "")
+            chunks.append(str(text or ""))
+            continue
+        if kind != "image_url":
+            continue
+        if use_vision:
+            if alias_i < len(aliases):
+                chunks.append(aliases[alias_i])
+                alias_i += 1
+            continue
+        if not saw_blind_image:
+            chunks.append(VISION_OFF_IMAGE_NOTE)
+            saw_blind_image = True
+    return "".join(chunks)
+
+
 async def format_messages_with_template(
     messages: List[ChatCompletionMessage],
     existing_template_vars: Optional[dict] = None,
@@ -302,22 +337,21 @@ async def format_messages_with_template(
     """Barebones function to format chat completion messages into a prompt."""
 
     template_vars = unwrap(existing_template_vars, {})
-    mm_embeddings = MultimodalEmbeddingWrapper() if model.container.use_vision else None
+    use_vision = bool(getattr(model.container, "use_vision", False))
+    mm_embeddings = MultimodalEmbeddingWrapper() if use_vision else None
 
     # Convert all messages to a dictionary representation
     message_dicts: List[dict] = []
     for message in messages:
         if isinstance(message.content, list):
-            concatenated_content = ""
+            aliases: List[str] = []
             for content in message.content:
-                if content.type == "text":
-                    concatenated_content += content.text
-                elif content.type == "image_url" and mm_embeddings:
+                if content.type == "image_url" and mm_embeddings:
                     await mm_embeddings.add(model.container, content.image_url.url)
-                    concatenated_content += mm_embeddings.text_alias[-1]
-
-            # Convert the message content into a concatenated string
-            message.content = concatenated_content
+                    aliases.append(mm_embeddings.text_alias[-1])
+            message.content = flatten_message_text(
+                message.content, use_vision=use_vision, image_aliases=aliases
+            )
 
         message_dicts.append(message.model_dump(exclude_none=True))
 

@@ -188,6 +188,7 @@ models/*
 pasted-images/
 switch-model.log
 model_profiles/last.json
+model_profiles/settings_model.yml
 model_profiles/gpu_mode.json
 model_profiles/vram_recover.json
 model_profiles/switch_times.local.json
