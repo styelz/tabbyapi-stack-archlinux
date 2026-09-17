@@ -227,6 +227,7 @@ function mountModels(root) {
         local_profile: Boolean(llm && llm.local_profile),
         loaded: Boolean(llm && llm.loaded),
         max_seq_len: llm && llm.max_seq_len,
+        vision: llm && llm.vision,
         size_bytes: Number((llm && llm.size_bytes) || pick.size_bytes || 0),
         disk_gib: pick.disk_gib,
         min_vram_mib: pick.min_vram_mib,
@@ -279,6 +280,32 @@ function mountModels(root) {
       <span>Context</span>
       <select autocomplete="off" aria-label="Context window in tokens" title="Context window for this model" data-ctx-folder="${TabbyUI.escapeHtml(row.folder || row.id)}" data-ctx-profile="${TabbyUI.escapeHtml(row.profile || "")}" data-ctx-current="${TabbyUI.escapeHtml(value)}">${opts}</select>
     </div>`;
+  }
+
+  function visionField(row) {
+    if (row.kind !== "llm" || !row.installed || row.partial) return "";
+    const on = row.vision === true;
+    const value = on ? "on" : "off";
+    const opts = [
+      ["off", "Off"],
+      ["on", "On"],
+    ]
+      .map(([item, label]) => {
+        const picked = item === value ? " selected" : "";
+        return `<option value="${item}"${picked}>${label}</option>`;
+      })
+      .join("");
+    return `<div class="models-ctx">
+      <span>Vision</span>
+      <select autocomplete="off" aria-label="Vision for this model" title="Load the vision tower for this model" data-vision-folder="${TabbyUI.escapeHtml(row.folder || row.id)}" data-vision-profile="${TabbyUI.escapeHtml(row.profile || "")}" data-vision-current="${value}">${opts}</select>
+    </div>`;
+  }
+
+  function modelPrefs(row) {
+    const ctx = contextField(row);
+    const vis = visionField(row);
+    if (!ctx && !vis) return "";
+    return `<div class="models-prefs">${ctx}${vis}</div>`;
   }
 
   function actionSlot(html) {
@@ -339,7 +366,7 @@ function mountModels(root) {
           ? `<button type="button" class="btn danger" data-del="${id}">Delete</button>`
           : "";
         return `<tr data-id="${id}" data-kind="${TabbyUI.escapeHtml(row.kind)}" data-catalog="${catalogId}">
-          <td><strong>${name}</strong><div class="muted models-sub">${sub}</div>${contextField(row)}</td>
+          <td><strong>${name}</strong><div class="muted models-sub">${sub}</div>${modelPrefs(row)}</td>
           <td class="muted models-kind">${kind}</td>
           <td class="num">${TabbyUI.escapeHtml(size)}</td>
           <td class="models-actions">${actionSlot(primary)}${actionSlot(del)}</td>
@@ -623,7 +650,45 @@ function mountModels(root) {
     }
   }
 
+  async function saveVision(input) {
+    const folder = input.getAttribute("data-vision-folder") || "";
+    const profile = input.getAttribute("data-vision-profile") || "";
+    const next = String(input.value || "").trim();
+    const current = String(input.getAttribute("data-vision-current") || "").trim();
+    if (!folder || !next || next === current) return;
+    input.disabled = true;
+    try {
+      const data = await TabbyUI.api("models/vision", {
+        method: "POST",
+        body: { folder, profile, vision: next === "on" },
+      });
+      const saved = data && data.vision === true ? "on" : "off";
+      input.value = saved;
+      input.setAttribute("data-vision-current", saved);
+      if (data && data.profile) input.setAttribute("data-vision-profile", data.profile);
+      else if (data && data.alias) input.setAttribute("data-vision-profile", data.alias);
+      const label = saved === "on" ? "on" : "off";
+      showOk(
+        data && data.loaded
+          ? `Vision ${label}. Load the model again to apply it.`
+          : `Vision ${label}.`
+      );
+    } finally {
+      input.disabled = false;
+    }
+  }
+
   libBody.addEventListener("change", async (event) => {
+    const vision = event.target.closest("[data-vision-folder]");
+    if (vision) {
+      try {
+        await saveVision(vision);
+      } catch (exc) {
+        vision.value = vision.getAttribute("data-vision-current") || "off";
+        showError(exc.message || String(exc));
+      }
+      return;
+    }
     const input = event.target.closest("[data-ctx-folder]");
     if (!input) return;
     try {
@@ -635,7 +700,7 @@ function mountModels(root) {
   });
 
   libBody.addEventListener("keydown", (event) => {
-    const input = event.target.closest("[data-ctx-folder]");
+    const input = event.target.closest("[data-ctx-folder], [data-vision-folder]");
     if (!input) return;
     if (event.key === "Enter") {
       event.preventDefault();

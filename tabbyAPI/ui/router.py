@@ -520,6 +520,20 @@ async def ui_models_context(request: Request, _admin: str = Depends(require_ui_a
         _models_http(exc)
 
 
+@router.post("/models/vision", include_in_schema=False)
+async def ui_models_vision(request: Request, _admin: str = Depends(require_ui_admin)):
+    from ui.models import ModelsError, set_profile_vision
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    try:
+        return await asyncio.to_thread(set_profile_vision, body)
+    except ModelsError as exc:
+        _models_http(exc)
+
+
 @router.post("/models/alias", include_in_schema=False)
 async def ui_models_alias(request: Request, _admin: str = Depends(require_ui_admin)):
     from ui.models import ModelsError, set_profile_alias

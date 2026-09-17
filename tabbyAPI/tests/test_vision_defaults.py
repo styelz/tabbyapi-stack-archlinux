@@ -89,6 +89,10 @@ class DecideVisionTests(unittest.TestCase):
             "repo main (vision off on 12 GB)",
         )
         self.assertEqual(pretty_with_vision_note("repo main", True, "12 GB"), "repo main")
+        self.assertEqual(
+            pretty_with_vision_note("repo main (vision off on 12 GB)", True, "12 GB"),
+            "repo main",
+        )
 
 
 class WeightMibTests(unittest.TestCase):

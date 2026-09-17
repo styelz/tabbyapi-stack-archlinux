@@ -90,9 +90,16 @@ def decide_vision(
     return {"vision": True, "vision_offload": offload}
 
 
+_VISION_OFF_NOTE_RE = re.compile(r"\s*\(vision off on [^)]+\)\s*$", re.I)
+
+
+def strip_vision_note(pretty: str) -> str:
+    return _VISION_OFF_NOTE_RE.sub("", pretty or "").strip()
+
+
 def pretty_with_vision_note(pretty: str, vision: bool, vram_label: str) -> str:
-    text = (pretty or "").strip() or "model"
-    if vision or "vision off" in text.lower():
+    text = strip_vision_note(pretty) or "model"
+    if vision:
         return text
     return f"{text} (vision off on {vram_label})"
 

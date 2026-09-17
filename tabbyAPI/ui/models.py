@@ -225,6 +225,12 @@ def _context_len_choices() -> list[int]:
     return list(CONTEXT_LEN_CHOICES)
 
 
+def _reset_profile_map_cache() -> None:
+    from common.phrase_switch import reset_profile_map_cache
+
+    reset_profile_map_cache()
+
+
 def optional_seq_len(raw: Any) -> int | None:
     try:
         value = int(raw)
@@ -242,6 +248,19 @@ def parse_seq_len(raw: Any) -> int:
     if value % 256:
         raise ModelsError("Context must be a multiple of 256")
     return value
+
+
+def parse_vision(raw: Any) -> bool:
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, (int, float)) and raw in (0, 1):
+        return bool(int(raw))
+    text = str(raw or "").strip().lower()
+    if text in {"1", "true", "on", "yes", "enable", "enabled"}:
+        return True
+    if text in {"0", "false", "off", "no", "disable", "disabled"}:
+        return False
+    raise ModelsError("Vision must be on or off")
 
 
 def normalize_alias(raw: str) -> str:
@@ -848,6 +867,7 @@ def _profile_map(profiles_dir: Path, models_dir: Path | None = None) -> dict[str
             "max_seq_len": optional_seq_len(
                 model_cfg.get("cache_size") or model_cfg.get("max_seq_len")
             ),
+            "vision": bool(model_cfg.get("vision")) if "vision" in model_cfg else None,
         }
         mapping[alias.lower()] = entry
         if folder:
@@ -897,6 +917,7 @@ def library_llms(paths: ModelPaths | None = None, loaded: str | None = None) -> 
                 "catalog_id": catalog_folders.get(child.name),
                 "local_profile": bool(entry.get("local")),
                 "max_seq_len": entry.get("max_seq_len"),
+                "vision": entry.get("vision"),
             }
         )
     return rows
@@ -1518,9 +1539,7 @@ def maybe_write_hf_profile(
     data = profile_defaults_from_config(p.models_dir / folder, pretty=pretty_name)
     data["local"] = True
     _write_profile_yaml(dest, data)
-    from common.phrase_switch import reset_profile_map_cache
-
-    reset_profile_map_cache()
+    _reset_profile_map_cache()
     _collapse_extra_local_profiles(folder, stem, p)
     return stem
 
@@ -1591,9 +1610,7 @@ def _collapse_extra_local_profiles(folder: str, keep: str, paths: ModelPaths) ->
             continue
         extra.unlink(missing_ok=True)
         retarget_profile_refs(extra.stem, keep_stem, paths)
-    from common.phrase_switch import reset_profile_map_cache
-
-    reset_profile_map_cache()
+    _reset_profile_map_cache()
 
 
 def _patch_json_profile(path: Path, old: str, new: str, key: str = "profile") -> None:
@@ -1659,9 +1676,7 @@ def _write_profile_pretty(alias: str, pretty: str, folder: str, paths: ModelPath
             model_cfg["model_name"] = folder
         _write_profile_yaml(src, data)
         set_name_override(paths.profiles_dir, alias, None)
-    from common.phrase_switch import reset_profile_map_cache
-
-    reset_profile_map_cache()
+    _reset_profile_map_cache()
 
 
 def _gguf_backend(model_cfg: dict | None) -> bool:
@@ -1680,10 +1695,8 @@ def _last_profile_name(paths: ModelPaths) -> str:
     return str(data.get("profile") or "").strip()
 
 
-def _sync_config_context(alias: str, seq: int, model_cfg: dict, paths: ModelPaths) -> None:
+def _sync_config_model(alias: str, fields: dict, paths: ModelPaths) -> None:
     if _last_profile_name(paths) != alias:
-        return
-    if _gguf_backend(model_cfg):
         return
     config_path = Path(paths.root) / "config.yml"
     if not config_path.is_file():
@@ -1697,9 +1710,26 @@ def _sync_config_context(alias: str, seq: int, model_cfg: dict, paths: ModelPath
     if not isinstance(section, dict):
         config["model"] = {}
         section = config["model"]
-    section["max_seq_len"] = seq
-    section["cache_size"] = seq
+    for key, value in fields.items():
+        section[key] = value
     save_yaml(yaml, config, config_path)
+
+
+def _sync_config_context(alias: str, seq: int, model_cfg: dict, paths: ModelPaths) -> None:
+    if _gguf_backend(model_cfg):
+        return
+    _sync_config_model(alias, {"max_seq_len": seq, "cache_size": seq}, paths)
+
+
+def _write_settings_vision(_alias: str, fields: dict, paths: ModelPaths) -> None:
+    dest = paths.profiles_dir / "settings_model.yml"
+    current: dict = {}
+    if dest.is_file():
+        data = _load_profile_yaml(dest)
+        if isinstance(data, dict):
+            current = data
+    current.update(fields)
+    _write_profile_yaml(dest, current)
 
 
 def set_profile_context(body: dict, paths: ModelPaths | None = None) -> dict:
@@ -1743,15 +1773,81 @@ def set_profile_context(body: dict, paths: ModelPaths | None = None) -> dict:
         model_cfg.setdefault("model_name", folder)
     _write_profile_yaml(src, data)
     _sync_config_context(existing, seq, model_cfg, p)
-    from common.phrase_switch import reset_profile_map_cache
-
-    reset_profile_map_cache()
+    _reset_profile_map_cache()
     loaded_name = None if paths is not None else _loaded_folder()
     return {
         "ok": True,
         "alias": existing,
         "folder": folder,
         "max_seq_len": seq,
+        "loaded": bool(loaded_name and loaded_name == folder),
+    }
+
+
+def set_profile_vision(body: dict, paths: ModelPaths | None = None) -> dict:
+    p = paths or default_paths()
+    folder = str((body or {}).get("folder") or (body or {}).get("id") or "").strip()
+    current = str((body or {}).get("profile") or "").strip()
+    enabled = parse_vision(
+        (body or {}).get("vision") if "vision" in (body or {}) else (body or {}).get("use_vision")
+    )
+    if folder:
+        folder = sanitize_folder_name(folder)
+    elif current:
+        entry = _profile_map(p.profiles_dir, models_dir=p.models_dir).get(current.lower()) or {}
+        folder = str(entry.get("folder") or "")
+        if not folder:
+            raise ModelsError(f"Unknown profile {current!r}", 404)
+    else:
+        raise ModelsError("folder or profile is required")
+
+    dest_folder = (p.models_dir / folder).resolve()
+    models_root = p.models_dir.resolve()
+    if dest_folder != models_root and models_root not in dest_folder.parents:
+        raise ModelsError("Path is outside the models directory")
+    if not dest_folder.is_dir():
+        raise ModelsError(f"{folder} is not installed", 404)
+
+    existing = profile_alias_for_folder(folder, p) or maybe_write_hf_profile(folder, paths=p)
+    if not existing:
+        raise ModelsError("Could not create a profile for this model", 500)
+    src = p.profiles_dir / f"{existing}.yml"
+    data = _load_profile_yaml(src) if src.is_file() else {}
+    if not data:
+        data = profile_defaults_from_config(dest_folder)
+        data["local"] = True
+    model_cfg = data.get("model")
+    if not isinstance(model_cfg, dict):
+        model_cfg = {}
+        data["model"] = model_cfg
+    model_cfg["vision"] = enabled
+    if enabled and "vision_offload" not in model_cfg:
+        from common.switch_times import detect_gpu
+        from common.vision_defaults import VISION_OFFLOAD_VRAM_MIB
+
+        vram_mib = int((detect_gpu() or {}).get("vram_mib") or 0)
+        if vram_mib > 0 and vram_mib < VISION_OFFLOAD_VRAM_MIB:
+            model_cfg["vision_offload"] = True
+    if folder:
+        model_cfg.setdefault("model_name", folder)
+    from common.switch_times import gpu_label
+    from common.vision_defaults import pretty_with_vision_note
+
+    pretty = str(data.get("pretty") or existing)
+    data["pretty"] = pretty_with_vision_note(pretty, enabled, gpu_label())
+    _write_profile_yaml(src, data)
+    sync_fields = {"vision": enabled}
+    if "vision_offload" in model_cfg:
+        sync_fields["vision_offload"] = model_cfg["vision_offload"]
+    _sync_config_model(existing, sync_fields, p)
+    _write_settings_vision(existing, sync_fields, p)
+    _reset_profile_map_cache()
+    loaded_name = None if paths is not None else _loaded_folder()
+    return {
+        "ok": True,
+        "alias": existing,
+        "folder": folder,
+        "vision": enabled,
         "loaded": bool(loaded_name and loaded_name == folder),
     }
 
@@ -1842,9 +1938,7 @@ def set_profile_alias(body: dict, paths: ModelPaths | None = None) -> dict:
             folder, alias=wanted, pretty=pretty_in, paths=p
         )
     _collapse_extra_local_profiles(folder, wanted, p)
-    from common.phrase_switch import reset_profile_map_cache
-
-    reset_profile_map_cache()
+    _reset_profile_map_cache()
     return {
         "ok": True,
         "alias": wanted,

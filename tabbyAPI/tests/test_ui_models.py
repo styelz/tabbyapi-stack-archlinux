@@ -32,6 +32,8 @@ from ui.models import (
     parse_seq_len,
     set_profile_alias,
     set_profile_context,
+    set_profile_vision,
+    parse_vision,
     start_download,
     write_job,
 )
@@ -297,6 +299,7 @@ class LibraryAndDeleteTests(unittest.TestCase):
             )
             data = library_state(paths, loaded="")
             self.assertEqual(data["llms"][0]["max_seq_len"], 32768)
+            self.assertIsNone(data["llms"][0]["vision"])
             self.assertIn(32768, data["context_choices"])
             self.assertEqual(data["context_choices"][0], 8192)
             self.assertEqual(data["context_choices"][-1], 262144)
@@ -326,7 +329,7 @@ class LibraryAndDeleteTests(unittest.TestCase):
                 "  model_name: Some-20B\n  max_seq_len: 8192\n",
                 encoding="utf-8",
             )
-            with mock.patch("common.phrase_switch.reset_profile_map_cache"):
+            with mock.patch.object(ui_models, "_reset_profile_map_cache"):
                 exl = set_profile_context(
                     {"folder": "Qwen3.5-9B-exl3-4.00bpw", "max_seq_len": 32768},
                     paths=paths,
@@ -347,6 +350,66 @@ class LibraryAndDeleteTests(unittest.TestCase):
             self.assertIn("max_seq_len: 65536", gguf_yml)
             self.assertNotIn("cache_size:", gguf_yml)
 
+    def test_library_includes_profile_vision(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            paths = _paths(root)
+            _llm_folder(paths.models_dir, "GLM-4.1V-9B")
+            (paths.profiles_dir / "glm.yml").write_text(
+                "pretty: GLM (vision off on 12 GB)\nmodel:\n"
+                "  model_name: GLM-4.1V-9B\n  vision: false\n",
+                encoding="utf-8",
+            )
+            data = library_state(paths, loaded="")
+            self.assertIs(data["llms"][0]["vision"], False)
+
+    def test_set_profile_vision_writes_profile_and_config(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            paths = _paths(root)
+            _llm_folder(paths.models_dir, "GLM-4.1V-9B")
+            (paths.profiles_dir / "glm.yml").write_text(
+                "pretty: GLM (vision off on 12 GB)\nmodel:\n"
+                "  model_name: GLM-4.1V-9B\n  vision: false\n",
+                encoding="utf-8",
+            )
+            (root / "config.yml").write_text(
+                "model:\n  model_name: GLM-4.1V-9B\n  vision: false\n",
+                encoding="utf-8",
+            )
+            (paths.profiles_dir / "last.json").write_text(
+                '{"profile": "glm"}\n', encoding="utf-8"
+            )
+            with mock.patch.object(ui_models, "_reset_profile_map_cache"), mock.patch(
+                "common.switch_times.gpu_label", return_value="12 GB"
+            ), mock.patch(
+                "common.switch_times.detect_gpu", return_value={"vram_mib": 12288}
+            ):
+                enabled = set_profile_vision(
+                    {"folder": "GLM-4.1V-9B", "vision": True},
+                    paths=paths,
+                )
+                on_yml = (paths.profiles_dir / "glm.yml").read_text(encoding="utf-8")
+                on_cfg = (root / "config.yml").read_text(encoding="utf-8")
+                on_settings = (paths.profiles_dir / "settings_model.yml").read_text(
+                    encoding="utf-8"
+                )
+                disabled = set_profile_vision(
+                    {"folder": "GLM-4.1V-9B", "vision": "off"},
+                    paths=paths,
+                )
+            self.assertTrue(enabled["vision"])
+            self.assertEqual(enabled["alias"], "glm")
+            self.assertIn("vision: true", on_yml)
+            self.assertIn("vision_offload: true", on_yml)
+            self.assertNotIn("vision off", on_yml.split("pretty:", 1)[-1].split("\n", 1)[0])
+            self.assertIn("vision: true", on_cfg)
+            self.assertIn("vision: true", on_settings)
+            self.assertFalse(disabled["vision"])
+            saved = (paths.profiles_dir / "glm.yml").read_text(encoding="utf-8")
+            self.assertIn("vision: false", saved)
+            self.assertIn("vision off on 12 GB", saved)
+
     def test_parse_seq_len_rejects_bad_values(self):
         self.assertEqual(parse_seq_len(32768), 32768)
         with self.assertRaises(ui_models.ModelsError):
@@ -355,6 +418,10 @@ class LibraryAndDeleteTests(unittest.TestCase):
             parse_seq_len(300)
         with self.assertRaises(ui_models.ModelsError):
             parse_seq_len(300000)
+        self.assertTrue(parse_vision("on"))
+        self.assertFalse(parse_vision("off"))
+        with self.assertRaises(ui_models.ModelsError):
+            parse_vision("maybe")
 
     def test_library_lists_gguf_folder_without_config(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -1019,6 +1086,9 @@ class ModelsJsTests(unittest.TestCase):
         self.assertIn("<select", text)
         self.assertIn("context_choices", text)
         self.assertIn("function contextLabel", text)
+        self.assertIn("function visionField", text)
+        self.assertIn("models/vision", text)
+        self.assertIn("data-vision-folder", text)
 
 
 if __name__ == "__main__":
