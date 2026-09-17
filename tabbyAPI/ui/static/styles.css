@@ -3167,8 +3167,12 @@ button.chip {
   gap: 0.5rem;
   min-width: 0;
   max-width: min(760px, 92%);
+  isolation: isolate;
 }
 .chat-turn .bubble.assistant {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 auto;
   max-width: 100%;
 }
 .think-head {
@@ -3176,7 +3180,9 @@ button.chip {
   align-items: center;
   gap: 0.5rem;
   min-height: 1.375rem;
+  min-width: 0;
   max-width: 100%;
+  overflow: hidden;
   white-space: nowrap;
   color: var(--muted);
   font-size: 0.8125rem;
@@ -3246,6 +3252,9 @@ button.chip {
 }
 .think-head.is-clickable:hover .think-icon.is-done { opacity: 1; }
 .think-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--muted);
 }
 .think-head.is-live .think-label {
@@ -3293,6 +3302,10 @@ button.chip {
   transform: rotate(90deg);
 }
 .think-body {
+  position: relative;
+  z-index: 0;
+  flex: 0 1 auto;
+  min-height: 0;
   margin: 0 0 0.125rem 1.5rem;
   padding: 0 0 0 0.625rem;
   border-left: 1px solid var(--line);
@@ -3302,6 +3315,10 @@ button.chip {
   white-space: normal;
   max-height: 22rem;
   overflow: auto;
+  contain: paint;
+}
+.think-body > * {
+  position: relative;
 }
 .think-image-progress {
   margin: 0.1rem 0 0.15rem 1.5rem;
@@ -5122,6 +5139,10 @@ figure.shot .open { display: block; }
 .models-badge.is-on {
   background: rgba(var(--ok-rgb), 0.16);
   color: var(--ok);
+}
+#models-lib-body tr.is-switching .models-badge.is-on {
+  background: rgba(var(--warn-rgb), 0.16);
+  color: var(--warn);
 }
 .models-catalog {
   display: flex;

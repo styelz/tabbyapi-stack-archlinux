@@ -98,9 +98,14 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
         self.assertIn("function paintLiveReason(block)", self.src)
         self.assertIn('block.classList.add("is-live")', self.src)
         self.assertIn("if (block.textContent !== reasoningText) block.textContent = reasoningText;", self.src)
+        self.assertIn("function thoughtStepsSignature()", self.src)
+        self.assertIn("function ensureLiveReasonBlock()", self.src)
+        self.assertIn("if (live && thought.childElementCount && sig === thoughtStepSig)", self.src)
         css = CHAT_CSS.read_text(encoding="utf-8")
         self.assertIn(".think-reason.is-live", css)
         self.assertIn("white-space: pre-wrap", css)
+        self.assertIn("contain: paint", css)
+        self.assertIn(".think-body > *", css)
 
     def test_reply_model_name_does_not_flip_during_stream(self):
         self.assertIn("if (modelName && !(opts && opts.replace)) return;", self.src)

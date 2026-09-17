@@ -10417,27 +10417,52 @@ function mountChat(root) {
       if (block.textContent !== reasoningText) block.textContent = reasoningText;
     }
 
+    let thoughtStepSig = "";
+
+    function thoughtStepsSignature() {
+      return steps.filter(stepIsVisible).map((step) => {
+        const kind = String((step && step.type) || "");
+        if (kind === "said" || kind === "thought") {
+          return `${kind}:${String((step && step.content) || "").length}`;
+        }
+        return [
+          kind,
+          (step && (step.name || step.label)) || "",
+          toolStepPath(step) || "",
+          String((step && step.result) || "").length,
+        ].join(":");
+      }).join("|");
+    }
+
+    function ensureLiveReasonBlock() {
+      let block = thought.querySelector(":scope > .think-reason");
+      if (!reasoningText) {
+        if (block) block.remove();
+        return null;
+      }
+      if (!block) {
+        block = document.createElement("div");
+        block.className = "think-reason";
+        thought.insertBefore(block, thought.firstChild);
+      }
+      paintLiveReason(block);
+      return block;
+    }
+
     function paintThought() {
       paintStepCount();
       if (!hasTrace()) {
         thought.hidden = true;
         thought.innerHTML = "";
+        thoughtStepSig = "";
         return;
       }
-      const liveReasonOnly = Boolean(
-        !finished
-        && !imageHoldActive
-        && reasoningText
-        && !steps.some(stepIsVisible)
-      );
-      const existing = thought.firstElementChild;
-      if (
-        liveReasonOnly
-        && thought.childElementCount === 1
-        && existing
-        && existing.classList.contains("think-reason")
-      ) {
-        paintLiveReason(existing);
+      const live = Boolean(!finished && !imageHoldActive);
+      const sig = thoughtStepsSignature();
+      // After the first tool row, keep growing text in place. Rebuilding the
+      // whole trace every token stacks the new paint on the reply below.
+      if (live && thought.childElementCount && sig === thoughtStepSig) {
+        ensureLiveReasonBlock();
         thought.hidden = false;
         stickThought();
         return;
@@ -10448,7 +10473,7 @@ function mountChat(root) {
       if (reasoningText) {
         const block = document.createElement("div");
         block.className = "think-reason";
-        if (!finished && !imageHoldActive) paintLiveReason(block);
+        if (live) paintLiveReason(block);
         else block.innerHTML = TabbyUI.renderMarkdown(reasoningText);
         thought.appendChild(block);
       }
@@ -10456,6 +10481,7 @@ function mountChat(root) {
         const row = renderAgentStep(step);
         if (row) thought.appendChild(row);
       });
+      thoughtStepSig = sig;
       thought.hidden = (finished || imageHoldActive) ? !expanded : false;
       if (finished || imageHoldActive) {
         thought.scrollTop = keepScroll;
