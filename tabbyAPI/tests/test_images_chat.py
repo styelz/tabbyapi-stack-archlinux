@@ -2042,6 +2042,117 @@ class LiveCodeStreamTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(response)
         self.assertTrue(launch)
 
+    async def test_dests_on_page_launch_without_another_code_pass(self):
+        from images.chat import _write_page_then_maybe_launch
+
+        job = _job(
+            id="abc-123",
+            status="coding",
+            owner="pbp",
+            chat_id="ws-page",
+            items=[
+                SimpleNamespace(
+                    prompt="panel",
+                    output_path="images/panel1.png",
+                    urls=[],
+                    status="queued",
+                )
+            ],
+        )
+        data = _user(
+            "there are 6 panels in the collection, there should be a unique image "
+            "for each panel t suite the description and the style of the images "
+            "should be in the websites style."
+        )
+        write = mock.AsyncMock()
+        with (
+            mock.patch("images.chat._write_site_code", write),
+            mock.patch("images.chat._workspace_page_ready", return_value=True),
+            mock.patch("images.chat._missing_linked_page_files", return_value=[]),
+            mock.patch("images.chat._missing_requested_pages", return_value=[]),
+            mock.patch("images.chat._dests_already_on_page", return_value=True),
+            mock.patch("images.chat._page_blocking_comfy", return_value=False),
+            mock.patch("images.chat.note_coding_progress") as note,
+        ):
+            response, launch = await _write_page_then_maybe_launch(data, job, None)
+        write.assert_not_awaited()
+        note.assert_not_called()
+        self.assertIsNone(response)
+        self.assertTrue(launch)
+
+    def test_keep_writing_does_not_block_unbound_dests(self):
+        from images.chat import _keep_writing_page
+
+        job = _job(id="abc-123", status="coding", owner="", chat_id="", code_turns=1)
+        data = _user("there are 6 panels in the collection")
+        read_only = ChatCompletionResponse(
+            model="gpt-4o",
+            choices=[
+                ChatCompletionRespChoice(
+                    finish_reason="tool_calls",
+                    message=ChatCompletionMessage(
+                        role="assistant",
+                        content="",
+                        tool_calls=[
+                            ToolCall(
+                                function=Tool(
+                                    name="Read",
+                                    arguments='{"path":"index.html"}',
+                                )
+                            )
+                        ],
+                    ),
+                )
+            ],
+        )
+        self.assertFalse(_keep_writing_page(read_only, job, data))
+
+    async def test_dests_already_on_page_first_pass_starts_comfy(self):
+        planned = [
+            {"prompt": "qwen-image: panel one", "output_path": "images/panel1.png"}
+        ]
+        job = _job(id="panel-job", status="queued")
+        data = _user(
+            "there are 6 panels in the collection, there should be a unique image "
+            "for each panel t suite the description"
+        )
+        with (
+            mock.patch("images.chat.get_mcp_image_job", return_value=None),
+            mock.patch("images.chat.active_mcp_image_job", return_value=None),
+            mock.patch(
+                "images.chat.classify_image_turn",
+                new=mock.AsyncMock(
+                    return_value=ImageTurnPlan(action="generate", items=planned)
+                ),
+            ),
+            mock.patch(
+                "images.chat._write_site_code",
+                new=mock.AsyncMock(return_value=_write_code_response()),
+            ),
+            mock.patch("images.chat._pages_on_disk", return_value=True),
+            mock.patch("images.chat._dests_already_on_page", return_value=True),
+            mock.patch("images.chat._profile_writes_files", return_value=True),
+            mock.patch(
+                "images.chat.start_mcp_image_job",
+                new=mock.AsyncMock(return_value=(job, "started")),
+            ) as start,
+            mock.patch(
+                "images.chat._hold_then_reply", new=mock.AsyncMock(return_value="held")
+            ) as hold,
+        ):
+            result = await handle(
+                data,
+                "https://gpu.example/v1",
+                llm_ready=True,
+                code=True,
+                owner="pbp",
+                chat_id="ws-page",
+                console=True,
+            )
+        self.assertTrue(start.await_args.kwargs.get("start", True))
+        hold.assert_awaited()
+        self.assertEqual(result, "held")
+
     async def test_tool_followup_generates_when_css_still_missing(self):
         from images.chat import _write_page_then_maybe_launch
 

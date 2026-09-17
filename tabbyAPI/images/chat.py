@@ -623,14 +623,26 @@ def _file_write_pairs(message) -> list[tuple[str, dict]]:
     ]
 
 
+def _item_output_path(row) -> str:
+    if isinstance(row, dict):
+        return str(row.get("output_path") or "").strip()
+    return str(getattr(row, "output_path", "") or "").strip()
+
+
+def _item_prompt(row) -> str:
+    if isinstance(row, dict):
+        return str(row.get("prompt") or "")
+    return str(getattr(row, "prompt", "") or "")
+
+
 def _job_plan_items(job) -> list[dict[str, str]]:
     items: list[dict[str, str]] = []
     for item in getattr(job, "items", None) or []:
-        dest = str(getattr(item, "output_path", "") or "").strip()
+        dest = _item_output_path(item)
         if dest:
             items.append(
                 {
-                    "prompt": str(getattr(item, "prompt", "") or ""),
+                    "prompt": _item_prompt(item),
                     "output_path": dest,
                 }
             )
@@ -704,7 +716,7 @@ def _dests_already_on_page(
     owner: str | None, chat_id: str | None, items: list[dict[str, str]]
 ) -> bool:
     """True when every planned dest is already named in the page files."""
-    dests = [str(row.get("output_path") or "").strip() for row in items or []]
+    dests = [_item_output_path(row) for row in items or []]
     dests = [dest for dest in dests if dest]
     if not dests or not owner or not chat_id:
         return False
@@ -714,6 +726,23 @@ def _dests_already_on_page(
         return page_references_dests(owner, chat_id, dests)
     except Exception:
         return False
+
+
+def _mixed_render_files_ready(job, data=None) -> bool:
+    """True when HTML/CSS/JS exist and every planned dest is already named."""
+    owner, chat_id = _job_workspace_ids(job)
+    if not owner or not chat_id:
+        return False
+    if _missing_linked_page_files(job):
+        return False
+    if data is not None and _missing_requested_pages(owner, chat_id, data):
+        return False
+    if not _workspace_page_ready(job, data):
+        return False
+    items = _job_plan_items(job)
+    if not items:
+        return True
+    return _dests_already_on_page(owner, chat_id, items)
 
 
 def _ask_needs_page_wire(data: ChatCompletionRequest) -> bool:
@@ -977,7 +1006,9 @@ def _keep_writing_page(code_response, job, data=None) -> bool:
     owner = str(getattr(job, "owner", "") or "")
     chat_id = str(getattr(job, "chat_id", "") or "")
     missing_html = _missing_requested_pages(owner, chat_id, data) if data is not None else []
-    unwired = not _dests_already_on_page(owner, chat_id, _job_plan_items(job))
+    unwired = bool(owner and chat_id) and not _dests_already_on_page(
+        owner, chat_id, _job_plan_items(job)
+    )
     if not code_response:
         return False
     message = _assistant_message(code_response)
@@ -998,7 +1029,9 @@ async def _write_page_then_maybe_launch(data, job, disconnect_handler):
     """Another coding completion. Hold while named HTML or linked CSS/JS are missing."""
     _inject_missing_page_files(data, job)
     _inject_missing_requested_pages(data, job)
-    if _tool_followup_ready_for_comfy(data, job):
+    if _tool_followup_ready_for_comfy(data, job) or _mixed_render_files_ready(
+        job, data
+    ):
         return None, _should_launch_mixed_render(None, job, data, allow_empty=True)
     note_coding_progress(job)
     code_response = await _write_site_code(data, disconnect_handler)
@@ -1029,7 +1062,12 @@ async def _write_page_then_maybe_launch(data, job, disconnect_handler):
         code_response = extra
         if _keep_writing_page(code_response, job, data):
             return code_response, False
-    if not _dests_already_on_page(owner, chat_id, _job_plan_items(job)) and can_retry:
+    if (
+        owner
+        and chat_id
+        and not _dests_already_on_page(owner, chat_id, _job_plan_items(job))
+        and can_retry
+    ):
         _inject_unwired_dests(data, job)
         extra = await _write_site_code(data, disconnect_handler)
         if extra is None:
@@ -1794,7 +1832,7 @@ async def handle(
     workspace = (owner, chat_id) if code and owner and chat_id else None
     job_id = job_id_from_history(data)
     job = get_mcp_image_job(job_id) if job_id else None
-    if workspace:
+    if owner or chat_id:
         bind_job_workspace(job, owner or "", chat_id or "")
     if workspace and (job is None or str(getattr(job, "status", "") or "") in ("done", "error")):
         busy = active_mcp_image_job()
