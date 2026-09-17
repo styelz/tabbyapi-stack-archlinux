@@ -171,6 +171,7 @@ CHAT_QUESTION_RE = re.compile(
     r"(?is)^\s*(?:"
     r"(?:what(?:'s|s)?|why|who|when|where|which)\b"
     r"|how\s+(?:are|do|does|did|can|to|is|come)\b"
+    r"|(?:is|are|do|does|did|am)\s+(?:the|this|that|it|there|you|we|they|i|these|those)\b"
     r"|(?:can|could|would|should|will)\s+you\s+(?:explain|tell|help|show me how)\b"
     r")"
 )
@@ -1803,10 +1804,12 @@ def looks_like_chat_not_image(text: str) -> bool:
         return False
     if raw.lower().startswith("qwen-image:"):
         return False
-    if CHAT_FOLLOWUP_RE.match(raw) or CHAT_OPENER_RE.match(raw):
+    if CHAT_FOLLOWUP_RE.match(raw) or CHAT_QUESTION_RE.match(raw):
         return True
     if IMAGE_NOUN_RE.search(raw):
         return False
+    if CHAT_OPENER_RE.match(raw):
+        return True
     return False
 
 

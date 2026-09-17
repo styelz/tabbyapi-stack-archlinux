@@ -83,6 +83,8 @@ _EXPLICIT_NEW_RE = re.compile(
     r"\bgenerated\s+by\s+comfy(?:ui)?\b|"
     r"\b(?:use|via|with|through)\s+comfy(?:ui)?\b|"
     r"\bunique\s+images?\s+for\s+each\b|"
+    r"\bi\s+(?:just\s+)?(?:want|need)\s+images?\b|"
+    r"\bimages?\s+created\b|"
     r"\b(?:redo|recreate)\b|"
     r"\breplace\s+the\s+(?:logo|hero(?:\s+(?:image|photo))?|header\s+(?:image|photo)|image|photo)\b|"
     r"\bnew\s+(?:logo|hero(?:\s+photo)?|header\s+photo)\b"
