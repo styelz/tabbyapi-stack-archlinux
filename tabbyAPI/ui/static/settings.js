@@ -1,14 +1,19 @@
 function mountSettings(root) {
   root.innerHTML = `
     <div class="settings-page">
-      <div class="toolbar">
-        <button class="btn primary" type="button" id="settings-save">Save</button>
-        <button class="btn" type="button" id="settings-reload">Reload</button>
-        <button class="btn danger" type="button" id="settings-restart">Restart API</button>
-        <span class="spacer"></span>
-        <div class="settings-stamp">
-          <span class="settings-path-line" id="settings-path"></span>
-          <span class="settings-hint" id="settings-hint"></span>
+      <div class="page-head">
+        <div>
+          <h1>Settings</h1>
+          <p class="page-sub">Tabby config, system env, screensaver, and GPU.</p>
+        </div>
+        <div class="page-actions">
+          <div class="settings-stamp">
+            <span class="settings-path-line" id="settings-path"></span>
+            <span class="settings-hint" id="settings-hint"></span>
+          </div>
+          <button class="btn primary" type="button" id="settings-save">Save</button>
+          <button class="btn" type="button" id="settings-reload">Reload</button>
+          <button class="btn danger" type="button" id="settings-restart">Restart API</button>
         </div>
       </div>
       <p class="error" id="settings-error" hidden></p>

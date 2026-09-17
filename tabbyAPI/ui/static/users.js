@@ -1,6 +1,15 @@
 function mountUsers(root) {
   root.innerHTML = `
     <div class="users-page">
+      <div class="page-head">
+        <div>
+          <h1>Users</h1>
+          <p class="page-sub">Tabby-only accounts. They are not Linux users.</p>
+        </div>
+        <div class="page-actions">
+          <button class="btn" type="button" id="users-refresh">Refresh</button>
+        </div>
+      </div>
       <div class="card">
         <h2>Create account</h2>
         <p class="muted">Tabby-only users. They are not Linux accounts. Extra users can use Chat, Code, Status, Gallery, and Logs, but cannot create users or change Settings.</p>
@@ -18,10 +27,7 @@ function mountUsers(root) {
       </div>
       <div class="card">
         <h2>Accounts</h2>
-        <div class="toolbar">
-          <button class="btn" type="button" id="users-refresh">Refresh</button>
-        </div>
-        <table class="users-table">
+        <table class="users-table data-table">
           <thead>
             <tr>
               <th>Username</th>

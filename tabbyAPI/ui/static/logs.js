@@ -1,12 +1,17 @@
 function mountLogs(root) {
   root.innerHTML = `
-    <div class="toolbar">
-      <button class="btn" id="log-pause">Pause</button>
-      <button class="btn" id="log-clear">Clear</button>
-      <button class="btn" id="log-latest">Jump to latest</button>
-      <input class="search" id="log-filter" placeholder="Filter logs" />
-      <span class="spacer"></span>
-      <span class="muted" id="log-state">connecting…</span>
+    <div class="page-head">
+      <div>
+        <h1>Logs</h1>
+        <p class="page-sub">Live TabbyAPI and ComfyUI output.</p>
+      </div>
+      <div class="page-actions">
+        <button class="btn" id="log-pause">Pause</button>
+        <button class="btn" id="log-clear">Clear</button>
+        <button class="btn" id="log-latest">Jump to latest</button>
+        <input class="search" id="log-filter" placeholder="Filter logs" />
+        <span class="muted" id="log-state">connecting…</span>
+      </div>
     </div>
     <pre class="log-view" id="log-view"></pre>
   `;

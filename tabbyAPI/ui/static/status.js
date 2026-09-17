@@ -1,9 +1,14 @@
 function mountStatus(root) {
   root.innerHTML = `
-    <div class="toolbar status-toolbar">
-      <button class="btn" id="status-refresh">Refresh</button>
-      <span class="spacer"></span>
-      <span class="muted" id="status-stamp"></span>
+    <div class="page-head">
+      <div>
+        <h1>Status</h1>
+        <p class="page-sub">GPU, host load, and stack actions.</p>
+      </div>
+      <div class="page-actions">
+        <span class="muted" id="status-stamp"></span>
+        <button class="btn" id="status-refresh">Refresh</button>
+      </div>
     </div>
     <div class="status-layout">
       <aside class="status-side">

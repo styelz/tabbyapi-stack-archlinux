@@ -323,15 +323,20 @@ if (window.TabbyUI) {
 
 function mountGallery(root) {
   root.innerHTML = `
-    <div class="toolbar">
-      <button class="btn" type="button" id="gal-upload">Upload</button>
-      <input id="gal-file" type="file" accept="${GALLERY_IMAGE_ACCEPT}" multiple hidden />
-      <button class="btn" type="button" id="gal-attach" disabled>Attach to chat</button>
-      <span id="sel-count">0 selected</span>
-      <button class="btn" id="del-sel" disabled>Delete selected</button>
-      <button class="btn danger" id="del-all">Delete all</button>
-      <span class="spacer"></span>
-      <div class="pager" id="pager"></div>
+    <div class="page-head">
+      <div>
+        <h1>Gallery</h1>
+        <p class="page-sub">Generated and uploaded images on this host.</p>
+      </div>
+      <div class="page-actions">
+        <button class="btn" type="button" id="gal-upload">Upload</button>
+        <input id="gal-file" type="file" accept="${GALLERY_IMAGE_ACCEPT}" multiple hidden />
+        <button class="btn" type="button" id="gal-attach" disabled>Attach to chat</button>
+        <span class="muted" id="sel-count">0 selected</span>
+        <button class="btn" id="del-sel" disabled>Delete selected</button>
+        <button class="btn danger" id="del-all">Delete all</button>
+        <div class="pager" id="pager"></div>
+      </div>
     </div>
     <div class="grid" id="grid"></div>
     <p class="error" id="gallery-error" hidden></p>

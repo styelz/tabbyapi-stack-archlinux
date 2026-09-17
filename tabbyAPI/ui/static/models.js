@@ -1,6 +1,15 @@
 function mountModels(root) {
   root.innerHTML = `
     <div class="models-page">
+      <div class="page-head">
+        <div>
+          <h1>Models</h1>
+          <p class="page-sub">Library on this host, and Hugging Face search.</p>
+        </div>
+        <div class="page-actions">
+          <button type="button" class="btn" id="models-refresh">Refresh</button>
+        </div>
+      </div>
       <div class="models-job" id="models-job" hidden>
         <div class="models-job-copy">
           <strong id="models-job-title">Download</strong>
@@ -19,11 +28,9 @@ function mountModels(root) {
           <div class="models-pane-head">
             <h2>Library</h2>
             <span class="muted" id="models-disk"></span>
-            <span class="spacer"></span>
-            <button type="button" class="btn" id="models-refresh">Refresh</button>
           </div>
           <p class="muted" id="models-lib-empty" hidden>No models in the catalog yet.</p>
-          <table class="models-table">
+          <table class="models-table data-table">
             <thead>
               <tr>
                 <th>Model</th>

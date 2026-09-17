@@ -118,7 +118,7 @@
       }
     })();
     // Bust browser/proxy caches when chat status UI changes.
-    window.TABBY_UI_ASSET_V = "20260911-glm-answer";
+    window.TABBY_UI_ASSET_V = "20260917-shell";
     // document.write keeps CSS render-blocking. createElement("link") does not,
     // and unhiding on the first sheet's onload flashed the unstyled shell.
     document.write('<link rel="stylesheet" href="' + TABBY_UI_BASE + "/assets/styles.css?v=" + TABBY_UI_ASSET_V + '">');
@@ -126,23 +126,42 @@
   </script>
 </head>
 <body>
+  <nav class="app-rail" aria-label="Main">
+    <a href="#chat" data-page="chat" class="tab rail-item is-active" title="Chat">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6.5A2.5 2.5 0 0 1 7.5 4h9A2.5 2.5 0 0 1 19 6.5v7A2.5 2.5 0 0 1 16.5 16H10l-4.2 3.2A.6.6 0 0 1 5 18.7V6.5Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
+      <span>Chat</span>
+    </a>
+    <a href="#status" data-page="status" class="tab rail-item" title="Status">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 16.5 8.5 12l3.2 3.2L20 7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M14 7h6v6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>Status</span>
+    </a>
+    <a href="#models" data-page="models" class="tab rail-item" id="tab-models" hidden title="Models">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4.5 20 8.2v7.6L12 19.5 4 15.8V8.2L12 4.5Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M12 19.5V12M20 8.2 12 12 4 8.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
+      <span>Models</span>
+    </a>
+    <a href="#gallery" data-page="gallery" class="tab rail-item" title="Gallery">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5.5" width="16" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="m7.5 15.5 3-3.2 2.2 2.2 2.4-3 3.4 4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><circle cx="9" cy="9.2" r="1.1" fill="currentColor"/></svg>
+      <span>Gallery</span>
+    </a>
+    <a href="#logs" data-page="logs" class="tab rail-item" id="tab-logs" hidden title="Logs">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h10M7 12h10M7 17h7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><rect x="4" y="4" width="16" height="16" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>
+      <span>Logs</span>
+    </a>
+    <a href="#users" data-page="users" class="tab rail-item" id="tab-users" hidden title="Users">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8.2" r="2.6" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M4.8 17.8c.7-2.8 2.8-4.2 4.2-4.2s3.5 1.4 4.2 4.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="16.4" cy="9" r="2.1" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M15.2 17.8c.4-1.8 1.6-2.9 2.8-2.9 1 0 1.8.6 2.4 1.6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+      <span>Users</span>
+    </a>
+    <a href="#settings" data-page="settings" class="tab rail-item" id="tab-settings" hidden title="Settings">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.1" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12 4.2v2.1M12 17.7v2.1M4.2 12h2.1M17.7 12h2.1M6.5 6.5l1.5 1.5M16 16l1.5 1.5M6.5 17.5l1.5-1.5M16 8l1.5-1.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+      <span>Settings</span>
+    </a>
+  </nav>
+  <div class="app-frame">
   <header class="app-header">
     <div class="brand compact">
       <div class="brand-mark" aria-hidden="true"></div>
-      <div>
-        <p class="eyebrow">TabbyAPI Stack</p>
-        <strong id="header-title">Chat</strong>
-      </div>
+      <strong id="header-title">Chat</strong>
     </div>
-    <nav class="tabs" aria-label="Main">
-      <a href="#chat" data-page="chat" class="tab is-active">Chat</a>
-      <a href="#status" data-page="status" class="tab">Status</a>
-      <a href="#models" data-page="models" class="tab" id="tab-models" hidden>Models</a>
-      <a href="#gallery" data-page="gallery" class="tab">Gallery</a>
-      <a href="#logs" data-page="logs" class="tab" id="tab-logs" hidden>Logs</a>
-      <a href="#users" data-page="users" class="tab" id="tab-users" hidden>Users</a>
-      <a href="#settings" data-page="settings" class="tab" id="tab-settings" hidden>Settings</a>
-    </nav>
     <div class="header-meta">
       <div class="context-menu" id="context-menu">
         <button type="button" id="context-chip" class="context-usage-widget" hidden aria-haspopup="true" aria-expanded="false" aria-label="Context window usage">
@@ -226,6 +245,7 @@
     <section id="page-users" class="page" data-page="users" hidden></section>
     <section id="page-settings" class="page" data-page="settings" hidden></section>
   </main>
+  </div>
 
   <script>
     ["highlight.js", "utils.js", "xterm.js", "xterm-addon-fit.js", "monaco.js", "lsp.js", "palette.js", "logs.js", "chat.js", "status.js", "models.js", "gallery.js", "users.js", "settings.js", "app.js"].forEach(function (name) {
