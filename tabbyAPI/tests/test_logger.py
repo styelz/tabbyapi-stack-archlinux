@@ -33,6 +33,12 @@ class UiAccessLogTests(unittest.TestCase):
             '"GET /v1/ui/status HTTP/1.1" 200'
         )
         self.assertTrue(is_ui_access_line(line))
+        self.assertTrue(is_ui_access_line(
+            '127.0.0.1:56946 - "GET /v1/model HTTP/1.1" 200'
+        ))
+        self.assertTrue(is_ui_access_line('"GET /openai/v1/model HTTP/1.1" 200'))
+        self.assertFalse(is_ui_access_line('"GET /v1/models HTTP/1.1" 200'))
+        self.assertFalse(is_ui_access_line('"POST /v1/model/load HTTP/1.1" 200'))
         self.assertFalse(is_ui_access_line('"GET /v1/chat/completions HTTP/1.1" 200'))
 
     def test_sse_chunk_echo_is_hidden(self):
@@ -51,6 +57,21 @@ class UiAccessLogTests(unittest.TestCase):
             pathname="",
             lineno=0,
             msg='36.255.114.172:0 - "GET /v1/ui/status HTTP/1.1" 200',
+            args=(),
+            exc_info=None,
+        )
+        with mock.patch("common.logger.logger") as log:
+            handler.emit(record)
+        log.opt.assert_not_called()
+
+    def test_handler_drops_model_poll_access(self):
+        handler = UvicornLoggingHandler()
+        record = logging.LogRecord(
+            name="uvicorn.access",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg='127.0.0.1:56946 - "GET /v1/model HTTP/1.1" 200',
             args=(),
             exc_info=None,
         )

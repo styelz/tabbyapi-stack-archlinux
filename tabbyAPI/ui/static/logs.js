@@ -118,7 +118,10 @@ function mountLogs(root) {
   const seenCatchUp = new Set();
 
   function isUiAccess(line) {
-    return /"[A-Z]+ (?:\/\w+)?(?:\/v1)?\/ui(?:[/?\s]|$)/.test(line);
+    return (
+      /"[A-Z]+ (?:\/\w+)?(?:\/v1)?\/ui(?:[/?\s]|$)/.test(line)
+      || /"GET (?:\/\w+)?(?:\/v1)?\/model(?:[\s?"]|$)/.test(line)
+    );
   }
 
   function rememberLine() {

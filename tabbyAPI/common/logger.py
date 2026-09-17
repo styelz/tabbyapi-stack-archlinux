@@ -100,10 +100,12 @@ def _log_formatter(record: dict):
     return fmt
 
 
-# uvicorn access lines for the management UI itself (status poll, assets, logs stream).
-# Optional first segment covers reverse-proxy prefixes such as /openai/v1/ui.
+# uvicorn access lines for the management UI itself (status poll, assets, logs stream)
+# and the sidecar GET /v1/model card poll. Optional first segment covers reverse-proxy
+# prefixes such as /openai/v1/ui. Exact /model only — keep /v1/model/load visible.
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _UI_ACCESS_RE = re.compile(r'"[A-Z]+ (?:/\w+)?(?:/v1)?/ui(?:[/?\s]|$)')
+_MODEL_POLL_RE = re.compile(r'"GET (?:/\w+)?(?:/v1)?/model(?:[\s?"]|$)')
 # sse_starlette logs every sent chunk at DEBUG. Streaming /ui/logs back into
 # journalctl turns that into a runaway echo (multi-megabyte lines, /health hangs).
 _SSE_ECHO_RE = re.compile(r"event:\s*log|chunk:\s*b['\"]event:", re.I)
@@ -112,7 +114,7 @@ _JOURNAL_LINE_MAX = 4000
 
 def is_ui_access_line(line: str) -> bool:
     text = _ANSI_RE.sub("", line or "")
-    return bool(_UI_ACCESS_RE.search(text))
+    return bool(_UI_ACCESS_RE.search(text) or _MODEL_POLL_RE.search(text))
 
 
 def is_hidden_journal_line(line: str) -> bool:
