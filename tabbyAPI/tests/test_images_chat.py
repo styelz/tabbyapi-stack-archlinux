@@ -544,6 +544,27 @@ class UpgradeMissingNamedDestsTests(unittest.TestCase):
         self.assertIn("images/logo.png", dests)
         self.assertIn("images/header.png", dests)
 
+    def test_site_prompt_gains_hero_scene_and_panels(self):
+        ask = (
+            "Build a single-page website for car enthusiasts. "
+            "Hero — full-screen background of a chrome car scene. "
+            "The logo is a realistic badge. The six panels are realistic scenes."
+        )
+        dests = _named_image_dests(ask)
+        self.assertIn("images/logo.png", dests)
+        self.assertIn("images/header.png", dests)
+        self.assertIn("images/panel1.png", dests)
+        self.assertIn("images/panel6.png", dests)
+        plan = ImageTurnPlan(
+            action="generate",
+            items=[{"prompt": "logo", "output_path": "images/logo.png"}],
+            from_model=True,
+        )
+        upgraded = _upgrade_missing_named_dests(plan, ask, [])
+        out = [row.get("output_path") for row in upgraded.items]
+        self.assertIn("images/header.png", out)
+        self.assertIn("images/panel3.png", out)
+
 
 class CurlFromLivingFilesTests(unittest.TestCase):
     def test_curl_lists_only_files_that_exist(self):
@@ -2217,6 +2238,58 @@ class LiveCodeStreamTests(unittest.IsolatedAsyncioTestCase):
         write.assert_awaited()
         self.assertFalse(launch)
         self.assertIsNotNone(response)
+
+    async def test_applied_writes_keep_coding_for_missing_css(self):
+        from images.chat import _write_page_then_maybe_launch
+
+        job = _job(id="abc-123", status="coding", owner="pbp", chat_id="ws-page")
+        data = _user("Create a landing page with a logo")
+        write = mock.AsyncMock(return_value=_write_code_response())
+        with (
+            mock.patch("images.chat._write_site_code", write),
+            mock.patch("images.chat._apply_workspace_writes", return_value=1),
+            mock.patch("images.chat._workspace_page_ready", return_value=True),
+            mock.patch("images.chat._missing_linked_page_files", return_value=["styles.css"]),
+            mock.patch("images.chat._missing_requested_pages", return_value=[]),
+            mock.patch("images.chat._page_blocking_comfy", return_value=True),
+            mock.patch("images.chat.note_coding_progress", return_value=1),
+        ):
+            response, launch = await _write_page_then_maybe_launch(data, job, None)
+        self.assertGreaterEqual(write.await_count, 2)
+        self.assertFalse(launch)
+        self.assertIsNotNone(response)
+
+    async def test_stale_coding_launch_starts_when_dests_are_on_the_page(self):
+        from images.chat import schedule_stale_coding_launch
+
+        job = _job(
+            id="stale-1",
+            status="coding",
+            owner="pbp",
+            chat_id="ws-page",
+            items=[
+                SimpleNamespace(
+                    prompt="logo",
+                    output_path="images/logo.png",
+                    urls=[],
+                    status="queued",
+                )
+            ],
+        )
+        job.started_at = 0
+        launched = mock.AsyncMock(return_value=job)
+        with (
+            mock.patch("images.chat.active_mcp_image_job", return_value=job),
+            mock.patch("ui.flight.get_flight", return_value=None),
+            mock.patch("images.chat._missing_linked_page_files", return_value=["app.js"]),
+            mock.patch("images.chat._workspace_page_ready", return_value=True),
+            mock.patch("images.chat._ask_from_workspace_chats", return_value=""),
+            mock.patch("images.chat.launch_mcp_image_job", launched),
+        ):
+            schedule_stale_coding_launch()
+            await asyncio.sleep(0)
+        launched.assert_awaited()
+        self.assertTrue(getattr(job, "_stale_launch", False))
 
     async def test_write_site_code_does_not_publish_abort(self):
         from images.chat import _write_site_code

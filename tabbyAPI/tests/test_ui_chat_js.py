@@ -64,6 +64,14 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
         self.assertIn("The API is restarting. This chat will continue when it is ready.", self.src)
         self.assertIn("The API is back. Sending again.", self.src)
         self.assertIn("streamResume = Boolean(sendAgent)", self.src)
+        self.assertIn(
+            "if (!stopKind && toolRounds < MAX_AGENT_ROUNDS && !allInspectSkipped)",
+            self.src,
+        )
+        self.assertNotIn(
+            "if (!stopKind && !streamResume && toolRounds < MAX_AGENT_ROUNDS && !allInspectSkipped)",
+            self.src,
+        )
         self.assertIn("Catching up if that reply is still running.", self.src)
         self.assertIn("if (data && data.down)", self.src)
         self.assertNotIn("Restarting. Chat is paused until the API is ready.", self.src)

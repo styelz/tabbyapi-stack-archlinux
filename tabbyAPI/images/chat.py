@@ -97,7 +97,24 @@ _CREATE_SITE_RE = re.compile(
     r"(?:landing(?:\s+page)?|website|web\s+page|webpage)\b"
 )
 _PAGE_LOGO_RE = re.compile(r"(?is)\b(?:a\s+)?logo\b")
-_PAGE_HERO_RE = re.compile(r"(?is)\b(?:header|hero)\s+(?:photo|image|picture)s?\b")
+_PAGE_HERO_RE = re.compile(
+    r"(?is)\b(?:header|hero)\s+(?:photo|image|picture|background|scene)s?\b"
+    r"|\bfull[- ](?:screen|width)\s+(?:background|scene|hero)\b"
+)
+_PAGE_PANEL_COUNT_RE = re.compile(
+    r"(?is)\b(\d+|two|three|four|five|six|seven|eight)\s+"
+    r"(?:unique\s+)?(?:panels?|cards?)\b"
+    r"|\b(?:panels?|cards?)\s+(?:of|for)\s+(\d+|two|three|four|five|six|seven|eight)\b"
+)
+_PAGE_PANEL_WORDS = {
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+}
 _PAGE_WIRE_RE = re.compile(
     r"(?is)\b(?:opaci|opaque|blend|on (?:each |the )?(?:home page|panels?|cards?|sections?))\b"
 )
@@ -195,6 +212,24 @@ def _named_image_dests(text: str) -> list[str]:
             )
             if not have_hero:
                 add("images/header.png")
+        match = _PAGE_PANEL_COUNT_RE.search(blob)
+        if match:
+            raw_count = str(match.group(1) or match.group(2) or "0").strip().lower()
+            try:
+                count = _PAGE_PANEL_WORDS.get(raw_count) or int(raw_count)
+            except ValueError:
+                count = 0
+            if 2 <= count <= 8:
+                have_panels = [
+                    dest
+                    for dest in found
+                    if Path(dest).stem.lower().replace("_", "-")
+                    in {f"panel{i}" for i in range(1, count + 1)}
+                    | {f"car{i}" for i in range(1, count + 1)}
+                ]
+                if len(have_panels) < count:
+                    for index in range(1, count + 1):
+                        add(f"images/panel{index}.png")
     return found
 
 
@@ -928,6 +963,118 @@ def _page_blocking_comfy(job, data=None) -> bool:
     return True
 
 
+STALE_CODING_LAUNCH_S = 20.0
+
+
+def _ask_from_workspace_chats(owner: str, chat_id: str) -> str:
+    try:
+        from ui.chats import load_store
+    except Exception:
+        return ""
+    try:
+        store = load_store(owner)
+    except Exception:
+        return ""
+    wanted = {str(chat_id)}
+    best = ""
+    for chat in store.get("chats") or []:
+        if not isinstance(chat, dict):
+            continue
+        cid = str(chat.get("id") or "")
+        if cid == chat_id or str(chat.get("parentId") or "") == chat_id:
+            wanted.add(cid)
+    for chat in store.get("chats") or []:
+        if not isinstance(chat, dict) or str(chat.get("id") or "") not in wanted:
+            continue
+        for message in chat.get("messages") or []:
+            if not isinstance(message, dict):
+                continue
+            if str(message.get("role") or "") != "user" or message.get("hidden"):
+                continue
+            text = str(message.get("content") or "")
+            if len(text) > len(best):
+                best = text
+    return best
+
+
+def _expand_job_dests_from_ask(job, ask: str) -> None:
+    if not ask:
+        return
+    plan = ImageTurnPlan(
+        action="generate", items=_job_plan_items(job), from_model=True
+    )
+    upgraded = _upgrade_missing_named_dests(
+        plan,
+        ask,
+        [],
+        str(getattr(job, "owner", "") or ""),
+        str(getattr(job, "chat_id", "") or ""),
+    )
+    have = {
+        str(row.get("output_path") or "")
+        for row in _job_plan_items(job)
+        if str(row.get("output_path") or "")
+    }
+    added = False
+    from images.jobs import McpImageItem, refresh_job_wait
+
+    for row in upgraded.items or []:
+        dest = str(row.get("output_path") or "").strip()
+        if not dest or dest in have:
+            continue
+        job.items.append(
+            McpImageItem(prompt=str(row.get("prompt") or dest), output_path=dest)
+        )
+        have.add(dest)
+        added = True
+    if added:
+        refresh_job_wait(job)
+
+
+def schedule_stale_coding_launch() -> None:
+    """Start Comfy for a coding job the browser abandoned after writing dests."""
+    job = active_mcp_image_job()
+    if job is None or str(getattr(job, "status", "") or "") != "coding":
+        return
+    if bool(getattr(job, "_stale_launch", False)):
+        return
+    try:
+        age = time.time() - float(getattr(job, "started_at", 0) or 0)
+    except (TypeError, ValueError):
+        age = 0.0
+    if age < STALE_CODING_LAUNCH_S:
+        return
+    owner, chat_id = _job_workspace_ids(job)
+    if not owner or not chat_id:
+        return
+    try:
+        from ui.flight import get_flight
+
+        if get_flight(owner, chat_id):
+            return
+    except Exception:
+        pass
+    blocking = [
+        path
+        for path in _missing_linked_page_files(job)
+        if Path(path).suffix.lower() in {".css", ".html", ".htm"}
+    ]
+    if blocking:
+        return
+    ask = _ask_from_workspace_chats(owner, chat_id)
+    if ask:
+        _expand_job_dests_from_ask(job, ask)
+    if not _workspace_page_ready(job) or not _job_plan_items(job):
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    job._stale_launch = True
+    loop.create_task(launch_mcp_image_job(job))
+    xlogger.info(f"Mixed chat started Comfy for stale job {job.id}")
+
+
 def _should_launch_mixed_render(
     code_response, job, data=None, *, allow_empty: bool = False
 ) -> bool:
@@ -999,6 +1146,54 @@ def _parse_code_stream_payload(text: str):
     return payload, _stream_error_message(payload)
 
 
+def _apply_workspace_writes(job, code_response) -> int:
+    """Land Write/StrReplace bodies now so a dropped browser follow-up still counts."""
+    owner, chat_id = _job_workspace_ids(job)
+    if not owner or not chat_id:
+        return 0
+    try:
+        from ui.workspace import workspace_root
+
+        root = workspace_root(owner, chat_id, create=False, box=False)
+        if not root.is_dir():
+            return 0
+    except Exception:
+        return 0
+    message = _assistant_message(code_response)
+    pairs = _file_write_pairs(message)
+    if not pairs:
+        return 0
+    try:
+        from ui.code_agent import execute_tool
+    except Exception:
+        return 0
+    applied = 0
+    for name, args in pairs:
+        if not _tool_write_path(args):
+            continue
+        try:
+            _label, _result, change = execute_tool(
+                owner, chat_id, name, args, agent="agent"
+            )
+        except Exception as exc:
+            xlogger.warning(f"Mixed chat apply write failed: {exc}")
+            continue
+        if change:
+            applied += 1
+    return applied
+
+
+def _page_still_needs_writes(job, data=None) -> bool:
+    owner, chat_id = _job_workspace_ids(job)
+    if _missing_linked_page_files(job):
+        return True
+    if data is not None and _missing_requested_pages(owner, chat_id, data):
+        return True
+    return bool(owner and chat_id) and not _dests_already_on_page(
+        owner, chat_id, _job_plan_items(job)
+    )
+
+
 def _keep_writing_page(code_response, job, data=None) -> bool:
     if int(getattr(job, "code_turns", 0) or 0) >= MAX_CODE_TURNS:
         return False
@@ -1041,42 +1236,35 @@ async def _write_page_then_maybe_launch(data, job, disconnect_handler):
                 None, job, data, allow_empty=True
             )
         return None, False
-    if _keep_writing_page(code_response, job, data):
+    applied = _apply_workspace_writes(job, code_response)
+    if _keep_writing_page(code_response, job, data) and not applied:
         return code_response, False
     can_retry = int(getattr(job, "code_turns", 0) or 0) < MAX_CODE_TURNS
-    if _missing_linked_page_files(job) and can_retry:
+    extra_rounds = 0
+    while can_retry and extra_rounds < 4 and _page_still_needs_writes(job, data):
+        extra_rounds += 1
         _inject_missing_page_files(data, job)
-        extra = await _write_site_code(data, disconnect_handler)
-        if extra is None:
-            return code_response, False
-        code_response = extra
-        if _keep_writing_page(code_response, job, data):
-            return code_response, False
-    owner = str(getattr(job, "owner", "") or "")
-    chat_id = str(getattr(job, "chat_id", "") or "")
-    if _missing_requested_pages(owner, chat_id, data) and can_retry:
         _inject_missing_requested_pages(data, job)
+        owner = str(getattr(job, "owner", "") or "")
+        chat_id = str(getattr(job, "chat_id", "") or "")
+        if (
+            owner
+            and chat_id
+            and not _dests_already_on_page(owner, chat_id, _job_plan_items(job))
+        ):
+            _inject_unwired_dests(data, job)
         extra = await _write_site_code(data, disconnect_handler)
         if extra is None:
-            return code_response, False
+            return code_response, _should_launch_mixed_render(
+                code_response, job, data, allow_empty=applied
+            )
         code_response = extra
-        if _keep_writing_page(code_response, job, data):
+        applied += _apply_workspace_writes(job, code_response)
+        if _keep_writing_page(code_response, job, data) and not applied:
             return code_response, False
-    if (
-        owner
-        and chat_id
-        and not _dests_already_on_page(owner, chat_id, _job_plan_items(job))
-        and can_retry
-    ):
-        _inject_unwired_dests(data, job)
-        extra = await _write_site_code(data, disconnect_handler)
-        if extra is None:
-            return code_response, False
-        code_response = extra
-        if _keep_writing_page(code_response, job, data):
-            return code_response, False
+        can_retry = int(getattr(job, "code_turns", 0) or 0) < MAX_CODE_TURNS
         message = _assistant_message(code_response)
-        if _tool_call_pairs(message):
+        if _tool_call_pairs(message) and not _file_write_pairs(message):
             return code_response, False
     return code_response, _should_launch_mixed_render(code_response, job, data)
 

@@ -377,6 +377,12 @@ async def stack_status(request=None, username: str = "") -> dict[str, Any]:
         lock_name = switch_lock_name()
         lock_held = switch_lock_held()
         restarting = lock_held and lock_name == "restart"
+        try:
+            from images.chat import schedule_stale_coding_launch
+
+            schedule_stale_coding_launch()
+        except Exception:
+            pass
         job = active_mcp_image_job()
         job_info = None
         if job:

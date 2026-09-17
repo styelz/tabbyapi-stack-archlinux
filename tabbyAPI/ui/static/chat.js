@@ -13100,7 +13100,7 @@ function mountChat(root) {
         working.setActivity("Summarizing", { processing: false });
         continue;
       }
-      if (!stopKind && !streamResume && toolRounds < MAX_AGENT_ROUNDS && !allInspectSkipped) {
+      if (!stopKind && toolRounds < MAX_AGENT_ROUNDS && !allInspectSkipped) {
         if (visibleAnswerText(assembled)) working.addStep({ type: "demote" });
         assembled = "";
         reasoning = "";
