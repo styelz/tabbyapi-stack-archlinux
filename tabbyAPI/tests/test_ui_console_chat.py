@@ -182,6 +182,8 @@ class ConsoleImageReplyTests(unittest.TestCase):
         self.assertEqual(images_chat.job_progress_line(job), "Rendering in Comfy")
         job.phase = "restoring_llm"
         self.assertEqual(images_chat.job_progress_line(job), "Reloading the coding model")
+        job.phase = "writing_code"
+        self.assertEqual(images_chat.job_progress_line(job), "Writing the page")
 
     def test_console_inflight_hold_is_not_mixed(self):
         async def go():

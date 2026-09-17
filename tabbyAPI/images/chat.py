@@ -1560,7 +1560,7 @@ def job_progress_line(job) -> str:
     if phase == "queued":
         return "Queued"
     if phase in ("writing_code", "coding"):
-        return "Planning the picture"
+        return "Writing the page"
     if phase == "starting_comfy":
         return "Starting Comfy"
     if phase in ("generating", "running"):
@@ -1970,9 +1970,11 @@ async def handle(
     if llm_ready:
         rasters = workspace_raster_paths(owner, chat_id) if workspace else []
         prior = _classify_prior_facts(job, rasters)
+        from common.phrase_switch import turn_looks_like_image
         from ui.flight import publish_console_status
 
-        await publish_console_status("Planning the picture")
+        if turn_looks_like_image(ask):
+            await publish_console_status("Planning the picture")
         plan = await classify_image_turn(
             data, disconnect_handler=disconnect_handler, prior_facts=prior
         )

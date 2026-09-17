@@ -9869,14 +9869,15 @@ function mountChat(root) {
     const count = Number(job.count) || 0;
     const index = (Number(job.current_index) || 0) + 1;
     if (phase === "queued") return "Queued";
-    if (phase === "writing_code" || phase === "coding") return "Planning the picture";
+    if (phase === "writing_code" || phase === "coding") return "Writing the page";
     if (phase === "starting_comfy") return "Starting Comfy";
     if (phase === "generating" || phase === "running") {
       if (count > 1) return `Rendering image ${Math.min(index, count)} of ${count}`;
       return "Rendering in Comfy";
     }
     if (phase === "restoring_llm") return "Reloading the coding model";
-    if (status === "queued" || status === "running" || status === "coding") {
+    if (status === "coding") return "Writing the page";
+    if (status === "queued" || status === "running") {
       return "Working on the picture";
     }
     return "";
@@ -9892,7 +9893,7 @@ function mountChat(root) {
     if (phase === "queued") {
       return "Waiting to start. Next: unload the coding model and hand the GPU to Comfy.";
     }
-    if (phase === "writing_code" || phase === "coding") return "Figuring out what to render.";
+    if (phase === "writing_code" || phase === "coding") return "Writing the page before Comfy starts.";
     if (phase === "starting_comfy") return "Unloading the coding model so Comfy can use the GPU.";
     if (phase === "generating" || phase === "running") {
       return "Comfy is rendering the picture on the GPU.";

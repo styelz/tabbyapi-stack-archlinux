@@ -1813,8 +1813,8 @@ def looks_like_chat_not_image(text: str) -> bool:
     return False
 
 
-def turn_needs_image_classify(text: str) -> bool:
-    """True when mixed-plan classify should run. Plain chat skips that extra generate."""
+def turn_looks_like_image(text: str) -> bool:
+    """True when this line is asking for a picture, not just code."""
     raw = (text or "").strip()
     if not raw:
         return False
@@ -1824,13 +1824,23 @@ def turn_needs_image_classify(text: str) -> bool:
         return True
     if raw.lower().startswith("qwen-image:"):
         return True
-    if is_coding_task(raw):
-        return True
     if IMAGE_NOUN_RE.search(raw):
         return True
     if wants_border_trim(raw):
         return True
     return False
+
+
+def turn_needs_image_classify(text: str) -> bool:
+    """True when mixed-plan classify should run. Plain chat skips that extra generate."""
+    raw = (text or "").strip()
+    if not raw:
+        return False
+    if looks_like_chat_not_image(raw) and not IMAGE_GEN_RE.match(raw):
+        return False
+    if turn_looks_like_image(raw):
+        return True
+    return is_coding_task(raw)
 
 
 def comfy_chat_suggest_text() -> str:

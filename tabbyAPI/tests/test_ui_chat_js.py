@@ -166,6 +166,10 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
         self.assertNotIn("Replied in ${elapsed}", self.src)
         self.assertIn("timeEl.textContent = seconds != null ? TabbyUI.formatDuration(seconds) : \"\"", self.src)
 
+    def test_coding_job_status_is_not_picture_planning(self):
+        self.assertIn('if (phase === "writing_code" || phase === "coding") return "Writing the page"', self.src)
+        self.assertNotIn('if (phase === "writing_code" || phase === "coding") return "Planning the picture"', self.src)
+
     def test_mode_toggle_opens_a_separate_conversation(self):
         self.assertIn("function chatForMode(mode)", self.src)
         self.assertIn("function setChatMode(mode)", self.src)

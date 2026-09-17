@@ -126,16 +126,21 @@ class ClassifySkipTests(unittest.TestCase):
         self.assertFalse(turn_needs_image_classify("retry"))
 
     def test_image_and_code_need_classify(self):
-        from common.phrase_switch import turn_needs_image_classify
+        from common.phrase_switch import turn_looks_like_image, turn_needs_image_classify
 
         self.assertTrue(turn_needs_image_classify("generate an image of a cat"))
         self.assertTrue(turn_needs_image_classify("Create a website with a logo"))
         self.assertTrue(turn_needs_image_classify("qwen-image: a cafe logo"))
+        self.assertTrue(turn_needs_image_classify("Implement a login component"))
         self.assertTrue(
             turn_needs_image_classify(
                 "i want images created for the 6 panels, images images images"
             )
         )
+        self.assertTrue(turn_looks_like_image("generate an image of a cat"))
+        self.assertTrue(turn_looks_like_image("Create a website with a logo"))
+        self.assertFalse(turn_looks_like_image("Implement a login component"))
+        self.assertFalse(turn_looks_like_image("Fix the javascript click handler"))
 
     def test_followup_questions_are_chat_not_comfy_prompts(self):
         from common.phrase_switch import looks_like_chat_not_image, requested_image_prompt
@@ -638,6 +643,40 @@ class ChatHoldTests(unittest.IsolatedAsyncioTestCase):
         ):
             await handle(data, "https://gpu.example/v1")
         classify.assert_awaited()
+
+    async def test_coding_without_image_does_not_publish_picture_status(self):
+        data = _user("Implement a login component in javascript")
+        classify = mock.AsyncMock(
+            return_value=ImageTurnPlan(action="none", items=[])
+        )
+        publish = mock.AsyncMock()
+        with (
+            mock.patch("images.chat.get_mcp_image_job", return_value=None),
+            mock.patch("images.chat.active_mcp_image_job", return_value=None),
+            mock.patch("images.chat.classify_image_turn", new=classify),
+            mock.patch("ui.flight.publish_console_status", new=publish),
+        ):
+            response = await handle(data, "https://gpu.example/v1")
+        self.assertIsNone(response)
+        classify.assert_awaited()
+        publish.assert_not_awaited()
+
+    async def test_image_prompt_publishes_planning_status(self):
+        data = _user("generate an image of a cat")
+        classify = mock.AsyncMock(
+            return_value=ImageTurnPlan(action="none", items=[])
+        )
+        publish = mock.AsyncMock()
+        with (
+            mock.patch("images.chat.get_mcp_image_job", return_value=None),
+            mock.patch("images.chat.active_mcp_image_job", return_value=None),
+            mock.patch("images.chat.classify_image_turn", new=classify),
+            mock.patch("ui.flight.publish_console_status", new=publish),
+        ):
+            await handle(data, "https://gpu.example/v1")
+        classify.assert_awaited()
+        publish.assert_awaited()
+        self.assertEqual(publish.await_args.args[0], "Planning the picture")
 
     async def test_continue_nudge_after_comfy_ask_still_classifies(self):
         data = ChatCompletionRequest(
