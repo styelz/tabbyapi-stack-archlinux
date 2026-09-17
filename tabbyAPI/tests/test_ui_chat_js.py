@@ -166,6 +166,10 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
         self.assertNotIn("Replied in ${elapsed}", self.src)
         self.assertIn("timeEl.textContent = seconds != null ? TabbyUI.formatDuration(seconds) : \"\"", self.src)
 
+    def test_model_wait_unlocks_when_gpu_is_serving(self):
+        self.assertIn("TabbyUI.gpuSwitchPaused", self.src)
+        self.assertNotIn("if (data.units && data.units.comfyui) return true", self.src)
+
     def test_coding_job_status_is_not_picture_planning(self):
         self.assertIn('if (phase === "writing_code" || phase === "coding") return "Writing the page"', self.src)
         self.assertNotIn('if (phase === "writing_code" || phase === "coding") return "Planning the picture"', self.src)
@@ -246,6 +250,8 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
         app_src = app.read_text(encoding="utf-8")
         status_src = status.read_text(encoding="utf-8")
         self.assertIn("IN USE · ${kindLabel}", utils_src)
+        self.assertIn("function gpuSwitchPaused(data)", utils_src)
+        self.assertIn("if (gpuIsServing(data)) return false", utils_src)
         self.assertIn("WAITING · ${name}", utils_src)
         self.assertIn("gpu_waiting", utils_src)
         self.assertIn("You are in a queue", utils_src)

@@ -6,6 +6,44 @@ from pathlib import Path
 from ui import manager
 
 
+class SwitchBusyFlagTests(unittest.TestCase):
+    def test_loaded_model_clears_leftover_switch_lock(self):
+        switching, busy = manager.switch_busy_flags(
+            loaded=True,
+            restarting=False,
+            comfy_booting=False,
+            lock_held=True,
+            lock_name="qwen38s10",
+            in_progress=True,
+        )
+        self.assertFalse(switching)
+        self.assertFalse(busy)
+
+    def test_unloaded_switch_stays_busy(self):
+        switching, busy = manager.switch_busy_flags(
+            loaded=False,
+            restarting=False,
+            comfy_booting=False,
+            lock_held=True,
+            lock_name="qwen38s10",
+            in_progress=True,
+        )
+        self.assertTrue(switching)
+        self.assertTrue(busy)
+
+    def test_handing_loaded_llm_to_comfy_stays_busy(self):
+        switching, busy = manager.switch_busy_flags(
+            loaded=True,
+            restarting=False,
+            comfy_booting=False,
+            lock_held=True,
+            lock_name="comfy",
+            in_progress=True,
+        )
+        self.assertTrue(switching)
+        self.assertTrue(busy)
+
+
 class UiManagerTests(unittest.TestCase):
     def test_journalctl_cmd_follows_user_units(self):
         cmd = manager.journalctl_cmd(follow=True, lines=0)

@@ -34,6 +34,32 @@ PROCESS_LOGS: deque[str] = deque(maxlen=4000)
 _SINK_ID: Optional[int] = None
 _STARTED_AT = time.time()
 _LAST_STATUS: dict[str, Any] = {}
+_COMFY_LOCKS = frozenset({"comfy", "flux"})
+
+
+def switch_busy_flags(
+    *,
+    loaded: bool,
+    restarting: bool,
+    comfy_booting: bool,
+    lock_held: bool,
+    lock_name: str = "",
+    in_progress: bool = False,
+) -> tuple[bool, bool]:
+    """UI pause flags. A leftover switch lock must not hide a model that is serving."""
+    dest = str(lock_name or "").strip().lower()
+    handing_to_comfy = dest in _COMFY_LOCKS
+    switching = (lock_held or in_progress) and not restarting
+    if comfy_booting and not restarting:
+        switching = True
+    if not loaded and not restarting and (lock_held or in_progress):
+        switching = True
+    if loaded and not restarting and not comfy_booting and not handing_to_comfy:
+        switching = False
+    busy = bool(lock_held or comfy_booting)
+    if loaded and not restarting and not comfy_booting and not handing_to_comfy:
+        busy = False
+    return switching, busy
 
 
 def visible_log_lines(lines, limit: Optional[int] = None) -> list[str]:
@@ -351,7 +377,6 @@ async def stack_status(request=None, username: str = "") -> dict[str, Any]:
         lock_name = switch_lock_name()
         lock_held = switch_lock_held()
         restarting = lock_held and lock_name == "restart"
-        switching = (lock_held or switch_in_progress()) and not restarting
         job = active_mcp_image_job()
         job_info = None
         if job:
@@ -370,12 +395,15 @@ async def stack_status(request=None, username: str = "") -> dict[str, Any]:
         comfy_unit = unit_active("comfyui")
         job_phase = (job_info or {}).get("phase")
         comfy_booting = (not http_up) and (bool(comfy_unit) or job_phase == "starting_comfy")
-        if comfy_booting and not restarting:
-            switching = True
-        # Keep the loading bar up until something is actually serving.
+        switching, busy = switch_busy_flags(
+            loaded=loaded,
+            restarting=restarting,
+            comfy_booting=comfy_booting,
+            lock_held=lock_held,
+            lock_name=lock_name,
+            in_progress=switch_in_progress(),
+        )
         intended = str(mode.get("mode") or "").lower()
-        if not loaded and not restarting and (lock_held or switch_in_progress()):
-            switching = True
         names = available_profiles()
         shown = visible_profile_names(names)
         profile_ready = {name: bool(folder_for_choice(name)) for name in names}
@@ -431,7 +459,7 @@ async def stack_status(request=None, username: str = "") -> dict[str, Any]:
             "job": job_info,
             "switching": switching,
             "restarting": restarting,
-            "busy": lock_held or comfy_booting,
+            "busy": busy,
             "switch_target": lock_name or ("comfy" if comfy_booting else None),
             "user": os.environ.get("USER") or "",
             "now": datetime.now(timezone.utc).isoformat(),

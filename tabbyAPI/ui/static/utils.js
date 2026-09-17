@@ -1139,9 +1139,9 @@
 
     function looksReady(data) {
       if (!data || data.ok === false) return false;
-      if (data.switching || data.restarting || data.busy) return false;
+      if (gpuSwitchPaused(data)) return false;
       const health = data.health || {};
-      return Boolean(data.tabby_model || data.comfy_up || health.healthy);
+      return Boolean(data.tabby_model || data.comfy_up || data.llama_up || health.healthy);
     }
 
     function updateLooksFailed(text) {
@@ -2047,6 +2047,29 @@
     return result;
   }
 
+  function gpuIsServing(data) {
+    return Boolean(
+      data && (data.tabby_model || data.llama_up || data.comfy_up || data.loaded)
+    );
+  }
+
+  function comfyIsStarting(data) {
+    if (!data || data.comfy_up) return false;
+    if (data.tabby_model || data.llama_up) return false;
+    const target = String(data.switch_target || "").toLowerCase();
+    if (target === "comfy" || target === "flux") return true;
+    const phase = data.job && String(data.job.phase || "");
+    return phase === "starting_comfy";
+  }
+
+  function gpuSwitchPaused(data) {
+    if (!data) return false;
+    if (data.restarting || data.down) return true;
+    if (comfyIsStarting(data)) return true;
+    if (gpuIsServing(data)) return false;
+    return Boolean(data.switching || data.busy);
+  }
+
   window.TabbyUI = {
     base: uiBase,
     path: uiPath,
@@ -2109,6 +2132,9 @@
     THEME_MODES,
     MODE_LABELS,
     lastGpuStatus: null,
+    gpuIsServing,
+    comfyIsStarting,
+    gpuSwitchPaused,
     formatTokenCount(count) {
       const n = Math.max(0, Number(count) || 0);
       if (n >= 1000000 - 500) return `${(n / 1000000).toFixed(1)}M`;
@@ -2178,11 +2204,11 @@
         window.dispatchEvent(new CustomEvent("tabby-gpu-status", { detail: data }));
         return;
       }
-      if (data.switching || data.restarting || data.busy) {
+      if (this.gpuSwitchPaused(data)) {
         const name = data.switch_target || data.profile || "model";
         const key = String(name).toLowerCase();
         const comfy = key === "comfy" || key === "flux";
-        const text = data.restarting ? "RESTARTING" : `LOADING · ${name}`;
+        const text = data.restarting || data.down ? "RESTARTING" : `LOADING · ${name}`;
         labelEl.textContent = text;
         chip.className = "chip warn is-busy";
         chip.title = data.restarting

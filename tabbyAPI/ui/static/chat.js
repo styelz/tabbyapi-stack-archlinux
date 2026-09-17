@@ -11863,15 +11863,17 @@ function mountChat(root) {
   }
 
   function comfyIsStarting(data) {
+    if (TabbyUI.comfyIsStarting) return TabbyUI.comfyIsStarting(data);
     if (!data || data.comfy_up) return false;
+    if (data.tabby_model || data.llama_up) return false;
     const target = String(data.switch_target || "").toLowerCase();
     if (target === "comfy" || target === "flux") return true;
-    if (data.units && data.units.comfyui) return true;
     const phase = data.job && String(data.job.phase || "");
     return phase === "starting_comfy";
   }
 
   function statusIsBusy(data) {
+    if (TabbyUI.gpuSwitchPaused) return TabbyUI.gpuSwitchPaused(data);
     return Boolean(
       data && (data.switching || data.restarting || data.busy || comfyIsStarting(data))
     );
