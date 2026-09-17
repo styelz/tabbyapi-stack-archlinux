@@ -1089,6 +1089,8 @@ class ModelsJsTests(unittest.TestCase):
         self.assertIn("function visionField", text)
         self.assertIn("models/vision", text)
         self.assertIn("data-vision-folder", text)
+        self.assertIn("data-reload", text)
+        self.assertIn("Reload", text)
 
 
 if __name__ == "__main__":

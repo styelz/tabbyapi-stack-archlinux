@@ -356,7 +356,7 @@ function mountModels(root) {
         const sub = badges.join(" ") || "Not installed";
         const canLoad = row.kind === "llm" && row.profile && row.installed && !row.partial;
         const load = canLoad
-          ? `<button type="button" class="btn" data-load="${TabbyUI.escapeHtml(row.profile)}" ${row.loaded ? "disabled" : ""}>Load</button>`
+          ? `<button type="button" class="btn" data-load="${TabbyUI.escapeHtml(row.profile)}"${row.loaded ? " data-reload" : ""}>${row.loaded ? "Reload" : "Load"}</button>`
           : "";
         const download = (!row.installed || row.partial) && row.catalog_id
           ? `<button type="button" class="btn primary" data-catalog="${catalogId}">Download</button>`
@@ -754,11 +754,12 @@ function mountModels(root) {
         return;
       }
       if (load) {
+        const reload = load.hasAttribute("data-reload");
         load.disabled = true;
-        showOk("Loading…");
+        showOk(reload ? "Reloading…" : "Loading…");
         await TabbyUI.api("gpu", { method: "POST", body: { mode: load.getAttribute("data-load") } });
         await loadLibrary();
-        showOk("Loaded.");
+        showOk(reload ? "Reloaded." : "Loaded.");
         return;
       }
       if (catalog) {
