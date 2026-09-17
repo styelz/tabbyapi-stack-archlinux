@@ -660,16 +660,28 @@ def _workspace_has_page_files(job) -> bool:
 def _pages_on_disk(owner: str | None, chat_id: str | None) -> bool:
     if not owner or not chat_id:
         return False
+    ids = [str(chat_id)]
+    try:
+        from ui.chats import workspace_root_chat_id
+
+        root = str(workspace_root_chat_id(owner, chat_id) or "").strip()
+        if root and root not in ids:
+            ids.append(root)
+    except Exception:
+        pass
     try:
         from ui.workspace import list_files
-
-        rows = list_files(owner, chat_id)
     except Exception:
         return False
-    for row in rows or []:
-        path = str(row.get("path") or "")
-        if Path(path).suffix.lower() in {".html", ".htm", ".css", ".js", ".mjs"}:
-            return True
+    for cid in ids:
+        try:
+            rows = list_files(owner, cid)
+        except Exception:
+            continue
+        for row in rows or []:
+            path = str(row.get("path") or "")
+            if Path(path).suffix.lower() in {".html", ".htm", ".css", ".js", ".mjs"}:
+                return True
     return False
 
 
@@ -1976,16 +1988,16 @@ async def handle(
                 code_response = await _write_site_code(data, disconnect_handler)
                 if code_response is None:
                     return None
-                if not _writes_have_paths(code_response) and not _pages_on_disk(
-                    owner, chat_id
-                ):
-                    return code_response
                 keep = _first_code_pass_holds_llm(
                     code_response,
                     page_ready=_dests_already_on_page(owner, chat_id, plan.items)
                     and _explicit_new_rasters(data)
                     and not _ask_needs_page_wire(data),
                 )
+                if not _writes_have_paths(code_response) and not _pages_on_disk(
+                    owner, chat_id
+                ):
+                    keep = True
                 started = await _start_mixed_job(
                     plan.items,
                     api_base or "",
@@ -2019,9 +2031,11 @@ async def handle(
             code_response = await _write_site_code(data, disconnect_handler)
             if code_response is None:
                 return None
-            if not _writes_have_paths(code_response) and not _pages_on_disk(owner, chat_id):
-                return code_response
             keep = _first_code_pass_holds_llm(code_response)
+            if not _writes_have_paths(code_response) and not _pages_on_disk(
+                owner, chat_id
+            ):
+                keep = True
             started = await _start_mixed_job(
                 plan.items,
                 api_base or "",

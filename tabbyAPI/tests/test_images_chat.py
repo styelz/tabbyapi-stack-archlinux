@@ -1065,6 +1065,65 @@ class ChatHoldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(dests, ["images/movies/sleeping-heart.png"])
         self.assertIsNotNone(response)
 
+    async def test_read_first_pass_still_queues_generate_job(self):
+        planned = [
+            {"prompt": "qwen-image: panel one", "output_path": "images/panel1.png"}
+        ]
+        job = _job(id="panel-job", status="coding")
+        data = _user("i want images created for the 6 panels, images images images")
+        read_only = ChatCompletionResponse(
+            model="gpt-4o",
+            choices=[
+                ChatCompletionRespChoice(
+                    finish_reason="tool_calls",
+                    message=ChatCompletionMessage(
+                        role="assistant",
+                        content="",
+                        tool_calls=[
+                            ToolCall(
+                                function=Tool(
+                                    name="Read",
+                                    arguments='{"path":"index.html"}',
+                                )
+                            )
+                        ],
+                    ),
+                )
+            ],
+        )
+        with (
+            mock.patch("images.chat.get_mcp_image_job", return_value=None),
+            mock.patch("images.chat.active_mcp_image_job", return_value=None),
+            mock.patch(
+                "images.chat.classify_image_turn",
+                new=mock.AsyncMock(
+                    return_value=ImageTurnPlan(action="generate", items=planned)
+                ),
+            ),
+            mock.patch(
+                "images.chat._write_site_code",
+                new=mock.AsyncMock(return_value=read_only),
+            ),
+            mock.patch("images.chat._pages_on_disk", return_value=False),
+            mock.patch("images.chat._dests_already_on_page", return_value=False),
+            mock.patch("images.chat._profile_writes_files", return_value=True),
+            mock.patch("images.chat._first_code_pass_holds_llm", return_value=True),
+            mock.patch(
+                "images.chat.start_mcp_image_job",
+                new=mock.AsyncMock(return_value=(job, "started")),
+            ) as start,
+        ):
+            response = await handle(
+                data,
+                "https://gpu.example/v1",
+                llm_ready=True,
+                code=True,
+                owner="pbp",
+                chat_id="ws-panels",
+            )
+        start.assert_awaited()
+        self.assertIn("tabby-image-job: panel-job", response.choices[0].message.content)
+
     async def test_busy_other_job_does_not_hijack_a_fresh_chat(self):
         busy = _job(id="other", status="running")
         data = _user("Create a website with a logo and photos")
