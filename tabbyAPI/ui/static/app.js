@@ -117,7 +117,7 @@
         closeGpuMenu();
         return;
       }
-      switchGpu(mode);
+      switchGpu(mode).catch(() => {});
     });
     return btn;
   }
@@ -217,11 +217,12 @@
     }
   }
 
-  async function switchGpu(mode) {
+  async function switchGpu(mode, opts) {
     const token = String(mode || "").trim().toLowerCase();
+    const force = Boolean(opts && opts.force);
     if (!token || gpuSwitchBusy) return;
     const data = TabbyUI.lastGpuStatus || {};
-    if (currentGpuMode(data) === token) {
+    if (currentGpuMode(data) === token && !force) {
       closeGpuMenu();
       return;
     }
@@ -260,11 +261,13 @@
       await refreshHeaderStatus();
     } catch (err) {
       TabbyUI.paintApiDown(err);
+      throw err;
     } finally {
       gpuSwitchBusy = false;
       gpuSwitchTarget = "";
     }
   }
+  TabbyUI.switchGpu = switchGpu;
 
   if (gpuChip) {
     gpuChip.addEventListener("click", (event) => {

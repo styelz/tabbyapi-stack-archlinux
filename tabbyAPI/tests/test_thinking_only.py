@@ -270,6 +270,25 @@ class VisibleProfileNamesTests(unittest.TestCase):
             shown = phrase_switch.visible_profile_names(["qwen", "daily"])
         self.assertEqual(shown, ["daily"])
 
+    def test_hides_settings_model_sidecar(self):
+        mapping = {
+            "qwen": {
+                "alias": "qwen",
+                "folder": "Qwen3.5-9B-exl3-4.00bpw",
+                "local": False,
+                "pretty": "Qwen",
+            },
+            "settings_model": {
+                "alias": "settings_model",
+                "folder": "",
+                "local": False,
+                "pretty": "settings_model",
+            },
+        }
+        with mock.patch.object(phrase_switch, "profile_map", return_value=mapping):
+            shown = phrase_switch.visible_profile_names(["qwen", "settings_model"])
+        self.assertEqual(shown, ["qwen"])
+
 
 class ThinkingOnlyUiWiringTests(unittest.TestCase):
     def test_status_and_chat_expose_the_alert(self):

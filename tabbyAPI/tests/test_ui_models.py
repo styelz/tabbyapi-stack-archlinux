@@ -690,10 +690,34 @@ class LibraryAndDeleteTests(unittest.TestCase):
         self.assertEqual(normalize_alias("qwen-38.yml"), "qwen-38")
         self.assertEqual(normalize_alias("qwen"), "qwen")
         self.assertEqual(normalize_alias("ds.16"), "ds.16")
-        for bad in ("q", "1qwen", "qwen 38", "qwen_38", "comfy", "help", "ds..16"):
+        for bad in (
+            "q",
+            "1qwen",
+            "qwen 38",
+            "qwen_38",
+            "comfy",
+            "help",
+            "ds..16",
+            "settings_model",
+        ):
             with self.subTest(bad=bad):
                 with self.assertRaises(ModelsError):
                     normalize_alias(bad)
+
+    def test_profile_map_skips_settings_model(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            paths = _paths(root)
+            (paths.profiles_dir / "qwen.yml").write_text(
+                "pretty: Qwen\nmodel:\n  model_name: Qwen3.5-9B-exl3-4.00bpw\n",
+                encoding="utf-8",
+            )
+            (paths.profiles_dir / "settings_model.yml").write_text(
+                "vision: false\n", encoding="utf-8"
+            )
+            mapping = ui_models._profile_map(paths.profiles_dir, models_dir=paths.models_dir)
+            self.assertIn("qwen", mapping)
+            self.assertNotIn("settings_model", mapping)
 
     def test_custom_alias_profile_and_rename(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -1091,6 +1115,9 @@ class ModelsJsTests(unittest.TestCase):
         self.assertIn("data-vision-folder", text)
         self.assertIn("data-reload", text)
         self.assertIn("Reload", text)
+        self.assertIn("TabbyUI.switchGpu", text)
+        self.assertIn("is-switching", text)
+        self.assertIn('force: true', text)
 
 
 if __name__ == "__main__":

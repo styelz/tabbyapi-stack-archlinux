@@ -460,8 +460,12 @@ def profile_map() -> dict[str, dict]:
     if not PROFILES_DIR.exists():
         _profile_map_cache = (epoch, mapping)
         return mapping
+    from select_model import is_internal_profile
+
     overrides = load_name_overrides(PROFILES_DIR)
     for path in PROFILES_DIR.glob("*.yml"):
+        if is_internal_profile(path.stem):
+            continue
         data = _load_yaml(path)
         alias = path.stem.lower()
         model_cfg = data.get("model") or {}
@@ -619,13 +623,15 @@ def visible_profile_names(names: Optional[list[str]] = None) -> list[str]:
     Prefer the local short name, then an hf- profile, and hide a shipped alias
     when a local profile already covers that folder.
     """
-    if names is None:
-        from select_model import available_profiles
+    from select_model import available_profiles, is_internal_profile
 
+    if names is None:
         names = available_profiles()
     mapping = profile_map()
     groups: dict[str, list[str]] = {}
     for name in names:
+        if is_internal_profile(name):
+            continue
         entry = mapping.get(str(name).lower()) or {}
         folder = str(entry.get("folder") or "").strip().lower()
         if folder:
@@ -642,6 +648,8 @@ def visible_profile_names(names: Optional[list[str]] = None) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
     for name in names:
+        if is_internal_profile(name):
+            continue
         entry = mapping.get(str(name).lower()) or {}
         folder = str(entry.get("folder") or "").strip().lower()
         if not folder:

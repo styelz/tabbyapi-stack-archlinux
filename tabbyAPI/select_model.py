@@ -16,11 +16,21 @@ PROFILES_DIR = ROOT / "model_profiles"
 CONFIG_PATH = ROOT / "config.yml"
 LAST_PATH = PROFILES_DIR / "last.json"
 SETTINGS_MODEL_KEYS = ("vision", "vision_offload")
+INTERNAL_PROFILE_STEMS = frozenset({"settings_model"})
 CATALOG_PATH = ROOT / "deploy" / "arch" / "models.json"
 
 
+def is_internal_profile(name: str | None) -> bool:
+    """True for sidecar YAML in model_profiles/, not a switchable profile."""
+    return str(name or "").strip().lower() in INTERNAL_PROFILE_STEMS
+
+
 def available_profiles() -> list[str]:
-    return sorted(path.stem for path in PROFILES_DIR.glob("*.yml"))
+    return sorted(
+        path.stem
+        for path in PROFILES_DIR.glob("*.yml")
+        if not is_internal_profile(path.stem)
+    )
 
 
 PROFILE_META_KEYS = frozenset({"pretty", "local", "thinking_only"})
@@ -290,6 +300,8 @@ def profile_for_folder(folder: str, profiles_dir: Path | None = None) -> str | N
     if not want:
         return None
     for path in sorted((profiles_dir or PROFILES_DIR).glob("*.yml")):
+        if is_internal_profile(path.stem):
+            continue
         raw = profile_model_name(path.stem, profiles_dir=profiles_dir) or ""
         resolved = (profile_model_folder(raw) or raw).strip().lower()
         if resolved == want or raw.lower() == want:

@@ -57,6 +57,7 @@ RESERVED_ALIASES = frozenset(
         "generate",
         "embed",
         "qwen-image",
+        "settings_model",
     }
 )
 FORMAT_NEEDLES = {
@@ -837,11 +838,14 @@ def _profile_map(profiles_dir: Path, models_dir: Path | None = None) -> dict[str
     if not profiles_dir.is_dir():
         return mapping
     from ruamel.yaml import YAML
+    from select_model import is_internal_profile
 
     yaml = YAML(typ="safe")
     overrides = load_name_overrides(profiles_dir)
     models = models_dir if models_dir is not None else MODELS_DIR
     for path in sorted(profiles_dir.glob("*.yml")):
+        if is_internal_profile(path.stem):
+            continue
         try:
             data = yaml.load(path.read_text(encoding="utf-8")) or {}
         except (OSError, Exception):
@@ -1591,7 +1595,11 @@ def _local_profiles_for_folder(folder: str, paths: ModelPaths) -> list[Path]:
     if not want or not paths.profiles_dir.is_dir():
         return []
     found: list[Path] = []
+    from select_model import is_internal_profile
+
     for path in sorted(paths.profiles_dir.glob("*.yml")):
+        if is_internal_profile(path.stem):
+            continue
         data = _load_profile_yaml(path)
         if not is_local_profile(path.stem, data):
             continue

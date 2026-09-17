@@ -339,6 +339,21 @@ class InstallShSeedTests(unittest.TestCase):
         self.assertGreater(seed_at, fetch_at)
 
 
+class AvailableProfilesTests(unittest.TestCase):
+    def test_skips_settings_model_sidecar(self):
+        with tempfile.TemporaryDirectory() as raw:
+            profiles = Path(raw)
+            (profiles / "qwen.yml").write_text(QWEN_YML, encoding="utf-8")
+            (profiles / "settings_model.yml").write_text(
+                "vision: false\n", encoding="utf-8"
+            )
+            with mock.patch.object(select_model, "PROFILES_DIR", profiles):
+                names = select_model.available_profiles()
+            self.assertEqual(names, ["qwen"])
+            self.assertTrue(select_model.is_internal_profile("settings_model"))
+            self.assertFalse(select_model.is_internal_profile("qwen"))
+
+
 class YamlCacheTests(unittest.TestCase):
     def tearDown(self):
         select_model.reset_yaml_cache_for_tests()

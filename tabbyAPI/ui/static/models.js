@@ -754,10 +754,25 @@ function mountModels(root) {
         return;
       }
       if (load) {
+        const token = load.getAttribute("data-load") || "";
         const reload = load.hasAttribute("data-reload");
         load.disabled = true;
+        load.textContent = reload ? "Reloading" : "Loading";
+        const row = load.closest("tr");
+        if (row) {
+          row.classList.add("is-switching");
+          const badge = row.querySelector(".models-badge.is-on");
+          if (badge) badge.textContent = reload ? "Reloading" : "Loading";
+        }
+        libBody.querySelectorAll("[data-load]").forEach((btn) => {
+          btn.disabled = true;
+        });
         showOk(reload ? "Reloading…" : "Loading…");
-        await TabbyUI.api("gpu", { method: "POST", body: { mode: load.getAttribute("data-load") } });
+        if (typeof TabbyUI.switchGpu === "function") {
+          await TabbyUI.switchGpu(token, { force: true });
+        } else {
+          await TabbyUI.api("gpu", { method: "POST", body: { mode: token } });
+        }
         await loadLibrary();
         showOk(reload ? "Reloaded." : "Loaded.");
         return;
@@ -783,6 +798,11 @@ function mountModels(root) {
       }
     } catch (exc) {
       showError(exc.message || String(exc));
+      try {
+        await loadLibrary();
+      } catch (_reloadExc) {
+        /* keep the error we already showed */
+      }
     }
   });
 

@@ -50,6 +50,9 @@ class ModelsJobBannerTests(unittest.TestCase):
         app = Path(__file__).resolve().parents[1] / "ui" / "static" / "app.js"
         app_src = app.read_text(encoding="utf-8")
         self.assertIn("startsWith(\"hf-\")", app_src)
+        self.assertIn("TabbyUI.switchGpu = switchGpu", app_src)
+        self.assertIn("const force = Boolean(opts && opts.force)", app_src)
+        self.assertIn("currentGpuMode(data) === token && !force", app_src)
 
     def test_busy_jobs_still_show_byte_progress(self):
         paint = self.src.split("function paintJob(job)")[1].split("function libraryRows")[0]
