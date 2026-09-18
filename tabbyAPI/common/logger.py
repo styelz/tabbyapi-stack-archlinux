@@ -106,9 +106,16 @@ def _log_formatter(record: dict):
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _UI_ACCESS_RE = re.compile(r'"[A-Z]+ (?:/\w+)?(?:/v1)?/ui(?:[/?\s]|$)')
 _MODEL_POLL_RE = re.compile(r'"GET (?:/\w+)?(?:/v1)?/model(?:[\s?"]|$)')
-# sse_starlette logs every sent chunk at DEBUG. Streaming /ui/logs back into
-# journalctl turns that into a runaway echo (multi-megabyte lines, /health hangs).
-_SSE_ECHO_RE = re.compile(r"event:\s*log|chunk:\s*b['\"]event:", re.I)
+# sse_starlette logs every sent chunk/ping at DEBUG. Streaming /ui/logs back
+# into journalctl turns that into a runaway echo (multi-megabyte lines, /health hangs).
+_SSE_ECHO_RE = re.compile(
+    r"event:\s*log|chunk:\s*b['\"]event:|ping:\s*b['\"]: ping",
+    re.I,
+)
+# httpx/httpcore TRACE-style events when TABBY_LOG_LEVEL=DEBUG.
+_HTTP_TRACE_RE = re.compile(
+    r"(?:send_request_(?:headers|body)\.|receive_response_(?:headers|body)\.|response_closed\.)"
+)
 _JOURNAL_LINE_MAX = 4000
 
 
@@ -127,6 +134,8 @@ def is_hidden_journal_line(line: str) -> bool:
         return True
     if _SSE_ECHO_RE.search(text):
         return True
+    if _HTTP_TRACE_RE.search(text):
+        return True
     # Expected while Comfy/llama owns the GPU; pollers used to reprint this
     # twice a second and the Logs SSE echoed every line.
     if "No models are currently loaded." in text:
@@ -141,7 +150,7 @@ def is_hidden_journal_line(line: str) -> bool:
 class UvicornLoggingHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         message = self.format(record).rstrip()
-        if is_ui_access_line(message):
+        if is_ui_access_line(message) or is_hidden_journal_line(message):
             return
         logger.opt(exception=record.exc_info).log(record.levelname, message)
 
@@ -159,13 +168,30 @@ UVICORN_LOG_CONFIG = {
 }
 
 
+def quiet_library_loggers() -> None:
+    """Keep library chatter out of journalctl even when TABBY_LOG_LEVEL=DEBUG.
+
+    sse_starlette DEBUG dumps every SSE ping/chunk. httpx/httpcore DEBUG traces
+    every proxied request. Both re-enter the Logs stream and flood the journal.
+    """
+
+    for name in (
+        "sse_starlette",
+        "sse_starlette.sse",
+        "httpx",
+        "httpcore",
+        "httpcore.connection",
+        "httpcore.http11",
+        "httpcore.http2",
+    ):
+        logging.getLogger(name).setLevel(logging.WARNING)
+
+
 def setup_logger():
     """Bootstrap the logger."""
 
     logger.remove()
-    # Keep INFO+ from sse_starlette; DEBUG chunk dumps re-enter journalctl.
-    logging.getLogger("sse_starlette").setLevel(logging.INFO)
-    logging.getLogger("sse_starlette.sse").setLevel(logging.INFO)
+    quiet_library_loggers()
 
     logger.add(
         RICH_CONSOLE.print,

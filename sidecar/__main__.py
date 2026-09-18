@@ -14,8 +14,9 @@ from sidecar.settings import sidecar_host, sidecar_port
 
 async def _serve() -> None:
     ensure_backend_key()
-    from common.logger import UVICORN_LOG_CONFIG
+    from common.logger import UVICORN_LOG_CONFIG, setup_logger
 
+    setup_logger()
     config = uvicorn.Config(
         create_app(),
         host=sidecar_host(),

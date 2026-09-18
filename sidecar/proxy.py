@@ -6,7 +6,7 @@ from typing import Any, Callable, Iterable, Optional
 
 import httpx
 from fastapi import Request
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from sidecar.backend_key import ensure_backend_key
 from sidecar.settings import backend_url
@@ -57,6 +57,17 @@ def set_client(client: Optional[httpx.AsyncClient]) -> None:
     _DEFAULT_CLIENT = client
 
 
+def backend_unreachable_response(request: Request) -> JSONResponse:
+    """503 instead of a 500 traceback while Tabby is still binding."""
+    path = request.url.path.rstrip("/")
+    if path.endswith("health"):
+        return JSONResponse(
+            {"status": "starting", "issues": ["TabbyAPI is still starting"]},
+            status_code=503,
+        )
+    return JSONResponse({"detail": "TabbyAPI is still starting"}, status_code=503)
+
+
 def _outgoing_headers(request: Request, extra: Optional[dict[str, str]] = None) -> dict[str, str]:
     key = ensure_backend_key()
     headers: dict[str, str] = {}
@@ -93,7 +104,10 @@ async def forward(
         headers=headers,
         content=payload if payload else None,
     )
-    backend = await http.send(req, stream=True)
+    try:
+        backend = await http.send(req, stream=True)
+    except (httpx.ConnectError, httpx.ConnectTimeout):
+        return backend_unreachable_response(request)
     excluded = {"content-encoding", "content-length", "transfer-encoding", "connection"}
     out_headers = {
         name: value

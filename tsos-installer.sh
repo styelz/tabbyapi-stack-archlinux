@@ -1884,7 +1884,7 @@ backup_model_ids_from_cache() {
 
 # Choosing a weights folder must also select the catalog models found there.
 # Leaving TABBY_MODELS=core after picking a USB/tabby-stack tree only copies
-# the 9B + embed + Qwen-Image baseline.
+# the 9B + embed + Qwen-Image baseline (audio/video packs stay optional).
 select_models_from_cache() {
   local found
   [[ -z "${MODELS_FROM_CLI:-}" ]] || return 0
@@ -2874,9 +2874,9 @@ If VRAM could not be read, every catalog model is listed." \
 "Could not list individual models. Pick a preset.
 
 core - qwen 9B, Qwen-Image, CPU embedder
-all  - every switch-to profile" \
+all  - every LLM plus Flux, Qwen-Image, Stable Audio, and Wan" \
           core "qwen 9B + Qwen-Image + embedder" \
-          all "every switch-to profile") || return 0
+          all "every LLM + Flux + Qwen-Image + audio + video") || return 0
         TABBY_MODELS="${picked:-core}"
         ;;
     esac
@@ -2890,7 +2890,7 @@ If a later download returns 401 or 403:
   or:  export HF_TOKEN=...
   then re-run this installer (finished files are skipped).
 
-You do not need a token for qwen / Flux / Qwen-Image." || true
+You do not need a token for qwen / Flux / Qwen-Image / Stable Audio / Wan." || true
   fi
 }
 
@@ -3000,7 +3000,7 @@ Change later in Settings → Updates, or: tsctl updates enable" \
 
 Default 7. Allowed range is 1–365.
 The timer checks daily and skips if you are in the
-middle of a chat or image job." \
+middle of a chat or Comfy job." \
         "${TABBY_AUTO_UPDATE_DAYS:-7}" valid_auto_update_days) || return 0
       TABBY_AUTO_UPDATE_DAYS="${days:-7}"
       ;;

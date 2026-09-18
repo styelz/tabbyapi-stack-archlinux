@@ -57,6 +57,11 @@ RESERVED_ALIASES = frozenset(
         "generate",
         "embed",
         "qwen-image",
+        "audio",
+        "video",
+        "sfx",
+        "music",
+        "wan",
         "settings_model",
     }
 )

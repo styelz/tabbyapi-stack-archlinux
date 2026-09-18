@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Periodic tabbyapi-stack update. The user timer runs this daily; the script
 # only pulls when TABBY_AUTO_UPDATE is on and the interval has elapsed.
-# Skip (exit 0) when the stack is busy so a chat or image job is not bounced.
+# Skip (exit 0) when the stack is busy so a chat or Comfy job is not bounced.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

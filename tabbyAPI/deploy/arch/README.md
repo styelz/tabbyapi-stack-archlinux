@@ -29,7 +29,7 @@ Clone into `$HOME/tabbyapi-stack` so that folder is the git checkout.
 
 **Simple** (default): disk, hostname, username, timezone, weights source, LAN access (this PC is optional). No Omarchy, no disk encryption unless you pass `--encrypt`.
 
-**Simple** includes minimal coding/image models and a GPU-filtered optional-model checklist with disk estimates. **Advanced** adds locale, encryption, Omarchy, full model control, bind address, public URL, and SSH tunnel. **Restore from backup** (first menu, or `--restore-backup PATH`) reuses a Status / `tsctl` stack backup: models plus any saved config, users, and chats. The ISO installer then only asks which disk to wipe. Flags: `--simple` / `--advanced` / `--restore-backup PATH`, or `INSTALL_MODE=simple|advanced|restore`.
+**Simple** includes minimal coding/image models and a GPU-filtered optional-model checklist (Flux, extra LLMs, Stable Audio, Wan) with disk estimates. **Advanced** adds locale, encryption, Omarchy, full model control, bind address, public URL, and SSH tunnel. **Restore from backup** (first menu, or `--restore-backup PATH`) reuses a Status / `tsctl` stack backup: LLM and Comfy weights (image, audio, video) plus any saved config, users, and chats. The ISO installer then only asks which disk to wipe. Flags: `--simple` / `--advanced` / `--restore-backup PATH`, or `INSTALL_MODE=simple|advanced|restore`.
 
 Non-interactive:
 
@@ -95,8 +95,9 @@ tsctl gpu quiet
 ## Backup and restore
 
 Account-menu backups are small per-user zip files for chats, Code files,
-preferences, and gallery images. To back up the model weights themselves, use
-the administrator-only Status actions or `tsctl`:
+preferences, and gallery images, audio, and video. To back up the model weights
+themselves (LLM folders plus Comfy image/audio/video files), use the
+administrator-only Status actions or `tsctl`:
 
 ```bash
 tsctl backup /mnt/usb/tabby-backup --dry-run
@@ -125,7 +126,7 @@ tsctl updates all
 
 **Update git** pulls. It does not rebuild the Code sandbox image or refresh Python deps. After the pull, Status (or `update.sh`) offers Restart or Skip; a bounce is only needed when API Python changed. The TTY screensaver restarts on its own if `tabby-saver.py` or its unit changed. **Update all** also runs `install.sh --update` and restarts. Status and the **tsctl Updates** menu can do the same. Auto-update (default every 7 days) does Update all when idle; `tsctl updates disable` or Settings → Updates turns it off. This does not overwrite `config.yml` or `tabby.env`, and it does not run `pacman -Syu`.
 
-`--comfy` also updates ComfyUI. Leave that off unless you want image-gen to follow upstream.
+`--comfy` also updates ComfyUI. Leave that off unless you want image/audio/video-gen to follow upstream.
 
 ## If something fails
 

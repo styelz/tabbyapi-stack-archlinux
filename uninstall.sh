@@ -34,7 +34,7 @@ install, and removes the install tree.
 Options
   --dest PATH        Install root to remove. Default: found from the systemd
                      unit, then tabby.env, then \$HOME/tabbyapi-stack.
-  --keep-models      Keep model weights and generated images (default).
+  --keep-models      Keep model weights and generated media (default).
   --purge            Remove the whole install root, weights included.
   --dry-run          Print what would happen; change nothing.
   --yes              Do not ask for confirmation.
@@ -43,8 +43,8 @@ Options
 
 Kept by default (they are slow or impossible to get back):
   <root>/tabbyAPI/models          model weights
-  <root>/tabbyAPI/pasted-images   images you generated
-  <root>/ComfyUI/models           checkpoints, unet, vae, loras
+  <root>/tabbyAPI/pasted-images   images, audio, and video you generated
+  <root>/ComfyUI/models           checkpoints, diffusion_models, unet, vae, loras, text_encoders
 
 Not removed in any mode: pacman packages, the NVIDIA driver, pyenv and its
 shell rc lines, ~/.ssh keys, and the source tree you installed from.

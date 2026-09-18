@@ -24,7 +24,15 @@ class StackBackupTests(unittest.TestCase):
                         "image": {
                             "kind": "file",
                             "dest": "comfy/models/checkpoints/image.safetensors",
-                        }
+                        },
+                        "stable-audio-sfx": {
+                            "kind": "file",
+                            "dest": "comfy/models/checkpoints/stable_audio_3_small_sfx.safetensors",
+                        },
+                        "wan-unet": {
+                            "kind": "file",
+                            "dest": "comfy/models/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors",
+                        },
                     }
                 }
             ),
@@ -37,6 +45,11 @@ class StackBackupTests(unittest.TestCase):
         image = self.comfy / "models" / "checkpoints" / "image.safetensors"
         image.parent.mkdir(parents=True)
         image.write_bytes(b"image-data")
+        audio = self.comfy / "models" / "checkpoints" / "stable_audio_3_small_sfx.safetensors"
+        audio.write_bytes(b"audio-data")
+        video = self.comfy / "models" / "diffusion_models" / "wan2.2_ti2v_5B_fp16.safetensors"
+        video.parent.mkdir(parents=True)
+        video.write_bytes(b"video-data")
         (self.tabby / "config.yml").write_text("model: test\n", encoding="utf-8")
         (self.tabby / "ui_users.json").write_text('{"users":[]}\n', encoding="utf-8")
         chats = self.tabby / "pasted-images" / "ui_chats"
@@ -79,6 +92,18 @@ class StackBackupTests(unittest.TestCase):
         self.assertTrue((self.destination / "manifest.json").is_file())
         self.assertTrue(
             (self.destination / "tabbyAPI/models/test-model/model.safetensors").is_file()
+        )
+        self.assertTrue(
+            (
+                self.destination
+                / "ComfyUI/models/checkpoints/stable_audio_3_small_sfx.safetensors"
+            ).is_file()
+        )
+        self.assertTrue(
+            (
+                self.destination
+                / "ComfyUI/models/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors"
+            ).is_file()
         )
         self.assertTrue((self.destination / "extras/tabbyAPI/config.yml").is_file())
         self.assertFalse((self.destination / "tabbyAPI/models/extras").exists())

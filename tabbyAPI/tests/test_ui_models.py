@@ -288,6 +288,8 @@ class LibraryAndDeleteTests(unittest.TestCase):
             self.assertEqual(audio["kind"], "audio")
             wan = next(row for row in data["catalog"] if row["id"] == "wan")
             self.assertEqual(wan["kind"], "video")
+            self.assertTrue(any(row["id"] == "stable-audio" for row in data["audio"]))
+            self.assertTrue(any(row["id"] == "wan" for row in data["video"]))
             self.assertIn("free_bytes", data["disk"])
             self.assertIsNone(data["llms"][0]["max_seq_len"])
 
@@ -702,6 +704,11 @@ class LibraryAndDeleteTests(unittest.TestCase):
             "comfy",
             "help",
             "ds..16",
+            "audio",
+            "video",
+            "sfx",
+            "music",
+            "wan",
             "settings_model",
         ):
             with self.subTest(bad=bad):

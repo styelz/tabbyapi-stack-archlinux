@@ -106,6 +106,26 @@ class SidecarProxyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ok.status_code, 200)
         self.assertEqual(ok.json()["data"][0]["id"], "gpt-4o")
 
+    async def test_health_503_when_backend_down(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("All connection attempts failed", request=request)
+
+        proxy_mod.set_client(
+            httpx.AsyncClient(
+                transport=httpx.MockTransport(handler),
+                base_url="http://tabby.test",
+            )
+        )
+        health = await self.client.get("/health")
+        self.assertEqual(health.status_code, 503)
+        self.assertEqual(health.json()["status"], "starting")
+        denied = await self.client.get(
+            "/v1/models",
+            headers={"Authorization": "Bearer user-pass"},
+        )
+        self.assertEqual(denied.status_code, 503)
+        self.assertEqual(denied.json()["detail"], "TabbyAPI is still starting")
+
     async def test_rejects_bad_user_key(self):
         resp = await self.client.get("/v1/models", headers={"Authorization": "Bearer nope"})
         self.assertEqual(resp.status_code, 401)
@@ -159,6 +179,7 @@ class SidecarProxyTests(unittest.IsolatedAsyncioTestCase):
         text = src.read_text(encoding="utf-8")
         self.assertIn("UVICORN_LOG_CONFIG", text)
         self.assertIn("log_config", text)
+        self.assertIn("setup_logger", text)
 
     def test_child_env_puts_tabbyapi_on_pythonpath(self):
         from sidecar.paths import STACK_ROOT, TABBY_DIR

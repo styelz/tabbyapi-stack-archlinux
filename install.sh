@@ -2483,7 +2483,7 @@ prompt_simple_install() {
   UI_OK_LABEL=Continue
   ui_msg "Simple setup" \
 "tabbyapi-stack: local OpenAI-compatible API for coding and agents,
-plus ComfyUI image generation on Arch.
+plus ComfyUI image, audio, and short video generation on Arch.
 
 Simple setup installs into:
   ${TABBY_INSTALL_ROOT:-$DEFAULT_DEST}
@@ -3077,9 +3077,9 @@ If VRAM could not be read, every catalog model is listed." \
 "Could not list individual models. Pick a preset.
 
 core  — qwen 9B, Qwen-Image, CPU embedder
-all   — every switch-to profile (needs more disk and VRAM)" \
+all   — every LLM plus Flux, Qwen-Image, Stable Audio, and Wan" \
           core "qwen 9B + Qwen-Image + embedder" \
-          all "every switch-to profile") || return 0
+          all "every LLM + Flux + Qwen-Image + audio + video") || return 0
         MODEL_SET="${picked:-core}"
         ;;
     esac
@@ -3093,7 +3093,7 @@ If a later download returns 401 or 403:
   or:  export HF_TOKEN=...
   then re-run this installer (finished files are skipped).
 
-You do not need a token for qwen / Flux / Qwen-Image." || true
+You do not need a token for qwen / Flux / Qwen-Image / Stable Audio / Wan." || true
   fi
 }
 
@@ -3292,7 +3292,7 @@ to the review menu." || { UI_OK_LABEL=OK; return 1; }
   else
     ui_msg "What this installer does" \
 "tabbyapi-stack: local OpenAI-compatible API for coding and agents,
-plus ComfyUI image generation on Arch. Any client that speaks /v1
+plus ComfyUI image, audio, and short video generation on Arch. Any client that speaks /v1
 works — Cursor is one example.
 
 Use gpt-4o as the model name in your editor, and leave it.
@@ -3502,7 +3502,8 @@ if need_cmd python3 && [[ -f "$FETCH_MODELS" ]]; then
     NEED_GIB=$((WEIGHT_GIB + 15))
   fi
 fi
-[[ "$MODEL_SET" == "all" && "$NEED_GIB" -lt 90 ]] && NEED_GIB=90
+# Fallback if --disk-gib failed: "all" is ~120 GiB of weights plus ~15 GiB venvs.
+[[ "$MODEL_SET" == "all" && "$NEED_GIB" -lt 135 ]] && NEED_GIB=135
 HAVE_GIB="$(free_gib "$DEST")"
 if [[ -n "$HAVE_GIB" ]] && ((HAVE_GIB < NEED_GIB)); then
   SPACE_MSG="Only ${HAVE_GIB} GiB free on the filesystem holding ${DEST}.
@@ -4099,6 +4100,7 @@ progress 84 "Copying model weights"
 mkdir -p \
   "$DEST_TABBY/models" \
   "$DEST_COMFY/models/checkpoints" \
+  "$DEST_COMFY/models/diffusion_models" \
   "$DEST_COMFY/models/unet" \
   "$DEST_COMFY/models/text_encoders" \
   "$DEST_COMFY/models/vae" \
@@ -4425,7 +4427,7 @@ Auto-update (user timer, default every 7 days)
   tsctl updates enable
   tsctl updates interval_days=7
   tsctl updates disable
-  Skips while a chat or image job is running.
+  Skips while a chat or Comfy job is running.
 
   tsctl                         interactive settings (dialog)
   tsctl start|stop|restart      TabbyAPI user unit
@@ -4440,10 +4442,10 @@ Auto-update (user timer, default every 7 days)
 
 Management UI ($API_URL/v1/ui)
   Sign in with the Linux user that runs tabbyapi (admin), or a Tabby-only account.
-  Chat     conversations, vision, model commands, image generation; follow-up queue
+  Chat     conversations, vision, model commands, image / audio / video; follow-up queue
   Code     project folder on this host (Monaco, file tools, preview, container terminal)
   Status   GPU mode, occupancy, profile, health; load LLM / Comfy; restart; Update git / Update all; auto-update
-  Gallery  generated images (admin can see all users)
+  Gallery  generated images, audio, and video (admin can see all users)
   Logs     live journalctl for TabbyAPI (and Comfy when up)
   Users    admin-only: create/reset/delete Tabby accounts (not Linux users)
   Extra users can use Chat, Code, Status, Gallery, and Logs.
@@ -4475,12 +4477,12 @@ Switch models (warm 12 GB: qwen ~65s; qwen35 ~3 min; comfy ~35s)
     switch to gemma         (~65s)
     switch to gemma26       (~2 min)
     switch to glm           thinking; vision off on 12 GB (~15s)
-    switch to comfy         images; unloads the LLM (~35s ready)
+    switch to comfy         images, audio, or short video; unloads the LLM (~35s ready)
     switch to llm           free Comfy, reload last LLM (~65s)
 
   GPU is exclusive: LLM or Comfy, not both.
   First start loads qwen 9B (about 65s; first Linux boot may compile Triton longer).
-  qwen35 can take about 3 minutes. Chat is not ComfyUI — only switch to comfy for images.
+  qwen35 can take about 3 minutes. Chat is not ComfyUI — only switch to comfy for images, audio, or video.
   Short messages can still be slow on qwen35 if the client sends a large agent prompt. Use qwen for daily work.
 
 Images (clients are remote — chat and HTTP only)
@@ -4491,6 +4493,16 @@ Images (clients are remote — chat and HTTP only)
   Qwen-Image: text / posters / UI / buttons, or prefix qwen-image:
   paste a photo in the same turn for Flux img2img
   The chat reply includes a PNG URL on this API host. The markdown preview is the picture.
+
+Audio and video (optional packs — not in Simple; download from Models or pick them at install)
+  generate audio of rain on a tin roof
+  sfx: a door slam
+  music: lo-fi beat with warm piano
+  generate a video of a red bicycle rolling down a cobblestone street
+  wan: lanterns in fog
+  or POST $API_URL/v1/audio/generations and POST $API_URL/v1/videos/generations
+  Stable Audio 3 Small: SFX (~10 s) or music (~30 s, max 120 s)
+  Wan 2.2 5B: ~3 s clips at 640×640 (text or a pasted still). Short clips only on 12 GB.
 
 Embeddings (CPU, no GPU switch)
   POST $API_URL/v1/embeddings
@@ -4529,7 +4541,7 @@ If something fails
   copy interrupted       re-run install.sh (rsync resumes)
   switch 500 creationflags  re-run install.sh (patches Linux spawn) then:
                          systemctl --user restart tabbyapi
-  ComfyUI is not running  you asked for chat, not images. Send switch to qwen
+  ComfyUI is not running  you asked for chat, not images/audio/video. Send switch to qwen
                          and wait; first start should already load the 9B model
   no LLM loaded          wait for startup, or send switch to qwen in chat
 
@@ -4561,7 +4573,7 @@ Uninstall
   process on port $TABBY_NETWORK_PORT with no files behind it, and linger
   would start it again at boot.
 
-  Weights and generated images are kept unless you pass --purge. Packages,
+  Weights and generated images, audio, and video are kept unless you pass --purge. Packages,
   the NVIDIA driver, pyenv and ~/.ssh are never touched.
 
 Re-run is safe. Existing weights are not downloaded again.

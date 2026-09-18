@@ -7,6 +7,7 @@ from common.logger import (
     console_width,
     is_hidden_journal_line,
     is_ui_access_line,
+    quiet_library_loggers,
 )
 
 
@@ -45,12 +46,44 @@ class UiAccessLogTests(unittest.TestCase):
         self.assertTrue(
             is_hidden_journal_line("2026-08-30 07:38:13.030 DEBUG:    chunk: b'event: log\\r\\ndata: {\"line\": \"hi\"}'")
         )
+        self.assertTrue(
+            is_hidden_journal_line(
+                "2026-09-19 08:14:41.538 DEBUG:    ping: b': ping - 2026-09-18 22:14:41.537962+00:00\\r\\n\\r\\n'"
+            )
+        )
+        self.assertTrue(
+            is_hidden_journal_line(
+                "DEBUG    | common.logger:emit:146 - send_request_headers.started request=<Request [b'GET']>"
+            )
+        )
         self.assertTrue(is_hidden_journal_line("x" * 4001))
         self.assertTrue(is_hidden_journal_line("keep " + ("\\" * 40)))
         self.assertFalse(is_hidden_journal_line("Model loaded: qwen"))
         self.assertTrue(
             is_hidden_journal_line("ERROR:    Sent to request: No models are currently loaded.")
         )
+
+    def test_handler_drops_sse_ping(self):
+        handler = UvicornLoggingHandler()
+        record = logging.LogRecord(
+            name="sse_starlette.sse",
+            level=logging.DEBUG,
+            pathname="",
+            lineno=0,
+            msg="ping: b': ping - 2026-09-18 22:14:41.537962+00:00\\r\\n\\r\\n'",
+            args=(),
+            exc_info=None,
+        )
+        with mock.patch("common.logger.logger") as log:
+            handler.emit(record)
+        log.opt.assert_not_called()
+
+    def test_quiet_library_loggers_raise_httpx_and_sse(self):
+        logging.getLogger("sse_starlette.sse").setLevel(logging.DEBUG)
+        logging.getLogger("httpx").setLevel(logging.DEBUG)
+        quiet_library_loggers()
+        self.assertGreaterEqual(logging.getLogger("sse_starlette.sse").level, logging.WARNING)
+        self.assertGreaterEqual(logging.getLogger("httpx").level, logging.WARNING)
 
     def test_handler_drops_ui_status_access(self):
         handler = UvicornLoggingHandler()

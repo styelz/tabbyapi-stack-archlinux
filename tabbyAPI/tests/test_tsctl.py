@@ -155,6 +155,9 @@ class TsctlTests(unittest.TestCase):
         self.assertEqual(service, ["start", "stop", "restart", "status"])
         backup = [tag for tag, *_ in self.tsctl.BACKUP_ACTIONS]
         self.assertEqual(backup, ["backup", "restore"])
+        backup_blurb = next(blurb for tag, _title, blurb in self.tsctl.BACKUP_ACTIONS if tag == "backup")
+        self.assertIn("audio", backup_blurb)
+        self.assertIn("video", backup_blurb)
         update_run = [tag for tag, *_ in self.tsctl.UPDATE_ACTIONS]
         self.assertEqual(update_run, ["git", "all", "git-comfy", "all-comfy"])
         for tag in groups + service + backup + update_run:

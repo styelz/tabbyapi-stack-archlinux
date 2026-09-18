@@ -251,6 +251,12 @@ class FetchModelsTests(unittest.TestCase):
         self.assertIn("qwen", ids)
         self.assertIn("qwen-image-unet", ids)
         self.assertIn("qwen-image-lora", ids)
+        audio = expand_pick_ids(catalog, "stable-audio")
+        self.assertEqual(
+            audio, ["stable-audio-sfx", "stable-audio-music", "stable-audio-clip"]
+        )
+        video = expand_pick_ids(catalog, "wan")
+        self.assertEqual(video, ["wan-unet", "wan-clip", "wan-vae"])
         with self.assertRaises(SystemExit):
             expand_pick_ids(catalog, "nope")
 
@@ -280,9 +286,16 @@ class FetchModelsTests(unittest.TestCase):
         self.assertEqual(baseline_pick_ids(catalog, 0), ["qwen", "embed", "qwen-image"])
 
         extras = list_pick_rows(catalog, vram_mib=12288, source="hf", extras_only=True)
-        self.assertNotIn("qwen", {row["id"] for row in extras})
-        self.assertNotIn("qwen-image", {row["id"] for row in extras})
-        self.assertIn("flux", {row["id"] for row in extras})
+        extras_8g = list_pick_rows(catalog, vram_mib=8192, source="hf", extras_only=True)
+        extra_ids = {row["id"] for row in extras}
+        extra_8g_ids = {row["id"] for row in extras_8g}
+        self.assertNotIn("qwen", extra_ids)
+        self.assertNotIn("qwen-image", extra_ids)
+        self.assertIn("flux", extra_ids)
+        self.assertIn("stable-audio", extra_ids)
+        self.assertIn("wan", extra_ids)
+        self.assertIn("stable-audio", extra_8g_ids)
+        self.assertNotIn("wan", extra_8g_ids)
         self.assertIn("~17 GiB", format_pick_label(next(row for row in extras if row["id"] == "flux")))
 
     def test_installer_progress_uses_newline_status(self):
@@ -395,6 +408,12 @@ class FetchModelsTests(unittest.TestCase):
         catalog = load_catalog(CATALOG)
         self.assertEqual(disk_gib_for_ids(catalog, "core"), 29)
         self.assertGreater(disk_gib_for_ids(catalog, "all"), disk_gib_for_ids(catalog, "core"))
+        self.assertGreaterEqual(
+            disk_gib_for_ids(catalog, "all"),
+            disk_gib_for_ids(catalog, "core")
+            + disk_gib_for_ids(catalog, "stable-audio")
+            + disk_gib_for_ids(catalog, "wan"),
+        )
         with tempfile.TemporaryDirectory() as raw:
             path = Path(raw) / "models.json"
             selected = expand_pick_ids(catalog, "qwen,embed")

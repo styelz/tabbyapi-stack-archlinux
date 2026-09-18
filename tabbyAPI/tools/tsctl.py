@@ -35,7 +35,7 @@ SERVICE_ACTIONS = (
     ("status", "Unit status", "active / enabled state of tabbyapi"),
 )
 BACKUP_ACTIONS = (
-    ("backup", "Backup", "Copy model weights and optional stack data to a folder"),
+    ("backup", "Backup", "Copy LLM and Comfy weights (image, audio, video) and optional stack data"),
     ("restore", "Restore", "Restore a stack backup folder onto this host"),
 )
 UPDATE_ACTIONS = (
@@ -61,7 +61,7 @@ MENU_GROUPS = (
     ),
     ("server", "Server", "config.yml: network, logging, developer", ("network", "logging", "developer")),
     ("host", "Host", "tabby.env: GPU, screensaver, system", ("gpu", "screensaver", "system")),
-    ("data", "Backup and restore", "Model weights and stack data, to/from a folder", tuple(tag for tag, *_ in BACKUP_ACTIONS)),
+    ("data", "Backup and restore", "LLM and Comfy weights (image, audio, video) and stack data", tuple(tag for tag, *_ in BACKUP_ACTIONS)),
     ("help", "Help", "Command-line usage", ()),
 )
 SECTION_INFO = {
@@ -114,6 +114,9 @@ tsctl — tabbyapi-stack settings
   tsctl status                  unit active / enabled
   tsctl backup DEST [--config] [--users] [--chats] [--dry-run]
   tsctl restore SOURCE [--models] [--config] [--users] [--chats] [--dry-run]
+                    Backup always copies LLM and Comfy weights
+                    (image, audio, video). Extra flags add config,
+                    users, and chats.
 
 Sections match Settings: network, model, screensaver, updates, gpu, system, …
 """
@@ -704,7 +707,7 @@ def dialog_backup_menu() -> int:
         items: list[str] = []
         for tag, title, blurb in BACKUP_ACTIONS:
             items.extend([tag, f"{title:<10} {blurb}"])
-        prompt = "Model weights always go into a backup; config, users and chats are optional."
+        prompt = "LLM and Comfy weights (image, audio, video) always go into a backup; config, users and chats are optional."
         height, width, rows = _menu_size(len(BACKUP_ACTIONS), prompt)
         code, choice = run_dialog(
             [
