@@ -2315,7 +2315,20 @@ def draw_cycle_fx(pygame_mod: Any, screen: Any, scene: dict[str, Any]) -> None:
 
 # Idle-only: faint ray-marched solids on the full framebuffer.
 # Three homes; at most two visible. Fade in/out with no rest gap.
-_SLEEP_KINDS = ("sphere", "box", "torus", "octa", "capsule")
+_SLEEP_KINDS = (
+    "sphere",
+    "box",
+    "torus",
+    "octa",
+    "capsule",
+    "cylinder",
+    "cone",
+    "hexprism",
+    "triprism",
+    "pyramid",
+    "star",
+    "cross",
+)
 _SLEEP_HOMES = (
     (0.18, 0.28),
     (0.82, 0.32),
@@ -2334,7 +2347,9 @@ _SLEEP_SPAN_MAX = 520
 # March at most this many px on a side, then smoothscale up. Idle has CPU
 # to spare; 256 keeps the solids from looking like scaled blobs.
 _SLEEP_RT_MAX = 256
-_SLEEP_TINT = (56, 84, 132)
+# Copper / amber: complementary to the idle navy wash. _sleep_tint_for
+# rides the same idle_hue so the pair stay opposite as the field cycles.
+_SLEEP_TINT = (255, 152, 48)
 
 
 def _sleep_unit(slot: int, cycle: int, salt: int) -> float:
@@ -2392,8 +2407,9 @@ def _sleep_xy(slot: int, st: float, cycle: int = 0) -> tuple[float, float]:
 
 
 def _sleep_tint_for(slot: int, cycle: int, idle_hue: float = 0.0) -> tuple[int, int, int]:
-    shift = idle_hue + (_sleep_unit(slot, cycle, 61) - 0.5) * 0.10
-    return _shift_color(_SLEEP_TINT, shift)
+    """Amber family, opposite the idle wash. Small per-solid spread only."""
+    spread = (_sleep_unit(slot, cycle, 61) - 0.5) * 0.12
+    return _shift_color(_SLEEP_TINT, idle_hue + spread)
 
 
 def idle_sleeper_items(scene: dict[str, Any], width: int, height: int) -> list[dict[str, Any]]:
@@ -2450,9 +2466,9 @@ def _sleep_add_color(lift: float, tint: tuple[int, int, int] | None = None) -> t
     t = _clamp01(lift)
     ink = tint or _SLEEP_TINT
     return (
-        max(0, min(56, int(ink[0] * t))),
-        max(0, min(78, int(ink[1] * t))),
-        max(0, min(124, int(ink[2] * t))),
+        max(0, min(255, int(ink[0] * t))),
+        max(0, min(255, int(ink[1] * t))),
+        max(0, min(255, int(ink[2] * t))),
     )
 
 
@@ -2467,18 +2483,82 @@ def _blit_sleep_add(
     )
 
 
+def _sd_box(px: float, py: float, pz: float, bx: float, by: float, bz: float, r: float = 0.0) -> float:
+    ax, ay, az = abs(px) - bx, abs(py) - by, abs(pz) - bz
+    qx, qy, qz = max(ax, 0.0), max(ay, 0.0), max(az, 0.0)
+    return math.sqrt(qx * qx + qy * qy + qz * qz) + min(max(ax, max(ay, az)), 0.0) - r
+
+
+def _sd_extrude(d2: float, pz: float, h: float) -> float:
+    w = abs(pz) - h
+    return min(max(d2, w), 0.0) + math.hypot(max(d2, 0.0), max(w, 0.0))
+
+
+def _sd_hex2(px: float, py: float, r: float) -> float:
+    kx, ky, kz = -0.866025404, 0.5, 0.577350269
+    ax, ay = abs(px), abs(py)
+    t = min(kx * ax + ky * ay, 0.0) * 2.0
+    ax -= t * kx
+    ay -= t * ky
+    ax -= min(max(ax, -kz * r), kz * r)
+    ay -= r
+    return math.hypot(ax, ay) * (1.0 if ay > 0.0 else -1.0)
+
+
+def _sd_star2(px: float, py: float, r: float, rf: float = 0.45) -> float:
+    k1x, k1y = 0.809016994375, -0.587785252292
+    k2x, k2y = -k1x, k1y
+    ax, ay = abs(px), py
+    d = max(k1x * ax + k1y * ay, 0.0) * 2.0
+    ax -= d * k1x
+    ay -= d * k1y
+    d = max(k2x * ax + k2y * ay, 0.0) * 2.0
+    ax -= d * k2x
+    ay -= d * k2y
+    ax = abs(ax)
+    ay -= r
+    bax, bay = rf * (-k1y), rf * k1x - 1.0
+    denom = bax * bax + bay * bay
+    h = 0.0 if denom <= 1e-9 else min(max((ax * bax + ay * bay) / denom, 0.0), r)
+    dx, dy = ax - bax * h, ay - bay * h
+    return math.hypot(dx, dy) * (1.0 if ay * bax - ax * bay >= 0.0 else -1.0)
+
+
 def _sleep_sdf(kind: str, px: float, py: float, pz: float) -> float:
     if kind == "sphere":
         return math.sqrt(px * px + py * py + pz * pz) - 0.80
     if kind == "box":
-        ax, ay, az = abs(px) - 0.50, abs(py) - 0.50, abs(pz) - 0.50
-        qx, qy, qz = max(ax, 0.0), max(ay, 0.0), max(az, 0.0)
-        return math.sqrt(qx * qx + qy * qy + qz * qz) + min(max(ax, max(ay, az)), 0.0) - 0.10
+        return _sd_box(px, py, pz, 0.50, 0.50, 0.50, 0.10)
     if kind == "torus":
         q = math.hypot(px, pz) - 0.58
         return math.hypot(q, py) - 0.20
     if kind == "octa":
         return (abs(px) + abs(py) + abs(pz) - 0.92) * 0.57735027
+    if kind == "cylinder":
+        rad = math.hypot(px, pz) - 0.40
+        q = abs(py) - 0.68
+        return math.hypot(max(rad, 0.0), max(q, 0.0)) + min(max(rad, q), 0.0) - 0.04
+    if kind == "cone":
+        lo, hi, r0, r1 = -0.52, 0.58, 0.58, 0.05
+        span = hi - lo
+        t = 0.0 if py < lo else 1.0 if py > hi else (py - lo) / span
+        r = r0 + (r1 - r0) * t
+        dy = py - (lo + span * t)
+        return math.sqrt(px * px + dy * dy + pz * pz) - r
+    if kind == "hexprism":
+        return _sd_extrude(_sd_hex2(px, py, 0.56), pz, 0.28)
+    if kind == "triprism":
+        return max(abs(pz) - 0.30, max(abs(px) * 0.8660254 + py * 0.5, -py) - 0.42)
+    if kind == "pyramid":
+        return max(max(abs(px), abs(pz)) + py * 0.72 - 0.20, abs(py) - 0.56)
+    if kind == "star":
+        return _sd_extrude(_sd_star2(px, py, 0.62, 0.42), pz, 0.18)
+    if kind == "cross":
+        return min(
+            _sd_box(px, py, pz, 0.70, 0.15, 0.15, 0.05),
+            _sd_box(px, py, pz, 0.15, 0.70, 0.15, 0.05),
+            _sd_box(px, py, pz, 0.15, 0.15, 0.70, 0.05),
+        )
     t = 0.0 if py < -0.44 else 1.0 if py > 0.46 else (py + 0.44) / 0.90
     dx, dy, dz = px, py - (-0.44 + 0.90 * t), pz
     return math.sqrt(dx * dx + dy * dy + dz * dz) - 0.30
@@ -2509,7 +2589,7 @@ def _sleep_rt_rgb(
     """Software ray march of one solid. Black misses; dim additive hits."""
     w = max(8, int(width))
     h = max(8, int(height))
-    amt = _clamp01(amt) * 0.52
+    amt = _clamp01(amt) * 0.82
     tr, tg, tb = tint
     out = bytearray(w * h * 3)
     if amt <= 0.01:
@@ -2572,11 +2652,109 @@ def _sleep_rt_rgb(
             spec = max(0.0, nx * hx / hn + ny * hy / hn + nz * hz / hn) ** 14
             fog = math.exp(-t * 0.18)
             lift = (0.10 + 0.40 * diff + 0.16 * rim) * fog * amt
-            out[i] = min(255, int(tr * lift + 210 * spec * amt * fog))
-            out[i + 1] = min(255, int(tg * lift + 220 * spec * amt * fog))
-            out[i + 2] = min(255, int(tb * lift + 255 * spec * amt * fog))
+            # Keep highlights in the solid's family so additive navy does not
+            # pull the shape back to the same cool wash.
+            out[i] = min(255, int(tr * lift + (tr * 0.70 + 80) * spec * amt * fog))
+            out[i + 1] = min(255, int(tg * lift + (tg * 0.70 + 80) * spec * amt * fog))
+            out[i + 2] = min(255, int(tb * lift + (tb * 0.70 + 80) * spec * amt * fog))
             i += 3
     return bytes(out)
+
+
+def _sleep_sdf_numpy(kind: str, px: Any, py: Any, pz: Any, np: Any) -> Any:
+    f = np.float32
+
+    def box(bx, by, bz, r=0.0):
+        ax = np.abs(px) - f(bx)
+        ay = np.abs(py) - f(by)
+        az = np.abs(pz) - f(bz)
+        qx = np.maximum(ax, 0.0)
+        qy = np.maximum(ay, 0.0)
+        qz = np.maximum(az, 0.0)
+        return np.sqrt(qx * qx + qy * qy + qz * qz) + np.minimum(
+            np.maximum(ax, np.maximum(ay, az)), 0.0
+        ) - f(r)
+
+    def extrude(d2, h):
+        w = np.abs(pz) - f(h)
+        return np.minimum(np.maximum(d2, w), 0.0) + np.sqrt(
+            np.maximum(d2, 0.0) ** 2 + np.maximum(w, 0.0) ** 2
+        )
+
+    if kind == "sphere":
+        return np.sqrt(px * px + py * py + pz * pz) - f(0.80)
+    if kind == "box":
+        return box(0.50, 0.50, 0.50, 0.10)
+    if kind == "torus":
+        q = np.sqrt(px * px + pz * pz) - f(0.58)
+        return np.sqrt(q * q + py * py) - f(0.20)
+    if kind == "octa":
+        return (np.abs(px) + np.abs(py) + np.abs(pz) - f(0.92)) * f(0.57735027)
+    if kind == "cylinder":
+        rad = np.sqrt(px * px + pz * pz) - f(0.40)
+        q = np.abs(py) - f(0.68)
+        return np.sqrt(np.maximum(rad, 0.0) ** 2 + np.maximum(q, 0.0) ** 2) + np.minimum(
+            np.maximum(rad, q), 0.0
+        ) - f(0.04)
+    if kind == "cone":
+        lo, hi, r0, r1 = f(-0.52), f(0.58), f(0.58), f(0.05)
+        span = hi - lo
+        tcap = np.clip((py - lo) / span, 0.0, 1.0)
+        r = r0 + (r1 - r0) * tcap
+        dy = py - (lo + span * tcap)
+        return np.sqrt(px * px + dy * dy + pz * pz) - r
+    if kind == "hexprism":
+        kx, ky, kz = f(-0.866025404), f(0.5), f(0.577350269)
+        r = f(0.56)
+        ax = np.abs(px)
+        ay = np.abs(py)
+        t = np.minimum(kx * ax + ky * ay, 0.0) * f(2.0)
+        ax = ax - t * kx
+        ay = ay - t * ky
+        ax = ax - np.clip(ax, -kz * r, kz * r)
+        ay = ay - r
+        d2 = np.sqrt(ax * ax + ay * ay) * np.where(ay > 0.0, f(1.0), f(-1.0))
+        return extrude(d2, 0.28)
+    if kind == "triprism":
+        return np.maximum(
+            np.abs(pz) - f(0.30),
+            np.maximum(np.abs(px) * f(0.8660254) + py * f(0.5), -py) - f(0.42),
+        )
+    if kind == "pyramid":
+        return np.maximum(
+            np.maximum(np.abs(px), np.abs(pz)) + py * f(0.72) - f(0.20),
+            np.abs(py) - f(0.56),
+        )
+    if kind == "star":
+        k1x, k1y = f(0.809016994375), f(-0.587785252292)
+        k2x, k2y = -k1x, k1y
+        r, rf = f(0.62), f(0.42)
+        ax = np.abs(px)
+        ay = py
+        d = np.maximum(k1x * ax + k1y * ay, 0.0) * f(2.0)
+        ax = ax - d * k1x
+        ay = ay - d * k1y
+        d = np.maximum(k2x * ax + k2y * ay, 0.0) * f(2.0)
+        ax = ax - d * k2x
+        ay = ay - d * k2y
+        ax = np.abs(ax)
+        ay = ay - r
+        bax, bay = rf * (-k1y), rf * k1x - f(1.0)
+        denom = np.maximum(bax * bax + bay * bay, f(1e-9))
+        h = np.clip((ax * bax + ay * bay) / denom, 0.0, r)
+        dx, dy = ax - bax * h, ay - bay * h
+        d2 = np.sqrt(dx * dx + dy * dy) * np.where(
+            ay * bax - ax * bay >= 0.0, f(1.0), f(-1.0)
+        )
+        return extrude(d2, 0.18)
+    if kind == "cross":
+        return np.minimum(
+            np.minimum(box(0.70, 0.15, 0.15, 0.05), box(0.15, 0.70, 0.15, 0.05)),
+            box(0.15, 0.15, 0.70, 0.05),
+        )
+    tcap = np.clip((py + f(0.44)) / f(0.90), 0.0, 1.0)
+    dy = py - (f(-0.44) + f(0.90) * tcap)
+    return np.sqrt(px * px + dy * dy + pz * pz) - f(0.30)
 
 
 def _sleep_rt_rgb_numpy(
@@ -2612,28 +2790,7 @@ def _sleep_rt_rgb_numpy(
         return px2, py2, pz3
 
     def sdf(px, py, pz):
-        if kind == "sphere":
-            return np.sqrt(px * px + py * py + pz * pz) - np.float32(0.80)
-        if kind == "box":
-            ax = np.abs(px) - np.float32(0.50)
-            ay = np.abs(py) - np.float32(0.50)
-            az = np.abs(pz) - np.float32(0.50)
-            qx = np.maximum(ax, 0.0)
-            qy = np.maximum(ay, 0.0)
-            qz = np.maximum(az, 0.0)
-            return np.sqrt(qx * qx + qy * qy + qz * qz) + np.minimum(
-                np.maximum(ax, np.maximum(ay, az)), 0.0
-            ) - np.float32(0.10)
-        if kind == "torus":
-            q = np.sqrt(px * px + pz * pz) - np.float32(0.58)
-            return np.sqrt(q * q + py * py) - np.float32(0.20)
-        if kind == "octa":
-            return (np.abs(px) + np.abs(py) + np.abs(pz) - np.float32(0.92)) * np.float32(
-                0.57735027
-            )
-        tcap = np.clip((py + np.float32(0.44)) / np.float32(0.90), 0.0, 1.0)
-        dy = py - (np.float32(-0.44) + np.float32(0.90) * tcap)
-        return np.sqrt(px * px + dy * dy + pz * pz) - np.float32(0.30)
+        return _sleep_sdf_numpy(kind, px, py, pz, np)
 
     t = np.zeros((h, w), dtype=np.float32)
     hit = np.zeros((h, w), dtype=bool)
@@ -2678,9 +2835,9 @@ def _sleep_rt_rgb_numpy(
     lift = (0.10 + 0.40 * diff + 0.16 * rim) * fog * np.float32(amt)
     tr, tg, tb = tint
     rgb = np.zeros((h, w, 3), dtype=np.float32)
-    rgb[..., 0] = tr * lift + 210.0 * spec * amt * fog
-    rgb[..., 1] = tg * lift + 220.0 * spec * amt * fog
-    rgb[..., 2] = tb * lift + 255.0 * spec * amt * fog
+    rgb[..., 0] = tr * lift + (tr * 0.70 + 80.0) * spec * amt * fog
+    rgb[..., 1] = tg * lift + (tg * 0.70 + 80.0) * spec * amt * fog
+    rgb[..., 2] = tb * lift + (tb * 0.70 + 80.0) * spec * amt * fog
     glow = np.exp(-dmin * dmin * np.float32(70.0)) * np.float32(amt) * np.float32(0.20)
     rgb[..., 0] = np.where(live, rgb[..., 0], tr * glow)
     rgb[..., 1] = np.where(live, rgb[..., 1], tg * glow)

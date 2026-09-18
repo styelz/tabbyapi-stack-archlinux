@@ -553,8 +553,29 @@ class SaverKioskSceneTests(unittest.TestCase):
 
     def test_idle_sleeper_glow_is_visible(self):
         color = self.kiosk._sleep_add_color(1.0)
-        self.assertGreater(color[2], 80)
-        self.assertGreater(sum(color), 140)
+        self.assertGreater(sum(color), 300)
+        self.assertGreater(color[0], color[2])
+
+    def test_idle_sleeper_tint_contrasts_navy_field(self):
+        peak = self.kiosk.PALETTES["idle"][-1]
+        tint = self.kiosk._sleep_tint_for(0, 0, 0.0)
+        self.assertGreater(tint[0], peak[0])
+        self.assertGreater(tint[0], tint[2])
+        self.assertGreater(peak[2], peak[0])
+        shifted = self.kiosk._sleep_tint_for(0, 0, 0.5)
+        self.assertGreater(abs(shifted[0] - tint[0]), 30)
+
+    def test_idle_sleeper_kinds_are_solid(self):
+        kinds = self.kiosk._SLEEP_KINDS
+        self.assertGreaterEqual(len(kinds), 10)
+        self.assertEqual(len(set(kinds)), len(kinds))
+        extra = {"cylinder", "cone", "hexprism", "triprism", "pyramid", "star", "cross"}
+        self.assertTrue(extra <= set(kinds))
+        for kind in kinds:
+            # Torus is a ring: the origin is the hole, so sample the tube.
+            ix, iy, iz = (0.58, 0.0, 0.0) if kind == "torus" else (0.0, 0.0, 0.0)
+            self.assertLess(self.kiosk._sleep_sdf(kind, ix, iy, iz), 0.0, kind)
+            self.assertGreater(self.kiosk._sleep_sdf(kind, 4.0, 0.0, 0.0), 1.0, kind)
 
     def test_idle_field_hue_holds_then_blends(self):
         seed = 17
