@@ -1787,6 +1787,7 @@ def _console_ready_text(
     code: bool = False,
     extra_files: Optional[list[str]] = None,
 ) -> str:
+    from common.gpu_mode import chat_media_href
     from common.phrase_switch import image_job_done_text
 
     pairs = living_download_pairs(job)
@@ -1801,7 +1802,7 @@ def _console_ready_text(
     lines = [lead, ""]
     for url, dest in pairs:
         label = dest if code and dest else ""
-        lines.append(f"![{label}]({url})")
+        lines.append(f"![{label}]({chat_media_href(url)})")
         lines.append("")
     lines.append(image_job_done_text(job=job, count=max(1, n)))
     if code:

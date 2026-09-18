@@ -40,6 +40,15 @@
     return value;
   }
 
+  function generatedImageName(pathname) {
+    const value = String(pathname || "");
+    const marker = value.indexOf("/v1/images/");
+    if (marker < 0) return "";
+    const name = decodeURIComponent(value.slice(marker + "/v1/images/".length).split(/[?#]/, 1)[0]);
+    if (!name || name.includes("/") || name.includes("\\") || name.includes("..")) return "";
+    return name;
+  }
+
   /** Keep /v1/images links on the same reverse-proxy prefix as this UI. */
   function rewriteV1Url(url) {
     const value = String(url || "");
@@ -58,6 +67,13 @@
     }
     try {
       const parsed = new URL(value, window.location.href);
+      // Chat stores the URL from the request that generated the file. Viewing
+      // LAN Chat after an HTTPS job (or the reverse) used to keep the foreign
+      // origin and strip /openai, so <video> 404ed while Gallery played.
+      if (parsed.origin !== window.location.origin) {
+        const name = generatedImageName(parsed.pathname);
+        return name ? `${prefix}/images/${name}` : value;
+      }
       const rebuilt = apply(parsed.pathname, parsed.search, parsed.hash, parsed.origin);
       return rebuilt || value;
     } catch (_) {
@@ -366,6 +382,8 @@
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
     if (/^(https?:)?\/\//i.test(value)) return true;
     if (value.startsWith("/v1/ui/") || value.startsWith("/v1/images/")) return true;
+    // resolveUiUrl maps /v1/images onto a reverse-proxy prefix such as /openai/v1.
+    if ((parsed.pathname || "").includes("/v1/images/")) return true;
     if (value.startsWith("/")) return false;
     if (value.includes("..")) return false;
     return true;
@@ -419,7 +437,7 @@
     if (kind === "video") {
       return (
         `<figure class="md-image md-video">` +
-        `<video src="${safeHref}" controls playsinline></video>` +
+        `<video src="${safeHref}" controls playsinline preload="metadata"></video>` +
         `<button type="button" class="btn ghost md-image-dl" data-href="${safeHref}" data-name="${escapeHtml(fallback)}">Download</button>` +
         `</figure>`
       );

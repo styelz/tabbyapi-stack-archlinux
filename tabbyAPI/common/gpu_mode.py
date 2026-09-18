@@ -836,6 +836,14 @@ def public_generated_href(name: str) -> str:
     return f"/v1/images/{Path(name).name}"
 
 
+def chat_media_href(url: str) -> str:
+    """Relative /v1/images path so Chat players match Gallery on LAN and HTTPS."""
+    name = Path(urlparse(str(url or "")).path).name
+    if name.startswith("generated-"):
+        return public_generated_href(name)
+    return str(url or "")
+
+
 def strip_media_prefix(prompt: str) -> str:
     text = prompt or ""
     for pattern in (AUDIO_PREFIX, MUSIC_PREFIX, VIDEO_PREFIX):

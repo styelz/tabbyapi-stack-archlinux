@@ -17,6 +17,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from common import model
@@ -24,6 +25,7 @@ from common.gpu_mode import (
     AUDIO_TIMEOUT,
     JOBS_PERSIST_NAME,
     WAN_TIMEOUT,
+    chat_media_href,
     comfy_up,
     generate_audio,
     generate_image,
@@ -852,9 +854,15 @@ def _persist_job_reply(job: McpImageJob) -> None:
     mark = f"tabby-image-job: {job.id}"
     if job.status == "done" and urls:
         n = len(urls)
-        lead = "Here's the picture." if n == 1 else f"Here are the {n} pictures."
+        kind = str(getattr(job, "modality", "") or "image").lower()
+        if kind in ("audio", "music"):
+            lead = "Here's the audio." if n == 1 else f"Here are the {n} audio clips."
+        elif kind in ("video", "i2v"):
+            lead = "Here's the video." if n == 1 else f"Here are the {n} videos."
+        else:
+            lead = "Here's the picture." if n == 1 else f"Here are the {n} pictures."
         lines = [mark, "", lead, ""]
-        lines.extend(f"![]({url})" for url in urls)
+        lines.extend(f"![]({chat_media_href(url)})" for url in urls)
         text = "\n".join(lines)
     elif job.status == "error":
         text = f"{mark}\nError: {job.error or 'Image generation failed.'}"
@@ -863,6 +871,7 @@ def _persist_job_reply(job: McpImageJob) -> None:
     try:
         from ui.chats import append_flight_assistant, load_store
 
+        names = [Path(urlparse(url).path).name for url in urls]
         store = load_store(owner)
         for chat in store.get("chats") or []:
             if str(chat.get("id") or "") != chat_id:
@@ -873,8 +882,16 @@ def _persist_job_reply(job: McpImageJob) -> None:
             if (
                 isinstance(last, dict)
                 and last.get("role") == "assistant"
-                and job.id in content
-                and ("/v1/images/generated-" in content or content.lstrip().startswith("Error:"))
+                and (
+                    (
+                        job.id in content
+                        and (
+                            "/v1/images/generated-" in content
+                            or content.lstrip().startswith("Error:")
+                        )
+                    )
+                    or any(name and name in content for name in names)
+                )
             ):
                 return
             break

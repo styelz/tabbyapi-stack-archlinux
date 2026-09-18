@@ -80,6 +80,7 @@ class UtilsJsSanitizeTests(unittest.TestCase):
             "http://example.com/x?y=1",
             "/v1/ui/gallery/file/a.png",
             "/v1/images/generated-1.png",
+            "/openai/v1/images/generated-1.mp4",
             "images/logo.png",
             "docs/readme.md#top",
         ]
@@ -119,6 +120,53 @@ class UtilsJsProxyPrefixTests(unittest.TestCase):
             out["keep"], "https://git.example.com/openai/v1/images/generated-1.png"
         )
         self.assertEqual(out["ui"], "/openai/v1/ui/gallery/file/a.png")
+
+    def test_resolve_ui_url_maps_foreign_image_links_onto_this_ui(self):
+        src = UTILS_JS.read_text(encoding="utf-8")
+        start = src.index("function uiBase(")
+        end = src.index("function apiUrl(")
+        script = (
+            "const window = { location: { "
+            'href: "http://192.168.1.14:5000/v1/ui/", '
+            'pathname: "/v1/ui/", '
+            'origin: "http://192.168.1.14:5000" } };\n'
+            "const MARKER = '/v1/ui';\n"
+            + src[start:end]
+            + "console.log(JSON.stringify({"
+            "https: resolveUiUrl('https://git.example.com/openai/v1/images/generated-1.mp4'),"
+            "rel: resolveUiUrl('/v1/images/generated-1.mp4')"
+            "}));"
+        )
+        out = _run_node(script)
+        self.assertEqual(out["https"], "/v1/images/generated-1.mp4")
+        self.assertEqual(out["rel"], "/v1/images/generated-1.mp4")
+
+    def test_markdown_player_keeps_proxy_video_src(self):
+        src = UTILS_JS.read_text(encoding="utf-8")
+        start = src.index("function uiBase(")
+        end = src.index("function apiUrl(")
+        href_fn = _js_function(src, "markdownHrefAllowed")
+        player_fn = _js_function(src, "markdownPlayer")
+        script = (
+            "const window = { location: { "
+            'href: "https://git.example.com/openai/v1/ui/", '
+            'pathname: "/openai/v1/ui/", '
+            'origin: "https://git.example.com" } };\n'
+            "const MARKER = '/v1/ui';\n"
+            + src[start:end]
+            + "\n"
+            + _js_function(src, "escapeHtml")
+            + "\n"
+            + href_fn
+            + "\n"
+            + player_fn
+            + "\nconsole.log(JSON.stringify("
+            "markdownPlayer('/v1/images/generated-1.mp4', 'video')"
+            "));"
+        )
+        html = _run_node(script)
+        self.assertIn('src="/openai/v1/images/generated-1.mp4"', html)
+        self.assertNotIn('src="#"', html)
 
 
 @unittest.skipUnless(shutil.which("node"), "node not installed")

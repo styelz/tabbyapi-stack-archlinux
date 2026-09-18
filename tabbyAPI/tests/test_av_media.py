@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from common.gpu_mode import (
@@ -17,6 +18,7 @@ from common.gpu_mode import (
     _first_media_ref,
     build_audio_prompt,
     build_wan_prompt,
+    chat_media_href,
     is_public_generated_png,
     media_disposition,
     media_kind_for_name,
@@ -64,6 +66,10 @@ class AvMediaTests(unittest.TestCase):
         self.assertEqual(media_disposition("hit.wav"), "inline")
         self.assertEqual(media_disposition("shot.png"), "attachment")
         self.assertEqual(public_generated_href("generated-1.mp4"), "/v1/images/generated-1.mp4")
+        self.assertEqual(
+            chat_media_href("https://git.example.com/openai/v1/images/generated-1.mp4"),
+            "/v1/images/generated-1.mp4",
+        )
 
     def test_history_prefers_audio_and_video_keys(self):
         audio = _first_media_ref(
@@ -182,6 +188,63 @@ class AvMediaTests(unittest.TestCase):
         paths = {getattr(route, "path", None) for route in router.routes}
         self.assertIn("/v1/audio/generations", paths)
         self.assertIn("/v1/videos/generations", paths)
+
+    def test_persist_job_reply_skips_console_video_already_in_chat(self):
+        from images.jobs import _persist_job_reply
+
+        job = SimpleNamespace(
+            id="job-1",
+            status="done",
+            owner="pbp",
+            chat_id="c1",
+            urls=["https://git.example.com/openai/v1/images/generated-20260919-042559-1.mp4"],
+            modality="video",
+        )
+        store = {
+            "chats": [
+                {
+                    "id": "c1",
+                    "messages": [
+                        {
+                            "role": "assistant",
+                            "content": (
+                                "Here's the video.\n\n"
+                                "![](/v1/images/generated-20260919-042559-1.mp4)"
+                            ),
+                        }
+                    ],
+                }
+            ]
+        }
+        with (
+            mock.patch("ui.chats.load_store", return_value=store),
+            mock.patch("ui.chats.append_flight_assistant") as append,
+        ):
+            _persist_job_reply(job)
+        append.assert_not_called()
+
+    def test_persist_job_reply_uses_video_lead_and_relative_href(self):
+        from images.jobs import _persist_job_reply
+
+        job = SimpleNamespace(
+            id="job-2",
+            status="done",
+            owner="pbp",
+            chat_id="c1",
+            urls=["https://git.example.com/openai/v1/images/generated-20260919-042559-1.mp4"],
+            modality="video",
+        )
+        store = {"chats": [{"id": "c1", "messages": []}]}
+        with (
+            mock.patch("ui.chats.load_store", return_value=store),
+            mock.patch("ui.chats.append_flight_assistant") as append,
+        ):
+            _persist_job_reply(job)
+        append.assert_called_once()
+        text = append.call_args.kwargs["content"]
+        self.assertIn("Here's the video.", text)
+        self.assertIn("![](/v1/images/generated-20260919-042559-1.mp4)", text)
+        self.assertNotIn("Here's the picture.", text)
 
 
 if __name__ == "__main__":
