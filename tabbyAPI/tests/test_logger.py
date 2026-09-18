@@ -48,6 +48,9 @@ class UiAccessLogTests(unittest.TestCase):
         self.assertTrue(is_hidden_journal_line("x" * 4001))
         self.assertTrue(is_hidden_journal_line("keep " + ("\\" * 40)))
         self.assertFalse(is_hidden_journal_line("Model loaded: qwen"))
+        self.assertTrue(
+            is_hidden_journal_line("ERROR:    Sent to request: No models are currently loaded.")
+        )
 
     def test_handler_drops_ui_status_access(self):
         handler = UvicornLoggingHandler()

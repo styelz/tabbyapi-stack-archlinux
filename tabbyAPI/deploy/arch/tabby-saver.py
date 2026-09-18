@@ -1248,10 +1248,10 @@ def state_is_busy(payload: dict[str, Any] | None, live: dict[str, Any] | None = 
     return False
 
 
-def http_poll_gap(*, busy: bool, idle_s: float = 1.0, busy_s: float = 0.1) -> float:
-    """Idle HTTP stays slow so the API can start a generate. Busy stays snappy."""
+def http_poll_gap(*, busy: bool, idle_s: float = 5.0, busy_s: float = 5.0) -> float:
+    """HTTP stays on the poll interval. Live JSON still updates the HUD between hits."""
     idle_s = max(0.2, float(idle_s))
-    busy_s = max(0.08, min(float(busy_s), idle_s))
+    busy_s = max(0.2, min(float(busy_s), idle_s))
     return busy_s if busy else idle_s
 
 
@@ -3832,7 +3832,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=270,
         help="Internal field height while a job is live (idle uses the compose size)",
     )
-    parser.add_argument("--poll", type=float, default=float(os.environ.get("TABBY_SAVER_POLL_S", "1.0")), help="Seconds between idle API polls (busy stays 0.1)")
+    parser.add_argument("--poll", type=float, default=float(os.environ.get("TABBY_SAVER_POLL_S", "5.0")), help="Seconds between API polls (idle and busy)")
     parser.add_argument(
         "--idle",
         type=float,

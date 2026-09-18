@@ -604,7 +604,7 @@ function mountModels(root) {
 
   function startPoll() {
     if (pollTimer) return;
-    pollTimer = window.setInterval(pollJob, 1000);
+    pollTimer = window.setInterval(pollJob, 5000);
   }
 
   function stopPoll() {

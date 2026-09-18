@@ -11811,7 +11811,7 @@ function mountChat(root) {
         /* still waiting */
       }
     }
-    const id = setInterval(tick, 1500);
+    const id = setInterval(tick, 5000);
     tick();
     return {
       stop() {
@@ -12270,7 +12270,7 @@ function mountChat(root) {
     syncModelGate();
     gateTicker = setInterval(() => {
       if (!modelWait) syncModelGate();
-    }, 1500);
+    }, 5000);
   }
 
   function onGpuStatus(event) {

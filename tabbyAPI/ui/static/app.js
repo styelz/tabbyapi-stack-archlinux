@@ -862,7 +862,7 @@
       const data = TabbyUI.lastGpuStatus;
       const switching = gpuSwitchBusy || (data && (data.switching || data.restarting || data.busy));
       const occupied = Boolean(data && data.stack_queue && (data.stack_queue.busy || data.stack_queue.queued));
-      kickHeaderStatus(headerFailing ? 3000 : switching || occupied ? 2000 : 15000);
+      kickHeaderStatus(headerFailing ? 5000 : switching || occupied ? 5000 : 15000);
     }
   }
   refreshHeaderStatus();

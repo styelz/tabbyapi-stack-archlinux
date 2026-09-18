@@ -52,6 +52,7 @@ from endpoints.core.types.token import (
 )
 from endpoints.core.utils.lora import get_active_loras, get_lora_list
 from endpoints.core.utils.model import (
+    comfy_model_card,
     get_current_model,
     get_current_model_list,
     get_dummy_models,
@@ -141,6 +142,9 @@ async def current_model() -> ModelCard:
     llama = llama_model_card()
     if llama is not None:
         return llama
+    comfy = comfy_model_card()
+    if comfy is not None:
+        return comfy
     await check_model_container()
     return get_current_model()
 

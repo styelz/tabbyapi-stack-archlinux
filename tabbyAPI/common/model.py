@@ -353,6 +353,7 @@ async def check_model_container():
         error_message = handle_request_error(
             "No models are currently loaded.",
             exc_info=False,
+            log=False,
         ).error.message
 
         raise HTTPException(503, error_message)

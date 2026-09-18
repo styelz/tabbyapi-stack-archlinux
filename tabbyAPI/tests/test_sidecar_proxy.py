@@ -485,11 +485,14 @@ class SidecarModelStatusTests(unittest.TestCase):
         from sidecar import model_status
 
         model_status.invalidate_model_cache()
-        with mock.patch.object(
-            model_status,
-            "_get_json",
-            return_value=(200, {"id": "qwen", "parameters": {"max_seq_len": 8}}),
-        ) as get_json:
+        with (
+            mock.patch.object(model_status, "_gpu_mode", return_value="llm"),
+            mock.patch.object(
+                model_status,
+                "_get_json",
+                return_value=(200, {"id": "qwen", "parameters": {"max_seq_len": 8}}),
+            ) as get_json,
+        ):
             self.assertTrue(model_status.llm_is_ready())
             card = model_status.model_card()
             self.assertTrue(model_status.llm_is_ready())
@@ -509,6 +512,7 @@ class SidecarModelStatusTests(unittest.TestCase):
         clock = {"t": 0.0}
 
         with (
+            mock.patch.object(model_status, "_gpu_mode", return_value="llm"),
             mock.patch.object(model_status, "_model_epoch", return_value=(0.0, 0.0)),
             mock.patch.object(model_status.time, "monotonic", side_effect=lambda: clock["t"]),
             mock.patch.object(
@@ -521,11 +525,28 @@ class SidecarModelStatusTests(unittest.TestCase):
             ) as get_json,
         ):
             self.assertEqual(model_status.model_card()["id"], "qwen")
-            clock["t"] = 1.5
+            clock["t"] = 4.9
             self.assertEqual(model_status.model_card()["id"], "qwen")
-            clock["t"] = 2.1
+            clock["t"] = 5.1
             self.assertEqual(model_status.model_card()["id"], "gemma")
         self.assertEqual(get_json.call_count, 2)
+
+    def test_comfy_mode_skips_backend_model_poll(self):
+        os.environ["TABBY_BACKEND_URL"] = "http://tabby.test"
+        os.environ["TABBY_BACKEND_KEY"] = "k"
+        self.addCleanup(lambda: os.environ.pop("TABBY_BACKEND_URL", None))
+        self.addCleanup(lambda: os.environ.pop("TABBY_BACKEND_KEY", None))
+        from sidecar import model_status
+
+        model_status.invalidate_model_cache()
+        with (
+            mock.patch.object(model_status, "_gpu_mode", return_value="comfy"),
+            mock.patch.object(model_status, "_get_json") as get_json,
+        ):
+            self.assertFalse(model_status.llm_is_ready())
+            self.assertEqual(model_status.model_card(), {})
+            self.assertIsNone(model_status.loaded_model_id())
+        get_json.assert_not_called()
 
     def test_is_sidecar_process_respects_env(self):
         from sidecar.settings import is_sidecar_process

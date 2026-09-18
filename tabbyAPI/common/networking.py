@@ -55,7 +55,7 @@ def get_context_length_generator_error(message: str):
     return json.dumps(context_length_error_content(message))
 
 
-def handle_request_error(message: str, exc_info: bool = True):
+def handle_request_error(message: str, exc_info: bool = True, *, log: bool = True):
     """Log a request error to the console."""
 
     trace = traceback.format_exc()
@@ -64,6 +64,9 @@ def handle_request_error(message: str, exc_info: bool = True):
     error_message = TabbyRequestErrorMessage(message=message, trace=trace if send_trace else None)
 
     request_error = TabbyRequestError(error=error_message)
+
+    if not log:
+        return request_error
 
     # Log the error and provided message to the console
     if trace and exc_info:

@@ -33,6 +33,29 @@ def get_model_list(model_path: pathlib.Path, draft_model_path: Optional[str] = N
     return model_card_list
 
 
+def comfy_model_card() -> Optional[ModelCard]:
+    """Card when Comfy owns the GPU so GET /v1/model is not a 503.
+
+    Editors and the sidecar poll this endpoint. An empty LLM is expected while
+    images/audio/video run — do not probe Comfy HTTP here.
+    """
+
+    try:
+        from common import model as tabby_model
+        from common.gpu_mode import read_mode
+    except Exception:
+        return None
+    if (read_mode().get("mode") or "").lower() != "comfy":
+        return None
+    if tabby_model.container and getattr(tabby_model.container, "loaded", False):
+        return None
+    name = str(read_mode().get("profile") or "").strip() or "comfy"
+    return ModelCard(
+        id=name,
+        parameters=ModelCardParameters(cache_mode="comfy"),
+    )
+
+
 def llama_model_card() -> Optional[ModelCard]:
     """Card for the GGUF llama-server when it owns the GPU.
 

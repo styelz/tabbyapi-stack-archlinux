@@ -559,6 +559,26 @@ class LlamaModelCardTests(unittest.TestCase):
             self.assertIsNone(llama_model_card())
 
 
+class ComfyModelCardTests(unittest.TestCase):
+    def test_comfy_model_card_when_comfy_owns_gpu(self):
+        from endpoints.core.utils.model import comfy_model_card
+
+        with (
+            mock.patch("common.gpu_mode.read_mode", return_value={"mode": "comfy", "profile": "flux"}),
+            mock.patch("common.model.container", None),
+        ):
+            card = comfy_model_card()
+        self.assertIsNotNone(card)
+        self.assertEqual(card.id, "flux")
+        self.assertEqual(card.parameters.cache_mode, "comfy")
+
+    def test_comfy_model_card_none_in_llm_mode(self):
+        from endpoints.core.utils.model import comfy_model_card
+
+        with mock.patch("common.gpu_mode.read_mode", return_value={"mode": "llm"}):
+            self.assertIsNone(comfy_model_card())
+
+
 class StartupLlamaRestoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_restore_starts_llama_when_mode_is_llama(self):
         import main as main_mod

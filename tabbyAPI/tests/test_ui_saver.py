@@ -1361,11 +1361,12 @@ class SaverKioskSceneTests(unittest.TestCase):
         self.assertEqual(scene["palette"], "down")
         self.assertNotIn("service is up", scene["note"])
 
-    def test_idle_http_poll_is_slow_busy_is_fast(self):
-        busy = self.kiosk.http_poll_gap(busy=True, idle_s=1.0)
-        idle = self.kiosk.http_poll_gap(busy=False, idle_s=1.0)
-        self.assertAlmostEqual(busy, 0.1)
-        self.assertAlmostEqual(idle, 1.0)
+    def test_http_poll_defaults_to_five_seconds(self):
+        busy = self.kiosk.http_poll_gap(busy=True)
+        idle = self.kiosk.http_poll_gap(busy=False)
+        self.assertAlmostEqual(busy, 5.0)
+        self.assertAlmostEqual(idle, 5.0)
+        self.assertAlmostEqual(self.kiosk.http_poll_gap(busy=True, idle_s=10.0, busy_s=5.0), 5.0)
         self.assertTrue(self.kiosk.state_is_busy({"busy": True}))
         self.assertTrue(self.kiosk.state_is_busy(None, {"stage": "decode"}))
         self.assertFalse(self.kiosk.state_is_busy({"busy": False, "stage": "idle"}))

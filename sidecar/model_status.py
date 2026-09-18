@@ -18,14 +18,24 @@ ensure_import_path()
 
 # Status + screensaver used to GET /v1/model several times a second. The card
 # only changes on load/unload; TTL plus mode/lock epoch covers switches.
-_CACHE_TTL_S = 2.0
-_FAIL_TTL_S = 0.5
+# Comfy owns the GPU with no LLM — skip the HTTP entirely (see _gpu_mode).
+_CACHE_TTL_S = 5.0
+_FAIL_TTL_S = 5.0
 _cache_lock = threading.Lock()
 _model_cache: dict[str, Any] | None = None
 
 
 def _backend_configured() -> bool:
     return bool(os.environ.get("TABBY_BACKEND_URL") or os.environ.get("TABBY_BACKEND_KEY"))
+
+
+def _gpu_mode() -> str:
+    try:
+        from common.gpu_mode import read_mode
+
+        return (read_mode().get("mode") or "").lower()
+    except Exception:
+        return ""
 
 
 def _get_json(path: str, timeout: float = 2.0) -> tuple[int, Any]:
@@ -107,14 +117,18 @@ def _cached_backend_model() -> tuple[int, Any]:
 
 def loaded_model_id() -> str | None:
     try:
-        from common.gpu_mode import llama_loaded_id, read_mode
+        from common.gpu_mode import llama_loaded_id
 
-        if (read_mode().get("mode") or "").lower() == "llama":
+        if _gpu_mode() == "llama":
             return llama_loaded_id()
     except Exception:
         pass
+    if _gpu_mode() == "comfy":
+        return None
     card = model_card()
     name = str(card.get("id") or "").strip()
+    if name.lower() in {"comfy", "flux", "image", "comfyui"}:
+        return None
     return name or None
 
 
@@ -190,10 +204,13 @@ def load_backend_model(payload: dict[str, Any]) -> None:
 
 def llm_is_ready() -> bool:
     try:
-        from common.gpu_mode import llama_up, read_mode
+        from common.gpu_mode import llama_up
 
-        if (read_mode().get("mode") or "").lower() == "llama":
+        mode = _gpu_mode()
+        if mode == "llama":
             return llama_up()
+        if mode == "comfy":
+            return False
     except Exception:
         pass
     if _backend_configured():
@@ -209,10 +226,13 @@ def llm_is_ready() -> bool:
 
 def model_card() -> dict[str, Any]:
     try:
-        from common.gpu_mode import llama_loaded_id, llama_up, read_mode
+        from common.gpu_mode import llama_loaded_id, llama_up
         from common.llama_runtime import read_llama_runtime
 
-        if (read_mode().get("mode") or "").lower() == "llama" and llama_up():
+        mode = _gpu_mode()
+        if mode == "comfy":
+            return {}
+        if mode == "llama" and llama_up():
             runtime = read_llama_runtime()
             return {
                 "id": llama_loaded_id() or runtime.get("profile") or "gpt-4o",

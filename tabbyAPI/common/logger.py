@@ -127,6 +127,10 @@ def is_hidden_journal_line(line: str) -> bool:
         return True
     if _SSE_ECHO_RE.search(text):
         return True
+    # Expected while Comfy/llama owns the GPU; pollers used to reprint this
+    # twice a second and the Logs SSE echoed every line.
+    if "No models are currently loaded." in text:
+        return True
     if "\\" * 40 in text:
         return True
     return False
