@@ -57,12 +57,10 @@
     }
   },
   "8": {
-    "class_type": "SaveAudioAdvanced",
+    "class_type": "SaveAudio",
     "inputs": {
       "audio": ["7", 0],
-      "filename_prefix": "StableAudioMusic",
-      "format": "wav",
-      "quality": "V0"
+      "filename_prefix": "StableAudioMusic"
     }
   }
 }

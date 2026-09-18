@@ -885,11 +885,14 @@ def require_comfy_nodes(*names: str) -> None:
 
 
 def _audio_save_class() -> str:
-    missing = comfy_missing_nodes(("SaveAudioAdvanced", "SaveAudio"))
-    if "SaveAudioAdvanced" not in missing:
-        return "SaveAudioAdvanced"
+    # Prefer SaveAudio: SaveAudioAdvanced's v3 DynamicCombo `format` input
+    # is a dict, and a plain "wav"/"flac" string is dropped so execute()
+    # fails with a missing argument.
+    missing = comfy_missing_nodes(("SaveAudio", "SaveAudioAdvanced"))
     if "SaveAudio" not in missing:
         return "SaveAudio"
+    if "SaveAudioAdvanced" not in missing:
+        return "SaveAudioAdvanced"
     raise RuntimeError(f"ComfyUI is missing SaveAudio. {COMFY_UPDATE_HINT}")
 
 
@@ -1035,10 +1038,46 @@ def _apply_audio_save_node(graph: dict) -> dict:
     save = graph["8"]["inputs"]
     save_class = _audio_save_class()
     graph["8"]["class_type"] = save_class
+    prefix = save.get("filename_prefix") or "StableAudio"
+    audio = save.get("audio") or ["7", 0]
     if save_class == "SaveAudio":
         graph["8"]["inputs"] = {
-            "audio": save.get("audio") or ["7", 0],
-            "filename_prefix": save.get("filename_prefix") or "StableAudio",
+            "audio": audio,
+            "filename_prefix": prefix,
+        }
+    else:
+        graph["8"]["inputs"] = {
+            "audio": audio,
+            "filename_prefix": prefix,
+            "format": {"format": "flac"},
+        }
+    return graph
+
+
+def _apply_video_save_node(graph: dict) -> dict:
+    save = graph["11"]["inputs"]
+    prefix = save.get("filename_prefix") or "Wan22"
+    video = save.get("video") or ["10", 0]
+    combo = False
+    if comfy_up():
+        try:
+            info = request_json("GET", f"{COMFY_URL}/object_info", timeout=30)
+            fmt = ((info.get("SaveVideo") or {}).get("input") or {}).get("required") or {}
+            combo = (fmt.get("format") or [None])[0] == "COMFY_DYNAMICCOMBO_V3"
+        except Exception:
+            combo = False
+    if combo:
+        graph["11"]["inputs"] = {
+            "video": video,
+            "filename_prefix": prefix,
+            "format": {"format": "mp4", "codec": {"codec": "h264"}},
+        }
+    else:
+        graph["11"]["inputs"] = {
+            "video": video,
+            "filename_prefix": prefix,
+            "format": "mp4",
+            "codec": "h264",
         }
     return graph
 
@@ -1284,12 +1323,14 @@ def generate_video(
     uploaded = None
     if source_image:
         uploaded = upload_input_image(Path(source_image))
-    graph = build_wan_prompt(
-        prompt,
-        width=width,
-        height=height,
-        seed=seed,
-        source_image=uploaded,
+    graph = _apply_video_save_node(
+        build_wan_prompt(
+            prompt,
+            width=width,
+            height=height,
+            seed=seed,
+            source_image=uploaded,
+        )
     )
     return _run_comfy_graph(graph, timeout, ".mp4")
 

@@ -606,6 +606,8 @@ class SidecarBackendDirTests(unittest.TestCase):
         self.assertIn("/v1/ui", joined)
         self.assertIn("/v1/gpu/mode", joined)
         self.assertIn("/v1/images/generations", joined)
+        self.assertIn("/v1/audio/generations", joined)
+        self.assertIn("/v1/videos/generations", joined)
         self.assertIn("/mcp", joined)
 
 

@@ -85,8 +85,7 @@
     "inputs": {
       "video": ["10", 0],
       "filename_prefix": "Wan22T2V",
-      "format": "mp4",
-      "codec": "h264"
+      "format": {"format": "mp4", "codec": {"codec": "h264"}}
     }
   }
 }

@@ -79,7 +79,7 @@ class AvMediaTests(unittest.TestCase):
         self.assertEqual(sfx["2"]["inputs"]["clip_name"], STABLE_AUDIO_CLIP)
         self.assertEqual(sfx["3"]["inputs"]["text"], "rain on a tin roof")
         self.assertEqual(sfx["5"]["inputs"]["seconds"], 10)
-        self.assertEqual(sfx["8"]["class_type"], "SaveAudioAdvanced")
+        self.assertEqual(sfx["8"]["class_type"], "SaveAudio")
         music = build_audio_prompt("music: lo-fi beat", music=True, seconds=30, seed=1)
         self.assertEqual(music["1"]["inputs"]["ckpt_name"], STABLE_AUDIO_MUSIC)
         t2v = build_wan_prompt("a red bicycle rolling downhill", width=640, height=640, seed=2)
@@ -138,17 +138,48 @@ class AvMediaTests(unittest.TestCase):
         self.assertFalse(wants_music("sfx: a thunder crack"))
         self.assertEqual(strip_media_prefix("video: cobblestone street"), "cobblestone street")
 
-    def test_audio_save_fallback_when_advanced_is_missing(self):
+    def test_audio_save_prefers_simple_node(self):
         from common.gpu_mode import _apply_audio_save_node
 
         graph = build_audio_prompt("a door slam", music=False)
         with mock.patch(
             "common.gpu_mode.comfy_missing_nodes",
-            return_value=["SaveAudioAdvanced"],
+            return_value=[],
+        ):
+            applied = _apply_audio_save_node(graph)
+        self.assertEqual(applied["8"]["class_type"], "SaveAudio")
+        self.assertEqual(set(applied["8"]["inputs"]), {"audio", "filename_prefix"})
+
+    def test_audio_save_fallback_when_simple_is_missing(self):
+        from common.gpu_mode import _apply_audio_save_node
+
+        graph = build_audio_prompt("a door slam", music=False)
+        with mock.patch(
+            "common.gpu_mode.comfy_missing_nodes",
+            return_value=["SaveAudio"],
         ):
             swapped = _apply_audio_save_node(graph)
-        self.assertEqual(swapped["8"]["class_type"], "SaveAudio")
-        self.assertIn("filename_prefix", swapped["8"]["inputs"])
+        self.assertEqual(swapped["8"]["class_type"], "SaveAudioAdvanced")
+        self.assertEqual(swapped["8"]["inputs"]["format"], {"format": "flac"})
+
+    def test_video_save_uses_v3_format_combo(self):
+        from common.gpu_mode import _apply_video_save_node
+
+        graph = build_wan_prompt("a lantern in fog")
+        with mock.patch("common.gpu_mode.comfy_up", return_value=True), mock.patch(
+            "common.gpu_mode.request_json",
+            return_value={
+                "SaveVideo": {
+                    "input": {"required": {"format": ["COMFY_DYNAMICCOMBO_V3", {}]}}
+                }
+            },
+        ):
+            applied = _apply_video_save_node(graph)
+        self.assertEqual(
+            applied["11"]["inputs"]["format"],
+            {"format": "mp4", "codec": {"codec": "h264"}},
+        )
+        self.assertNotIn("codec", applied["11"]["inputs"])
 
     def test_generation_routes_exist(self):
         from endpoints.core.router import router

@@ -41,7 +41,7 @@ def _stack_router():
     from fastapi import APIRouter
 
     stack = APIRouter()
-    keep = ("/v1/gpu", "/v1/images")
+    keep = ("/v1/gpu", "/v1/images", "/v1/audio", "/v1/videos")
     for route in CoreRouter.routes:
         path = getattr(route, "path", "")
         if path.startswith(keep):
