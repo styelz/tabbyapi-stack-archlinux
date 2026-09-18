@@ -39,3 +39,4 @@ class GalleryOwnerTests(unittest.TestCase):
         extra_names = {item["name"] for item in extra["items"]}
         self.assertEqual(extra_names, {"generated-alice.png"})
         self.assertEqual(extra["items"][0]["owner"], "alice")
+        self.assertEqual(extra["items"][0]["url"], "/v1/images/generated-alice.png")

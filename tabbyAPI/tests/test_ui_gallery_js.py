@@ -48,6 +48,11 @@ class GalleryShiftRangeTests(unittest.TestCase):
         self.assertIn('href="${url}" data-full="${url}"', self.src)
         self.assertNotRegex(self.src, r'href="\$\{TabbyUI\.resolveUiUrl')
 
+    def test_modal_click_does_not_close_on_player(self):
+        self.assertIn('if (event.target.closest("video, audio")) return;', self.src)
+        self.assertIn('window.open(url, "_blank", "noopener")', self.src)
+        self.assertNotIn('window.open(url, "_blank", "noreferrer")', self.src)
+
 
 if __name__ == "__main__":
     unittest.main()

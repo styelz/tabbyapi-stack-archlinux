@@ -826,6 +826,16 @@ def media_kind_for_name(name: str) -> str:
     return "image"
 
 
+def media_disposition(name: str) -> str:
+    """Inline so <video>/<audio> can play; attachment forces a download."""
+    return "inline" if media_kind_for_name(name) in ("video", "audio") else "attachment"
+
+
+def public_generated_href(name: str) -> str:
+    """Same public /v1/images URL Chat and curl already use."""
+    return f"/v1/images/{Path(name).name}"
+
+
 def strip_media_prefix(prompt: str) -> str:
     text = prompt or ""
     for pattern in (AUDIO_PREFIX, MUSIC_PREFIX, VIDEO_PREFIX):

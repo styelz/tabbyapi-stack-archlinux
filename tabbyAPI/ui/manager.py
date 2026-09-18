@@ -541,7 +541,13 @@ def gallery_listing(
     is_admin: bool = False,
 ) -> dict[str, Any]:
     from common.gallery_owners import filter_files, owner_of
-    from common.gpu_mode import gallery_page, gallery_thumb_href, list_generated_files, media_kind_for_name
+    from common.gpu_mode import (
+        gallery_page,
+        gallery_thumb_href,
+        list_generated_files,
+        media_kind_for_name,
+        public_generated_href,
+    )
 
     files = filter_files(list_generated_files(), username, is_admin)
     shown, page, pages, per_page = gallery_page(files, page, per_page)
@@ -559,7 +565,7 @@ def gallery_listing(
                 "name": path.name,
                 "mtime": when,
                 "size": size,
-                "url": f"/v1/ui/gallery/file/{path.name}",
+                "url": public_generated_href(path.name),
                 "thumb": f"/v1/ui/gallery/thumb/{path.name}",
                 "public_thumb": gallery_thumb_href(path.name),
                 "owner": owner_of(path.name) or "",
@@ -576,14 +582,19 @@ def gallery_listing(
 
 
 def gallery_upload(raw: bytes, username: str) -> dict[str, Any]:
-    from common.gpu_mode import gallery_thumb_href, png_bytes_from_upload, save_generated_image
+    from common.gpu_mode import (
+        gallery_thumb_href,
+        png_bytes_from_upload,
+        public_generated_href,
+        save_generated_image,
+    )
 
     png = png_bytes_from_upload(raw)
     dest = save_generated_image(png, owner=username, as_latest=False)
     return {
         "ok": True,
         "name": dest.name,
-        "url": f"/v1/ui/gallery/file/{dest.name}",
+        "url": public_generated_href(dest.name),
         "thumb": f"/v1/ui/gallery/thumb/{dest.name}",
         "public_thumb": gallery_thumb_href(dest.name),
     }

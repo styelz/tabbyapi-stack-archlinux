@@ -362,7 +362,7 @@ function mountGallery(root) {
         <audio controls hidden></audio>
         <div class="modal-bar">
           <span class="modal-name" id="modal-name"></span>
-          <a class="btn" id="modal-open" target="_blank" rel="noreferrer">Open original</a>
+          <a class="btn" id="modal-open" target="_blank" rel="noopener">Open original</a>
           <button class="btn" type="button" id="modal-attach">Attach to chat</button>
           <span class="muted">Esc closes</span>
         </div>
@@ -601,7 +601,7 @@ function mountGallery(root) {
       { label: "Open", run: () => {
         openModal(url, name, fig.dataset.kind);
       } },
-      { label: "Open original", run: () => window.open(url, "_blank", "noreferrer") },
+      { label: "Open original", run: () => window.open(url, "_blank", "noopener") },
       { label: "Attach to chat", run: () => attachItems(item ? [item] : []) },
       { label: "Copy URL", run: () => TabbyUI.copyText(url) },
       { label: "Copy name", run: () => TabbyUI.copyText(name) },
@@ -623,7 +623,7 @@ function mountGallery(root) {
     const url = modalVideo.getAttribute("src") || modalAudio.getAttribute("src") || modalImg.getAttribute("src") || modalOpen.href || "";
     if (!url) return;
     TabbyUI.showContextMenu(event, [
-      { label: "Open original", run: () => window.open(url, "_blank", "noreferrer") },
+      { label: "Open original", run: () => window.open(url, "_blank", "noopener") },
       { label: "Attach to chat", run: () => attachItems([{ name, url, thumb: "" }]) },
       { label: "Copy URL", run: () => TabbyUI.copyText(url) },
       { label: "Copy name", run: () => TabbyUI.copyText(name) },
@@ -646,6 +646,7 @@ function mountGallery(root) {
   });
   modal.addEventListener("click", (event) => {
     if (event.target.closest("#modal-open") || event.target.closest("#modal-attach")) return;
+    if (event.target.closest("video, audio")) return;
     closeModal();
   });
   function onKey(event) {

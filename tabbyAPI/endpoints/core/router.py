@@ -1043,11 +1043,21 @@ async def generated_image(
     Timestamped gallery files (generated-YYYYMMDD-HHMMSS-PID.png) are public so
     the coding PC can curl them without a bearer. Keep auth on latest.png.
     """
-    from common.gpu_mode import generated_image_path, is_public_generated_png, media_type_for_name
+    from common.gpu_mode import (
+        generated_image_path,
+        is_public_generated_png,
+        media_disposition,
+        media_type_for_name,
+    )
 
     path = generated_image_path(name)
     if not path:
         raise HTTPException(404, "Image not found.")
     if not is_public_generated_png(name):
         await check_api_key(x_api_key=x_api_key, authorization=authorization)
-    return FileResponse(path, media_type=media_type_for_name(name), filename=name)
+    return FileResponse(
+        path,
+        media_type=media_type_for_name(name),
+        filename=name,
+        content_disposition_type=media_disposition(name),
+    )

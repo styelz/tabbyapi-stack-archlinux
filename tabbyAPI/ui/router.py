@@ -2072,18 +2072,23 @@ async def ui_gallery_delete(request: Request, _user: str = Depends(require_ui_us
     return {"deleted": removed, "count": len(removed)}
 
 
-@router.get("/gallery/file/{name}", include_in_schema=False)
+@router.api_route("/gallery/file/{name}", methods=["GET", "HEAD"], include_in_schema=False)
 async def ui_gallery_file(name: str, _user: str = Depends(require_ui_user)):
     from common.gallery_owners import can_access
-    from common.gpu_mode import generated_image_path, media_type_for_name
+    from common.gpu_mode import generated_image_path, media_disposition, media_type_for_name
 
     path = generated_image_path(name)
     if not path or not can_access(name, _user, is_admin_username(_user)):
         raise HTTPException(404, "Image not found.")
-    return FileResponse(path, media_type=media_type_for_name(name), filename=name)
+    return FileResponse(
+        path,
+        media_type=media_type_for_name(name),
+        filename=name,
+        content_disposition_type=media_disposition(name),
+    )
 
 
-@router.get("/gallery/thumb/{name}", include_in_schema=False)
+@router.api_route("/gallery/thumb/{name}", methods=["GET", "HEAD"], include_in_schema=False)
 async def ui_gallery_thumb(name: str, _user: str = Depends(require_ui_user)):
     from common.gallery_owners import can_access
     from common.gpu_mode import ensure_gallery_thumb, generated_image_path, generated_thumb_path

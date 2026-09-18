@@ -18,9 +18,11 @@ from common.gpu_mode import (
     build_audio_prompt,
     build_wan_prompt,
     is_public_generated_png,
+    media_disposition,
     media_kind_for_name,
     media_type_for_name,
     parse_wan_size,
+    public_generated_href,
     strip_media_prefix,
     wants_music,
 )
@@ -58,6 +60,10 @@ class AvMediaTests(unittest.TestCase):
         self.assertTrue(is_public_generated_png("generated-20260919-031700-1.wav"))
         self.assertTrue(is_public_generated_png("generated-20260919-031700-1.mp4"))
         self.assertFalse(is_public_generated_png("generated-latest.png"))
+        self.assertEqual(media_disposition("clip.mp4"), "inline")
+        self.assertEqual(media_disposition("hit.wav"), "inline")
+        self.assertEqual(media_disposition("shot.png"), "attachment")
+        self.assertEqual(public_generated_href("generated-1.mp4"), "/v1/images/generated-1.mp4")
 
     def test_history_prefers_audio_and_video_keys(self):
         audio = _first_media_ref(
