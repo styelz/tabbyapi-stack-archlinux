@@ -211,6 +211,50 @@ def _usage_payload(raw: Any) -> dict[str, Any] | None:
     return payload
 
 
+GENERATED_MEDIA_RE = re.compile(
+    r"generated-[A-Za-z0-9._-]+\.(?:png|jpe?g|webp|gif|wav|flac|mp3|mp4|webm)",
+    re.I,
+)
+
+
+def generated_media_names(text: str) -> set[str]:
+    return {match.group(0).lower() for match in GENERATED_MEDIA_RE.finditer(str(text or ""))}
+
+
+def drop_duplicate_media_replies(messages: Any) -> list:
+    """Drop a persist echo that repeats the same generated file as the last reply.
+
+    Console Chat writes \"Here's the video.\" The job persist path used to append
+    a second \"Here's the picture.\" bubble with the same MP4.
+    """
+    if not isinstance(messages, list):
+        return []
+    out: list[Any] = []
+    for item in messages:
+        if not (isinstance(item, dict) and item.get("role") == "assistant"):
+            out.append(item)
+            continue
+        content = str(item.get("content") or "")
+        names = generated_media_names(content)
+        prev = out[-1] if out else None
+        prev_content = str((prev or {}).get("content") or "") if isinstance(prev, dict) else ""
+        prev_names = generated_media_names(prev_content)
+        if (
+            names
+            and isinstance(prev, dict)
+            and prev.get("role") == "assistant"
+            and prev_names
+            and not names.isdisjoint(prev_names)
+        ):
+            prev_mark = "tabby-image-job:" in prev_content
+            this_mark = "tabby-image-job:" in content
+            if prev_mark and not this_mark:
+                out[-1] = item
+            continue
+        out.append(item)
+    return out
+
+
 def normalize_store(raw: Any) -> dict[str, Any]:
     if not isinstance(raw, dict):
         return {
@@ -250,7 +294,7 @@ def normalize_store(raw: Any) -> dict[str, Any]:
             "titleLocked": bool(item.get("titleLocked")),
             "mode": mode,
             "parentId": parent_id,
-            "messages": messages,
+            "messages": drop_duplicate_media_replies(messages),
         }
         folder = str(item.get("folder") or "").strip()[:80]
         if mode == "chat" and folder:

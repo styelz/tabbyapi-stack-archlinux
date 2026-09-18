@@ -973,6 +973,43 @@ function mountChat(root) {
     return want === "code" ? preferredCodeChat(fallback) : fallback;
   }
 
+  function generatedMediaNames(text) {
+    const names = new Set();
+    const re = /generated-[A-Za-z0-9._-]+\.(?:png|jpe?g|webp|gif|wav|flac|mp3|mp4|webm)/gi;
+    String(text || "").replace(re, (name) => {
+      names.add(name.toLowerCase());
+      return name;
+    });
+    return names;
+  }
+
+  function dropDuplicateMediaReplies(list) {
+    const out = [];
+    (Array.isArray(list) ? list : []).forEach((item) => {
+      if (!item || item.role !== "assistant") {
+        out.push(item);
+        return;
+      }
+      const content = String(item.content || "");
+      const names = generatedMediaNames(content);
+      const prev = out[out.length - 1];
+      const prevContent = prev && prev.role === "assistant" ? String(prev.content || "") : "";
+      const prevNames = generatedMediaNames(prevContent);
+      let overlap = false;
+      names.forEach((name) => {
+        if (prevNames.has(name)) overlap = true;
+      });
+      if (names.size && prevNames.size && overlap) {
+        if (prevContent.includes("tabby-image-job:") && !content.includes("tabby-image-job:")) {
+          out[out.length - 1] = item;
+        }
+        return;
+      }
+      out.push(item);
+    });
+    return out;
+  }
+
   function cloneMessages(list) {
     return (Array.isArray(list) ? list : []).map((item) => {
       const out = {
@@ -1255,7 +1292,7 @@ function mountChat(root) {
       const id = String(item.id || newId());
       if (seen.has(id)) return;
       seen.add(id);
-      const messages = cloneMessages(item.messages);
+      const messages = dropDuplicateMediaReplies(cloneMessages(item.messages));
       if (!messages.some((msg) => msg.role === "system")) messages.unshift({ ...SYSTEM });
       const row = {
         id,

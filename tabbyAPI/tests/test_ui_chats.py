@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 from ui import chats, workspace
-from ui.chats import normalize_store
+from ui.chats import drop_duplicate_media_replies, normalize_store
 
 
 class ChatStoreNormalizeTests(unittest.TestCase):
@@ -140,6 +140,55 @@ class ChatStoreNormalizeTests(unittest.TestCase):
             }
         )
         self.assertEqual({chat["id"] for chat in store["chats"]}, {"w1", "t1"})
+
+    def test_drops_persist_picture_echo_of_the_same_video(self):
+        name = "generated-20260919-042559-1585157.mp4"
+        store = normalize_store(
+            {
+                "chats": [
+                    {
+                        "id": "c1",
+                        "mode": "chat",
+                        "messages": [
+                            {"role": "user", "content": "generate a video of a bicycle"},
+                            {
+                                "role": "assistant",
+                                "content": f"Here's the video.\n\n![](/v1/images/{name})",
+                            },
+                            {
+                                "role": "assistant",
+                                "content": (
+                                    f"tabby-image-job: job-1\n\nHere's the picture.\n\n"
+                                    f"![](/v1/images/{name})"
+                                ),
+                            },
+                        ],
+                    }
+                ]
+            }
+        )
+        texts = [item["content"] for item in store["chats"][0]["messages"]]
+        self.assertEqual(len(texts), 2)
+        self.assertIn("Here's the video.", texts[1])
+        self.assertNotIn("Here's the picture.", "\n".join(texts))
+
+    def test_keeps_console_video_when_persist_echo_came_first(self):
+        name = "generated-20260919-042559-1585157.mp4"
+        kept = drop_duplicate_media_replies(
+            [
+                {
+                    "role": "assistant",
+                    "content": f"tabby-image-job: job-1\n\nHere's the picture.\n\n![](/v1/images/{name})",
+                },
+                {
+                    "role": "assistant",
+                    "content": f"Here's the video.\n\n![](/v1/images/{name})",
+                },
+            ]
+        )
+        self.assertEqual(len(kept), 1)
+        self.assertIn("Here's the video.", kept[0]["content"])
+        self.assertNotIn("tabby-image-job:", kept[0]["content"])
 
 
 class ChatStoreSaveWorkspaceTests(unittest.TestCase):

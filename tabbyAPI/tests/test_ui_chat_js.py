@@ -89,6 +89,12 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
         self.assertIn("typeof onRetry === \"function\"", tool_src)
         self.assertNotIn("throw new Error", tool_src)
 
+    def test_drops_persist_media_echo_in_store(self):
+        self.assertIn("function generatedMediaNames(text)", self.src)
+        self.assertIn("function dropDuplicateMediaReplies(list)", self.src)
+        self.assertIn("dropDuplicateMediaReplies(cloneMessages(item.messages))", self.src)
+        self.assertIn("tabby-image-job:", self.src)
+
     def test_send_button_becomes_stop_during_session(self):
         self.assertIn('label: "Stop"', self.src)
         self.assertIn("abortSession(\"stop\")", self.src)
