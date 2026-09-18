@@ -107,6 +107,35 @@ IMAGE_COUNT_RE = re.compile(
 )
 _IMAGE_COUNT_WORDS = {"two": 2, "three": 3, "four": 4, "five": 5}
 MAX_CHAT_IMAGES = 5
+AUDIO_GEN_RE = re.compile(
+    r"(?is)^\s*(?:please\s+)?(?:can you\s+|could you\s+)?"
+    r"(?:generate|create|make|render)"
+    r"(?:\s+me)?(?:\s+an?)?\s+"
+    r"(?:audio|sound(?:\s*effects?)?|sfx|foley|ambience)"
+    r"(?:\s+of|\s+for|\s+that\s+sounds\s+like)?\s*(.*?)\s*$"
+)
+MUSIC_GEN_RE = re.compile(
+    r"(?is)^\s*(?:please\s+)?(?:can you\s+|could you\s+)?"
+    r"(?:generate|create|make|compose|write)"
+    r"(?:\s+me)?(?:\s+an?)?\s+"
+    r"(?:music|song|track|tune|melody|instrumental)"
+    r"(?:\s+of|\s+for|\s+that\s+sounds\s+like)?\s*(.*?)\s*$"
+)
+VIDEO_GEN_RE = re.compile(
+    r"(?is)^\s*(?:please\s+)?(?:can you\s+|could you\s+)?"
+    r"(?:generate|create|make|render)"
+    r"(?:\s+me)?(?:\s+an?)?\s+"
+    r"(?:video|clip|animation|movie)"
+    r"(?:\s+of|\s+showing|\s+from)?\s*(.*?)\s*$"
+)
+I2V_RE = re.compile(
+    r"(?is)^\s*(?:please\s+)?"
+    r"(?:animate\s+(?:this|it|the\s+(?:image|picture|photo|png))|"
+    r"image[- ]to[- ]video|"
+    r"(?:make|turn)\s+(?:this|the\s+(?:image|picture|photo))\s+"
+    r"(?:into\s+)?(?:a\s+)?(?:video|clip|move|moving))"
+    r"\s*(.*?)\s*$"
+)
 # After unwrap, a real image prompt can be a few thousand chars (Qwen-Image
 # posters/UI). Agent dumps are typically 10k+. Keep a cap as a backstop.
 MAX_IMAGE_PROMPT_CHARS = 4000
@@ -147,9 +176,8 @@ AGENT_MARKERS = (
     "Available Tools",
 )
 COMFY_IDLE = (
-    "GPU is on ComfyUI. Describe the image in this chat "
-    "(for example: a red bicycle in the rain). "
-    "The reply will include a PNG URL on this same API host. "
+    "GPU is on ComfyUI. Describe an image, generate audio (`sfx:`), or a short "
+    "video (`wan:` / `animate this`). Replies include a file URL on this same API host. "
     "Send switch to qwen when you want the LLM back."
 )
 SWITCH_LLM_MARK = "tabby-switch-llm"
@@ -821,6 +849,8 @@ def help_text(api_base: Optional[str] = None, request=None) -> str:
     health_url = f"{origin}/health" if origin else "/health on the same host"
     embed = f"{base}/embeddings" if base else "/v1/embeddings"
     images_post = f"{base}/images/generations" if base else "/v1/images/generations"
+    audio_post = f"{base}/audio/generations" if base else "/v1/audio/generations"
+    videos_post = f"{base}/videos/generations" if base else "/v1/videos/generations"
 
     lines = [
         "# TabbyAPI Stack help",
@@ -919,6 +949,8 @@ def help_text(api_base: Optional[str] = None, request=None) -> str:
             f"- ComfyUI ready: about {comfy_ready}",
             f"- First Flux image: about {format_duration(flux) if flux else 'a few minutes'}",
             f"- First Qwen-Image: about {format_duration(qwen_img) if qwen_img else 'a few minutes'}",
+            f"- First Stable Audio clip: about a minute",
+            f"- First Wan video: about {format_duration(extra_seconds('comfy', 'wan_s')) if extra_seconds('comfy', 'wan_s') else 'a few minutes'}",
             f"- Language model restored: about {llm_ready}",
             "",
             "A first boot may take longer while Triton compiles.",
@@ -939,6 +971,10 @@ def help_text(api_base: Optional[str] = None, request=None) -> str:
             "- **Flux Schnell:** scenes, photos, drafts, and img2img.",
             "- **Qwen-Image:** prefix `qwen-image:` for logos, posters, UI mockups, "
             "and readable text.",
+            "- Prefix `sfx:` or `generate audio of …` for Stable Audio sound effects; "
+            "`music:` or `generate a song …` for a short track.",
+            "- Prefix `video:` / `wan:` or `generate a video of …` for a ~3 s Wan 2.2 clip "
+            "(12 GB default). `animate this` plus a still is image-to-video.",
             "- Describe hero and header art as a scene, not as a screenshot of the whole website.",
             "",
             "## Use an existing image",
@@ -977,6 +1013,21 @@ def help_text(api_base: Optional[str] = None, request=None) -> str:
             "",
             "The response includes `b64_json` and a URL on this server "
             "(including any reverse-proxy prefix).",
+            "",
+            "## Audio and video",
+            "",
+            "Download **Stable Audio 3 Small** and **Wan 2.2 5B** from the Models page "
+            "(optional packs; they are not in Simple install). Short clips only on 12 GB.",
+            "",
+            "```tabby",
+            "generate audio of rain on a tin roof",
+            "music: lo-fi beat with warm piano",
+            "generate a video of a red bicycle rolling down a cobblestone street",
+            "animate this",
+            "```",
+            "",
+            f"`POST {audio_post}` and `POST {videos_post}` use the same "
+            "`{prompt, n, restore}` shape as images. Video defaults to 640×640, 81 frames.",
             "",
             "## Recommended workflow",
             "",
@@ -1611,13 +1662,32 @@ def image_job_wait_text(
     restore: bool = True,
     count: int = 1,
     prompts: Optional[list[str]] = None,
+    modality: str = "image",
 ) -> str:
     """Measured wait for one Comfy batch, from switch_times.json."""
     from common.gpu_mode import wants_qwen_image
 
+    kind = str(modality or "image").lower()
     texts = list(prompts) if prompts else [prompt or ""] * max(1, int(count))
     n = len(texts)
     llm_s = format_duration(ready_seconds("llm"))
+    if kind in ("audio", "music"):
+        extra = extra_seconds("comfy", "audio_s")
+        render_s = format_duration(int(extra) if extra is not None else 60)
+        noun = "track" if kind == "music" else "clip"
+        bits = [f"about {render_s} to render audio ({noun})"]
+        if restore:
+            bits.append(f"about {llm_s} to reload the coding model")
+        one = ", then ".join(bits)
+        return one[0].upper() + one[1:] + "."
+    if kind in ("video", "i2v"):
+        extra = extra_seconds("comfy", "wan_s")
+        render_s = format_duration(int(extra) if extra is not None else 240)
+        bits = [f"about {render_s} to render a short Wan clip"]
+        if restore:
+            bits.append(f"about {llm_s} to reload the coding model")
+        one = ", then ".join(bits)
+        return one[0].upper() + one[1:] + "."
     if n == 1:
         qwen = wants_qwen_image(texts[0]) if texts[0] else False
         backend = "Qwen-Image" if qwen else "Flux"
@@ -1688,12 +1758,22 @@ def image_job_done_text(
             count = max(1, int(getattr(job, "count", 0) or count))
     texts = list(prompts) if prompts else [prompt or ""] * max(1, int(count))
     n = len(texts)
-    backends = _image_backends(texts)
-    named = " and ".join(backends) if len(backends) <= 2 else ", ".join(backends[:-1]) + f", and {backends[-1]}"
-    if n == 1:
-        lead = f"Rendered with {named}"
+    kind = "image"
+    if job is not None:
+        kind = str(getattr(job, "modality", "") or "image").lower()
+    if kind in ("audio", "music"):
+        named = "Stable Audio"
+        lead = f"Rendered with {named}" if n == 1 else f"Rendered {n} audio clips in one Comfy session ({named})"
+    elif kind in ("video", "i2v"):
+        named = "Wan"
+        lead = f"Rendered with {named}" if n == 1 else f"Rendered {n} videos in one Comfy session ({named})"
     else:
-        lead = f"Rendered {n} pictures in one Comfy session ({named})"
+        backends = _image_backends(texts)
+        named = " and ".join(backends) if len(backends) <= 2 else ", ".join(backends[:-1]) + f", and {backends[-1]}"
+        if n == 1:
+            lead = f"Rendered with {named}"
+        else:
+            lead = f"Rendered {n} pictures in one Comfy session ({named})"
     if elapsed_s is not None and elapsed_s >= 1:
         lead += f" in {_compact_elapsed(elapsed_s)}"
     lead += "."
@@ -1707,15 +1787,25 @@ def image_job_wait_seconds(
     restore: bool = True,
     count: int = 1,
     prompts: Optional[list[str]] = None,
+    modality: str = "image",
 ) -> int:
     from common.gpu_mode import uses_qwen_image
 
     texts = list(prompts) if prompts else [prompt or ""] * max(1, int(count))
-    total = 0
-    for text in texts:
-        qwen = uses_qwen_image(text) if text else False
-        extra = extra_seconds("comfy", "qwen_image_s" if qwen else "flux_s")
-        total += int(extra) if extra is not None else (240 if qwen else 180)
+    n = len(texts)
+    kind = str(modality or "image").lower()
+    if kind in ("audio", "music"):
+        extra = extra_seconds("comfy", "audio_s")
+        total = n * int(extra if extra is not None else 60)
+    elif kind in ("video", "i2v"):
+        extra = extra_seconds("comfy", "wan_s")
+        total = n * int(extra if extra is not None else 240)
+    else:
+        total = 0
+        for text in texts:
+            qwen = uses_qwen_image(text) if text else False
+            extra = extra_seconds("comfy", "qwen_image_s" if qwen else "flux_s")
+            total += int(extra) if extra is not None else (240 if qwen else 180)
     if restore:
         total += ready_seconds("llm")
     return max(30, total)
@@ -1787,6 +1877,54 @@ def requested_image_prompt(
     return text
 
 
+def requested_media_prompt(
+    data: ChatCompletionRequest, explicit_only: bool = False
+) -> Optional[tuple[str, str]]:
+    """Return (modality, prompt) for audio/video generation, else None.
+
+    modality is audio, music, video, or i2v.
+    """
+    from common.gpu_mode import AUDIO_PREFIX, MUSIC_PREFIX, VIDEO_PREFIX, strip_media_prefix
+
+    if last_role(data) in ("tool", "function"):
+        return None
+    raw = last_user_raw(data)
+    text = user_task_text(data) or _unwrap_query(raw)
+    if not text or _is_paste_stub(text):
+        return None
+    if any(marker.lower() in text.lower() for marker in AGENT_MARKERS):
+        return None
+    if _is_meta_wrapper_text(text):
+        return None
+    if is_page_layout_ask(text):
+        return None
+    match = AUDIO_PREFIX.match(text)
+    if match:
+        return "audio", strip_media_prefix(text)
+    match = MUSIC_PREFIX.match(text)
+    if match:
+        return "music", strip_media_prefix(text)
+    match = VIDEO_PREFIX.match(text)
+    if match:
+        return "video", strip_media_prefix(text)
+    match = I2V_RE.match(text)
+    if match:
+        extra = (match.group(1) or "").strip()
+        return "i2v", extra or "the same scene, gentle camera motion"
+    match = MUSIC_GEN_RE.match(text)
+    if match:
+        return "music", (match.group(1) or "").strip() or text
+    match = AUDIO_GEN_RE.match(text)
+    if match:
+        return "audio", (match.group(1) or "").strip() or text
+    match = VIDEO_GEN_RE.match(text)
+    if match:
+        return "video", (match.group(1) or "").strip() or text
+    if explicit_only:
+        return None
+    return None
+
+
 def wants_border_trim(text: str) -> bool:
     """True when they asked to take a frame off an existing picture."""
     return bool(BORDER_TRIM_RE.search(text or ""))
@@ -1810,7 +1948,13 @@ def looks_like_chat_not_image(text: str) -> bool:
         return False
     if IMAGE_GEN_RE.match(raw) or IMAGE_COUNT_RE.match(raw):
         return False
+    if AUDIO_GEN_RE.match(raw) or MUSIC_GEN_RE.match(raw) or VIDEO_GEN_RE.match(raw):
+        return False
+    if I2V_RE.match(raw):
+        return False
     if raw.lower().startswith("qwen-image:"):
+        return False
+    if raw.lower().startswith(("sfx:", "audio:", "music:", "wan:", "video:")):
         return False
     if CHAT_FOLLOWUP_RE.match(raw) or CHAT_QUESTION_RE.match(raw):
         return True

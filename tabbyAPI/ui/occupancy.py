@@ -16,7 +16,7 @@ SELF_QUEUED_HINT = "Your previous request is still running."
 KIND_ACTIONS = {
     "chat": "chatting",
     "code": "writing code",
-    "image": "generating images",
+    "image": "generating media",
     "gpu": "switching the GPU",
 }
 

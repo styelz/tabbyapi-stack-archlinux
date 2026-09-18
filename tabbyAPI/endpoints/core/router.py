@@ -710,6 +710,29 @@ async def images_generations(
     return await generate_response(request, data)
 
 
+@router.post("/v1/audio/generations", dependencies=[Depends(check_api_key)])
+async def audio_generations(
+    request: Request, data: ImageGenerationRequest
+) -> ImageGenerationResponse:
+    """OpenAI-shaped audio gen via ComfyUI (Stable Audio 3 Small)."""
+    from common.gpu_mode import wants_music
+    from images.http import generate_response
+
+    prompt = (data.prompt or "").strip()
+    modality = "music" if wants_music(prompt) else "audio"
+    return await generate_response(request, data, modality=modality)
+
+
+@router.post("/v1/videos/generations", dependencies=[Depends(check_api_key)])
+async def videos_generations(
+    request: Request, data: ImageGenerationRequest
+) -> ImageGenerationResponse:
+    """OpenAI-shaped video gen via ComfyUI (Wan 2.2 5B, short clips)."""
+    from images.http import generate_response
+
+    return await generate_response(request, data, modality="video")
+
+
 def _gallery_pager(page: int, pages: int, per_page: int) -> str:
     def href(n: int) -> str:
         query = f"?page={n}"
@@ -996,15 +1019,16 @@ async def pasted_chat_image(name: str):
 @router.get("/v1/images/thumbs/{name}", dependencies=[Depends(check_api_key)])
 async def generated_image_thumb(name: str):
     """Serve a small JPEG preview; build it on first request."""
-    from common.gpu_mode import generated_image_path, generated_thumb_path
+    from common.gpu_mode import generated_source_for_thumb, generated_thumb_path, media_type_for_name
 
     path = generated_thumb_path(name)
     if path:
         return FileResponse(path, media_type="image/jpeg", filename=path.name)
-    png_name = name[: -len(".jpg")] + ".png" if name.endswith(".jpg") else name
-    original = generated_image_path(png_name)
+    original = generated_source_for_thumb(name)
     if original:
-        return FileResponse(original, media_type="image/png", filename=original.name)
+        return FileResponse(
+            original, media_type=media_type_for_name(original.name), filename=original.name
+        )
     raise HTTPException(404, "Image not found.")
 
 
@@ -1019,11 +1043,11 @@ async def generated_image(
     Timestamped gallery files (generated-YYYYMMDD-HHMMSS-PID.png) are public so
     the coding PC can curl them without a bearer. Keep auth on latest.png.
     """
-    from common.gpu_mode import generated_image_path, is_public_generated_png
+    from common.gpu_mode import generated_image_path, is_public_generated_png, media_type_for_name
 
     path = generated_image_path(name)
     if not path:
         raise HTTPException(404, "Image not found.")
     if not is_public_generated_png(name):
         await check_api_key(x_api_key=x_api_key, authorization=authorization)
-    return FileResponse(path, media_type="image/png", filename=name)
+    return FileResponse(path, media_type=media_type_for_name(name), filename=name)

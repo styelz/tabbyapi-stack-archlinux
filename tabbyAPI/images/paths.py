@@ -8,6 +8,7 @@ from typing import Iterable, Optional
 from urllib.parse import urlparse
 
 DEFAULT_PNG_PATH = "images/generated.png"
+MEDIA_PATH_SUFFIXES = {".png", ".wav", ".flac", ".mp3", ".mp4", ".webm"}
 _DRIVE_ABS_RE = re.compile(r"^[A-Za-z]:/")
 _MACHINE_PARENTS = frozenset(
     {
@@ -96,7 +97,7 @@ def project_png_from_abs(raw: str) -> Optional[str]:
     if _keep_images_parent(parts, idx):
         start = idx - 1
     rel = Path(*parts[start:])
-    if rel.suffix.lower() != ".png":
+    if rel.suffix.lower() not in MEDIA_PATH_SUFFIXES:
         rel = rel.with_suffix(".png")
     cleaned = [part for part in rel.parts if part not in ("", ".")]
     if not cleaned:
@@ -123,7 +124,7 @@ def safe_rel_png_path(raw: str, default: str = DEFAULT_PNG_PATH) -> str:
     elif _looks_absolute(text, path):
         recovered = project_png_from_abs(text)
         path = Path(recovered) if recovered else Path(default)
-    if path.suffix.lower() != ".png":
+    if path.suffix.lower() not in MEDIA_PATH_SUFFIXES:
         path = path.with_suffix(".png")
     parts = [part for part in path.parts if part not in ("", ".")]
     parts = _strip_api_images_prefix(parts)

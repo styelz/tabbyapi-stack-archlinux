@@ -816,7 +816,13 @@ def catalog_pick_rows(paths: ModelPaths | None = None) -> list[dict]:
                     "kind": item.get("kind") or "snapshot",
                 }
             )
-        kind = "image" if pick_id in ("flux", "qwen-image") else ("embed" if pick_id == "embed" else "llm")
+        kind = str(pick.get("kind") or "").strip().lower()
+        if kind not in ("llm", "embed", "image", "audio", "video"):
+            kind = (
+                "image"
+                if pick_id in ("flux", "qwen-image")
+                else ("embed" if pick_id == "embed" else "llm")
+            )
         rows.append(
             {
                 "id": pick_id,
@@ -927,17 +933,17 @@ def library_llms(paths: ModelPaths | None = None, loaded: str | None = None) -> 
     return rows
 
 
-def library_images(paths: ModelPaths | None = None) -> list[dict]:
+def library_comfy(paths: ModelPaths | None = None, kind: str = "image") -> list[dict]:
     rows = []
     for pick in catalog_pick_rows(paths):
-        if pick["kind"] != "image":
+        if pick["kind"] != kind:
             continue
         if not pick["installed"] and not pick["partial"]:
             continue
         rows.append(
             {
                 "id": pick["id"],
-                "kind": "image",
+                "kind": kind,
                 "label": pick["label"],
                 "folder": None,
                 "size_bytes": pick["size_bytes"],
@@ -953,6 +959,10 @@ def library_images(paths: ModelPaths | None = None) -> list[dict]:
     return rows
 
 
+def library_images(paths: ModelPaths | None = None) -> list[dict]:
+    return library_comfy(paths, "image")
+
+
 def library_state(
     paths: ModelPaths | None = None,
     loaded: str | None = None,
@@ -964,6 +974,8 @@ def library_state(
         "ok": True,
         "llms": library_llms(p, loaded=loaded_name),
         "images": library_images(p),
+        "audio": library_comfy(p, "audio"),
+        "video": library_comfy(p, "video"),
         "catalog": catalog_pick_rows(p),
         "disk": disk_usage_for(p.models_dir),
         "loaded": loaded_name,
@@ -1963,8 +1975,8 @@ def delete_model(
     p = paths or default_paths()
     kind = str((body or {}).get("kind") or "").strip().lower()
     ident = str((body or {}).get("id") or body.get("folder") or "").strip()
-    if kind not in ("llm", "image", "embed"):
-        raise ModelsError("kind must be llm or image")
+    if kind not in ("llm", "image", "embed", "audio", "video"):
+        raise ModelsError("kind must be llm, image, audio, video, or embed")
     if not ident:
         raise ModelsError("id is required")
 
@@ -2007,8 +2019,8 @@ def delete_model(
 
     rows = {row["id"]: row for row in catalog_pick_rows(p)}
     pick = rows.get(ident)
-    if not pick or pick["kind"] != "image":
-        raise ModelsError(f"Unknown image pick {ident!r}")
+    if not pick or pick["kind"] not in ("image", "audio", "video"):
+        raise ModelsError(f"Unknown {kind} pick {ident!r}")
     deleted = []
     for item in pick.get("items") or []:
         dest = Path(item["dest"])

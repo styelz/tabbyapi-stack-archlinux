@@ -8,6 +8,6 @@
   "gemma": {"ready_s": 84, "first_token_s": 7.8},
   "gemma26": {"ready_s": 113, "first_token_s": 9.8},
   "glm": {"ready_s": 40, "first_token_s": 2.6, "vision": false, "cache_size": 65536},
-  "comfy": {"ready_s": 4, "flux_s": 117, "qwen_image_s": 196},
+  "comfy": {"ready_s": 4, "flux_s": 117, "qwen_image_s": 196, "audio_s": 60, "wan_s": 240},
   "llm": {"ready_s": 52, "profile": "qwen", "first_token_s": 0.3}
 }

@@ -46,10 +46,10 @@ Send a message that is **only** one of these. Times are warm switches on this RT
 | `switch to gemma26` | General | 262k | ~2 minutes |
 | `switch to glm` | Thinking chat only (no coding tools; vision off on RTX 4070 Ti 12 GB) | 65k (model max) | ~40 seconds |
 | `switch to llama` | Last GGUF via llama.cpp (chat; Code file tools need qwen/gemma) | profile | first load varies |
-| `switch to comfy` / `flux` | Unload the LLM; image gen | — | ~4 seconds (then Flux ~2 minutes / Qwen-Image ~3 minutes for the first picture) |
+| `switch to comfy` / `flux` | Unload the LLM; image, audio, or short video | — | ~4 seconds (then Flux ~2 minutes / Qwen-Image ~3 minutes / Wan ~4 minutes / SFX about a minute) |
 | `switch to llm` | Free Comfy/llama.cpp; reload the last EXL3/EXL2 model | — | ~50 seconds |
 
-The GPU is exclusive: **one of EXL (Tabby), GGUF (llama.cpp), or Comfy**. Never two at once. `Qwen3-Embedding-0.6B` stays on CPU (`POST /v1/embeddings`). Download a GGUF from the Models page (GGUF format) to run a file larger than VRAM; it will be slower. For vision and fast coding, `switch to qwen`. After `switch to comfy`, Flux Schnell is for drafts; Qwen-Image is for text / posters / UI, or a `qwen-image:` prefix.
+The GPU is exclusive: **one of EXL (Tabby), GGUF (llama.cpp), or Comfy**. Never two at once. `Qwen3-Embedding-0.6B` stays on CPU (`POST /v1/embeddings`). Download a GGUF from the Models page (GGUF format) to run a file larger than VRAM; it will be slower. For vision and fast coding, `switch to qwen`. After `switch to comfy`, Flux Schnell is for drafts; Qwen-Image is for text / posters / UI (`qwen-image:`); Stable Audio for SFX (`sfx:`) or a short track (`music:`); Wan 2.2 5B for ~3 s clips (`wan:` / `animate this`). Those audio/video packs are optional on the Models page (not Simple install). Short clips only on 12 GB.
 
 ## Images (works in every IDE)
 
@@ -58,6 +58,14 @@ The GPU server generates the PNG and returns a URL on **this same API host**. No
 - In chat: `switch to comfy`, wait until Comfy is ready, then describe the image. Flux Schnell is the default draft. Prefix `qwen-image:` (or mention poster / button / logo) for readable text. Hero/header photos: a scene, not a website. Paste a photo in the same turn for Flux img2img. Then `switch to qwen`.
 - Or one line while coding: `generate an image of a login form`. The API hands the GPU to Comfy, returns the URL, and reloads the last LLM.
 - Or OpenAI-shaped: `POST $TABBY_V1/images/generations` with `{"prompt":"qwen-image: a logo that says Cafe"}`. Returns `b64_json` and a `url` on this same host (the path keeps any reverse-proxy prefix such as `/openai/v1`). Save the PNG with a shell command. Do not paste binary into chat. Never use a built-in cloud “generate image”.
+
+## Audio and video (Comfy, optional packs)
+
+Download **Stable Audio 3 Small** and **Wan 2.2 5B** from the Models page first. One modality per job (do not mix PNG + MP4 in one batch). Then `switch to qwen`.
+
+- In chat: `generate audio of rain on a tin roof`, `sfx: a door slam`, `music: lo-fi beat with warm piano`, `generate a video of a red bicycle rolling down a cobblestone street`, `wan: lanterns in fog`, or `animate this` with a pasted still (image-to-video).
+- OpenAI-shaped: `POST $TABBY_V1/audio/generations` and `POST $TABBY_V1/videos/generations` with the same `{prompt, n, restore}` body as images. Optional `seconds` on audio (max 120; default ~10 s SFX / ~30 s music). Video defaults to 640×640, 81 frames (~3 s at 24 fps) so it fits 12 GB.
+- Files land next to generated images (`generated-{stamp}-{pid}.wav` / `.mp4`). URLs stay `/v1/images/{name}` with the correct MIME type, so editor `curl` still works. Gallery and Chat play them.
 
 ### Coding plus images (same chat)
 

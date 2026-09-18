@@ -1625,13 +1625,22 @@ async def _start_prompt_job(
     denoise=None,
     owner: str | None = None,
     chat_id: str | None = None,
+    modality: str = "image",
 ):
-    item: dict = {"prompt": prompt, "output_path": "images/generated.png"}
+    from images.jobs import _default_output_path
+
+    item: dict = {
+        "prompt": prompt,
+        "output_path": _default_output_path(modality),
+        "modality": modality,
+    }
     from common.image_prompts import infer_image_size
 
     found_size = infer_image_size(prompt)
     if found_size:
         item["size"] = found_size
+    elif modality in ("video", "i2v"):
+        item["size"] = "640x640"
     if source_image is not None:
         item["source_image"] = str(Path(source_image))
     if denoise is not None:
@@ -1752,12 +1761,21 @@ def job_progress_line(job) -> str:
     if phase == "starting_comfy":
         return "Starting Comfy"
     if phase in ("generating", "running"):
+        kind = str(getattr(job, "modality", "") or "image").lower()
+        noun = "audio" if kind in ("audio", "music") else "video" if kind in ("video", "i2v") else "image"
         if count > 1:
-            return f"Rendering image {min(index, count)} of {count}"
-        return "Rendering in Comfy"
+            return f"Rendering {noun} {min(index, count)} of {count}"
+        if noun == "image":
+            return "Rendering in Comfy"
+        return f"Rendering {noun}"
     if phase == "restoring_llm":
         return "Reloading the coding model"
     if str(getattr(job, "status", "") or "") == "error":
+        kind = str(getattr(job, "modality", "") or "image").lower()
+        if kind in ("audio", "music"):
+            return "Audio generation failed"
+        if kind in ("video", "i2v"):
+            return "Video generation failed"
         return "Image generation failed"
     return ""
 
@@ -1773,7 +1791,13 @@ def _console_ready_text(
 
     pairs = living_download_pairs(job)
     n = len(pairs)
-    lead = "Here's the picture." if n == 1 else f"Here are the {n} pictures."
+    kind = str(getattr(job, "modality", "") or "image").lower()
+    if kind in ("audio", "music"):
+        lead = "Here's the audio." if n == 1 else f"Here are the {n} audio clips."
+    elif kind in ("video", "i2v"):
+        lead = "Here's the video." if n == 1 else f"Here are the {n} videos."
+    else:
+        lead = "Here's the picture." if n == 1 else f"Here are the {n} pictures."
     lines = [lead, ""]
     for url, dest in pairs:
         label = dest if code and dest else ""
@@ -2128,6 +2152,41 @@ async def handle(
         return None
 
     ask = last_user_text(data) or ""
+    from common.phrase_switch import requested_media_prompt
+
+    media = requested_media_prompt(data, explicit_only=bool(llm_ready))
+    if media:
+        modality, prompt = media
+        source = source_image
+        if modality == "video" and source is not None:
+            modality = "i2v"
+        if modality == "i2v" and source is None:
+            from common.gpu_mode import latest_generated_still
+
+            source = latest_generated_still()
+            if source is None:
+                return text_response(
+                    data,
+                    "Image-to-video needs a still. Attach a picture or generate one first.",
+                )
+        started = await _start_prompt_job(
+            prompt,
+            api_base or "",
+            restore=bool(llm_ready),
+            source_image=source,
+            owner=owner,
+            chat_id=chat_id,
+            modality=modality,
+        )
+        return await _hold_then_reply(
+            data,
+            started,
+            mixed=False,
+            api_base=api_base,
+            console=console,
+            workspace=workspace,
+        )
+
     if wants_border_trim(ask):
         source = _resolve_edit_source(source_image, owner, chat_id, ask)
         if source is not None:

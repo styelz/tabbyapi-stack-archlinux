@@ -61,7 +61,7 @@ function tabbyStatusLabelPriority(text) {
 }
 
 function tabbyImageRenderLabel(text) {
-  return /^(Starting Comfy|Rendering image |Rendering in Comfy|Working on the picture|Reloading the coding model)/i.test(
+  return /^(Starting Comfy|Rendering image |Rendering audio|Rendering video|Rendering in Comfy|Working on the |Reloading the coding model)/i.test(
     String(text || "").trim()
   );
 }
@@ -71,7 +71,7 @@ function tabbyImageDestClass(title, index) {
   if (/^Reloading the coding model/i.test(text) || /^Rendered\b/i.test(text)) {
     return "is-done";
   }
-  const render = /Rendering image (\d+) of (\d+)/i.exec(text);
+  const render = /Rendering (?:image|audio|video) (\d+) of (\d+)/i.exec(text);
   if (!render) {
     if (/^Rendering in Comfy/i.test(text) && Number(index) === 0) return "is-current";
     return "";
@@ -87,17 +87,17 @@ function tabbyImageProgressNote(label) {
   if (/^Starting Comfy/i.test(text)) {
     return "Unloading the coding model so Comfy can use the GPU.";
   }
-  if (/^Rendering image /i.test(text) || /^Rendering in Comfy/i.test(text)) {
-    return "Comfy is rendering the picture on the GPU.";
+  if (/^Rendering (?:image|audio|video) /i.test(text) || /^Rendering in Comfy/i.test(text)) {
+    return "Comfy is rendering on the GPU.";
   }
   if (/^Reloading the coding model/i.test(text)) {
-    return "The picture is ready. Reloading the coding model onto the GPU.";
+    return "The file is ready. Reloading the coding model onto the GPU.";
   }
-  if (/^Working on the picture/i.test(text)) return "Preparing the GPU.";
+  if (/^Working on the /i.test(text)) return "Preparing the GPU.";
   if (/^Queued$/i.test(text)) {
     return "Waiting to start. Next: unload the coding model and hand the GPU to Comfy.";
   }
-  return "The GPU is generating images for this page.";
+  return "The GPU is generating media for this page.";
 }
 
 function tabbyLooksLikeChatNotImage(raw) {
@@ -8118,13 +8118,13 @@ function mountChat(root) {
   function isAssetChecklistItem(item) {
     const text = String((item && item.text) || "").toLowerCase();
     if (!text) return false;
-    if (/\.(png|jpe?g|webp|gif)\b/.test(text)) return true;
-    if (/\b(flux|qwen-image)\b/.test(text)) return true;
-    return /\b(generate|render)\b/.test(text) && /\b(image|asset|hero|logo|photo)\b/.test(text);
+    if (/\.(png|jpe?g|webp|gif|wav|flac|mp3|mp4|webm)\b/.test(text)) return true;
+    if (/\b(flux|qwen-image|stable-audio|wan)\b/.test(text)) return true;
+    return /\b(generate|render)\b/.test(text) && /\b(image|asset|hero|logo|photo|audio|video|sfx|clip)\b/.test(text);
   }
 
   function imageStatusRenderIndex(label) {
-    const match = /Rendering image (\d+) of (\d+)/i.exec(String(label || ""));
+    const match = /Rendering (?:image|audio|video) (\d+) of (\d+)/i.exec(String(label || ""));
     if (!match) return null;
     return Math.max(0, Number(match[1]) - 1);
   }
@@ -8141,7 +8141,7 @@ function mountChat(root) {
     const text = String(label || "");
     const phase = String((job && (job.phase || job.status)) || "");
     const status = String((job && job.status) || "");
-    const rendering = /^(Queued|Starting Comfy|Rendering image |Rendering in Comfy|Working on the picture)/i.test(text)
+    const rendering = /^(Queued|Starting Comfy|Rendering image |Rendering audio|Rendering video|Rendering in Comfy|Working on the )/i.test(text)
       || /^(queued|starting_comfy|generating|running)$/i.test(phase);
     const finishing = /^Reloading the coding model$/i.test(text)
       || /^Rendered\b/i.test(text)
@@ -9857,7 +9857,14 @@ function mountChat(root) {
     const cleaned = TabbyUI.formatAssistantContent
       ? TabbyUI.formatAssistantContent(text)
       : String(text || "");
-    return /here's the picture|here are the \d+ pictures|\/v1\/images\/generated-/i.test(cleaned);
+    return /here's the (picture|audio|video|clip)|here are the \d+ (pictures|audio clips|videos)|\/v1\/images\/generated-/i.test(cleaned);
+  }
+
+  function jobNoun(job) {
+    const kind = String((job && job.modality) || "image").toLowerCase();
+    if (kind === "audio" || kind === "music") return "audio";
+    if (kind === "video" || kind === "i2v") return "video";
+    return "image";
   }
 
   function labelForJob(job) {
@@ -9872,13 +9879,15 @@ function mountChat(root) {
     if (phase === "writing_code" || phase === "coding") return "Writing the page";
     if (phase === "starting_comfy") return "Starting Comfy";
     if (phase === "generating" || phase === "running") {
-      if (count > 1) return `Rendering image ${Math.min(index, count)} of ${count}`;
-      return "Rendering in Comfy";
+      const noun = jobNoun(job);
+      if (count > 1) return `Rendering ${noun} ${Math.min(index, count)} of ${count}`;
+      if (noun === "image") return "Rendering in Comfy";
+      return `Rendering ${noun}`;
     }
     if (phase === "restoring_llm") return "Reloading the coding model";
     if (status === "coding") return "Writing the page";
     if (status === "queued" || status === "running") {
-      return "Working on the picture";
+      return `Working on the ${jobNoun(job)}`;
     }
     return "";
   }

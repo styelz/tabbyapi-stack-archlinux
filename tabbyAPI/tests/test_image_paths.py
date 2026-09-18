@@ -30,6 +30,8 @@ class ImagePathsTests(unittest.TestCase):
         self.assertEqual(safe_rel_png_path("../secret.png"), "images/generated.png")
         self.assertEqual(safe_rel_png_path("/tmp/x.png"), "images/generated.png")
         self.assertTrue(safe_rel_png_path("images/logo").endswith(".png"))
+        self.assertEqual(safe_rel_png_path("audio/generated.wav"), "audio/generated.wav")
+        self.assertEqual(safe_rel_png_path("videos/clip.mp4"), "videos/clip.mp4")
         self.assertEqual(
             safe_rel_png_path(
                 "/home/pbp/Cursor/llm-test/pbptours/images/logo.png"

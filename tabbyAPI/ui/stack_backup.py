@@ -157,7 +157,9 @@ def _extra_roots(groups: set[str]) -> list[tuple[Path, Path, str]]:
         ):
             roots.append((pasted / rel, Path("extras/tabbyAPI/pasted-images") / rel, "chats"))
         if pasted.is_dir():
-            for image in sorted(pasted.glob("generated-*.png")):
+            for image in sorted(pasted.glob("generated-*.*")):
+                if image.suffix.lower() not in {".png", ".wav", ".flac", ".mp3", ".mp4", ".webm"}:
+                    continue
                 roots.append(
                     (image, Path("extras/tabbyAPI/pasted-images") / image.name, "chats")
                 )

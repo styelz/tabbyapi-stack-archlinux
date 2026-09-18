@@ -127,8 +127,11 @@ def _strip_api_images_prefix(parts: list[str]) -> list[str]:
     return parts
 
 
+_MEDIA_SUFFIXES = {".png", ".wav", ".flac", ".mp3", ".mp4", ".webm"}
+
+
 def safe_rel_png_path(raw: str, default: str = DEFAULT_PNG_PATH) -> str:
-    """Keep generated PNGs inside the project. Reject escapes and unknown abs paths."""
+    """Keep generated media inside the project. Reject escapes and unknown abs paths."""
     text = str(raw or "").strip().replace("\\", "/")
     if not text:
         text = default
@@ -138,7 +141,7 @@ def safe_rel_png_path(raw: str, default: str = DEFAULT_PNG_PATH) -> str:
     elif _looks_absolute(text, path):
         recovered = project_png_from_abs(text)
         path = Path(recovered) if recovered else Path(default)
-    if path.suffix.lower() != ".png":
+    if path.suffix.lower() not in _MEDIA_SUFFIXES:
         path = path.with_suffix(".png")
     parts = [part for part in path.parts if part not in ("", ".")]
     parts = _strip_api_images_prefix(parts)

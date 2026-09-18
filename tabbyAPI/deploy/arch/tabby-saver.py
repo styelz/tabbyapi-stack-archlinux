@@ -1108,7 +1108,7 @@ def scene_help_note(
         how = f" wait about {wait}." if wait else ""
         return (
             f"unloading the LLM and starting ComfyUI.{how} "
-            "then describe an image. flux is the draft; prefix qwen-image: for readable text."
+            "then describe an image, generate audio, or a short video. flux is the draft; prefix qwen-image: for readable text. sfx: for sound; wan: for ~3s clips."
         )
     if phase == "loading llm":
         who = profile or "the last LLM"
@@ -1132,9 +1132,9 @@ def scene_help_note(
     if phase == "rendering":
         if str(data.get("image_what") or "").strip():
             return ""
-        return "drawing a picture. first flux is about 3 minutes; qwen-image about 4."
+        return "drawing a picture or clip. first flux is about 3 minutes; qwen-image about 4; wan about 4."
     if phase == "comfy":
-        return "ComfyUI is loaded. describe an image in chat, or send switch to llm."
+        return "ComfyUI is loaded. describe an image, generate audio, or a short video, or send switch to llm."
     return ""
 
 
@@ -1147,7 +1147,7 @@ def idle_fact_lines(
         facts.append(f"ready  {prof}")
     mode_l = str(mode or "").strip().lower()
     if mode_l == "comfy":
-        facts.append("comfy is loaded  describe an image in chat")
+        facts.append("comfy is loaded  describe an image, audio, or short video")
     elif mode_l == "llama":
         facts.append("gguf via llama.cpp  keep the editor model as gpt-4o")
         facts.append("slow cpu offload  switch to qwen for vision / fast coding")

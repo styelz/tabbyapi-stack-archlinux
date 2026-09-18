@@ -2709,6 +2709,9 @@ def copy_job_pngs(username: str, chat_id: str, job) -> list[str]:
 
     optimized: list[str] = []
     for dest in copied:
+        if Path(dest).suffix.lower() != ".png":
+            optimized.append(dest)
+            continue
         source = resolve_file(username, chat_id, dest)
         prompt = f"{dest} {_generated_item_prompt(job, dest)}".lower()
         graphic = any(

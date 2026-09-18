@@ -31,7 +31,7 @@ Re-run is safe: existing weights are skipped. USB caches, unattended install, an
 
 - An OpenAI-compatible API for local chat, tool use, vision, and embeddings
 - Switchable language-model profiles tuned for a 12 GB NVIDIA card
-- Flux Schnell and Qwen-Image through ComfyUI
+- Flux Schnell and Qwen-Image through ComfyUI, plus optional Stable Audio 3 Small and Wan 2.2 5B packs for short SFX/music and ~3 s clips
 - A browser UI with Chat, Code, Status, Models, Gallery, Logs, and user accounts
 
 The language model and ComfyUI share one GPU. The stack unloads one before starting the other. The CPU embedding model can stay loaded.
@@ -57,8 +57,8 @@ That first account is the administrator. **Users** creates extra Tabby-only acco
 | Page | What it is for |
 |---|---|
 | **Status** | Profile, GPU mode, queue, health, restart, updates, stack backup |
-| **Models** | Administrator: search Hugging Face for EXL2/EXL3, download catalog LLMs and Flux/Qwen-Image, delete unused weights |
-| **Gallery** | Generated images (administrators see every account) |
+| **Models** | Administrator: search Hugging Face for EXL2/EXL3, download catalog LLMs, Flux/Qwen-Image, and optional audio/video packs, delete unused weights |
+| **Gallery** | Generated images, audio, and video (administrators see every account) |
 | **Logs** | TabbyAPI and ComfyUI output |
 | **Users** | Administrator: create, reset, or delete Tabby accounts |
 | **Settings** | Administrator: `config.yml`, `tabby.env`, screensaver, GPU. Shell: `tsctl` (`start|stop|restart|status`) |
@@ -107,7 +107,7 @@ Send the whole message as the command (`switch to qwen`, or `please switch to qw
 | `switch to qwen35` / `switch to qwen36` | Larger profile for long or difficult work |
 | `switch to gemma` / `switch to gemma26` | General-purpose profile |
 | `switch to glm` | Thinking chat (no coding tools) |
-| `switch to comfy` / `switch to flux` | Unload the language model; start image generation |
+| `switch to comfy` / `switch to flux` | Unload the language model; start image, audio, or short video generation |
 | `switch to llm` | Stop ComfyUI; restore the last language model |
 
 Only installed profiles appear in `list models`. On an RTX 4070 Ti 12 GB, a warm switch is about 15 seconds to 3 minutes. First boot can take longer while Triton compiles.
@@ -126,6 +126,19 @@ The GPU moves to ComfyUI, the image URL comes from this same server (including a
 - Files also appear in **Gallery**.
 
 `POST /v1/images/generations` returns `b64_json` and a URL (including any reverse-proxy prefix). Editor agents that mix pages and images: [AGENTS.md](AGENTS.md).
+
+## Audio and video
+
+Optional Models-page packs (not Simple install). Short clips on 12 GB; longer or 720p jobs may run out of VRAM.
+
+```text
+generate audio of rain on a tin roof
+music: lo-fi beat with warm piano
+generate a video of a red bicycle rolling down a cobblestone street
+animate this
+```
+
+`POST /v1/audio/generations` and `POST /v1/videos/generations` use the same wait-until-files-exist contract as images (`b64_json` + `url`). Video defaults to 640×640, 81 frames. Then `switch to qwen`.
 
 ## Update
 

@@ -4737,6 +4737,11 @@ figure.shot {
 }
 figure.shot.is-on { outline: 0.125rem solid var(--accent); outline-offset: -0.125rem; }
 figure.shot img { width: 100%; height: 176px; object-fit: cover; display: block; background: #000; }
+figure.shot video { width: 100%; height: 176px; object-fit: cover; display: block; background: #000; }
+figure.shot audio { width: 100%; display: block; margin: 0.5rem 0; }
+figure.shot[data-kind="audio"] img { height: 88px; }
+figure.md-video video,
+figure.md-audio audio { width: 100%; max-width: 36rem; display: block; background: #000; }
 figure.shot figcaption { padding: 0.4375rem 0.5625rem; font-size: 0.6875rem; color: var(--muted); line-height: 1.35; word-break: break-all; }
 figure.shot .open { display: block; }
 .pick {
@@ -4779,7 +4784,9 @@ figure.shot .open { display: block; }
   gap: 0.625rem;
   max-width: 96vw;
 }
-.modal img { max-width: 96vw; max-height: 82vh; border-radius: 0.75rem; }
+.modal img,
+.modal video { max-width: 96vw; max-height: 82vh; border-radius: 0.75rem; }
+.modal audio { width: min(36rem, 92vw); }
 .modal-bar {
   display: flex;
   align-items: center;

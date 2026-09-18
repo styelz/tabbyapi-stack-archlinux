@@ -21,11 +21,16 @@ from uuid import uuid4
 
 from common import model
 from common.gpu_mode import (
+    AUDIO_TIMEOUT,
     JOBS_PERSIST_NAME,
+    WAN_TIMEOUT,
     comfy_up,
+    generate_audio,
     generate_image,
+    generate_video,
     llama_up,
     save_generated_image,
+    save_generated_media,
     start_comfy_if_needed,
     start_llama_if_needed,
     stop_comfy,
@@ -76,6 +81,7 @@ class McpImageItem:
     status: str = "queued"
     urls: list[str] = field(default_factory=list)
     error: str = ""
+    modality: str = "image"
 
 
 @dataclass
@@ -109,11 +115,22 @@ class McpImageJob:
     progress: asyncio.Event = field(default_factory=asyncio.Event)
 
     @property
+    def modality(self) -> str:
+        if not self.items:
+            return "image"
+        return str(self.items[0].modality or "image")
+
+    @property
     def prompt(self) -> str:
         if not self.items:
             return ""
         if len(self.items) == 1:
             return self.items[0].prompt
+        kind = self.modality
+        if kind in ("audio", "music"):
+            return f"{len(self.items)} audio clips"
+        if kind in ("video", "i2v"):
+            return f"{len(self.items)} videos"
         return f"{len(self.items)} images"
 
     @property
@@ -923,8 +940,12 @@ def refresh_job_wait(job: McpImageJob) -> None:
     from common.phrase_switch import image_job_wait_seconds, image_job_wait_text
 
     prompts = [item.prompt for item in job.items for _ in range(max(1, item.count))]
-    job.wait_text = image_job_wait_text(prompts=prompts, restore=job.restore)
-    job.wait_s = image_job_wait_seconds(prompts=prompts, restore=job.restore)
+    job.wait_text = image_job_wait_text(
+        prompts=prompts, restore=job.restore, modality=job.modality
+    )
+    job.wait_s = image_job_wait_seconds(
+        prompts=prompts, restore=job.restore, modality=job.modality
+    )
 
 
 def _normalize_image_specs(
@@ -946,6 +967,8 @@ def _normalize_image_specs(
                     "seed": raw.get("seed", seed),
                     "count": max(1, min(int(raw.get("count") or raw.get("n") or 1), 4)),
                     "source_image": raw.get("source_image", source_image),
+                    "modality": str(raw.get("modality") or "image"),
+                    "seconds": raw.get("seconds"),
                 }
             )
         specs = [spec for spec in specs if spec["prompt"]]
@@ -961,6 +984,8 @@ def _normalize_image_specs(
             "seed": seed,
             "count": max(1, min(int(count), 4)),
             "source_image": source_image,
+            "modality": "image",
+            "seconds": None,
         }
     ]
 
@@ -980,17 +1005,41 @@ async def _render_specs(
         if spec_source:
             spec_source = Path(spec_source)
         denoise = spec.get("denoise")
+        modality = str(spec.get("modality") or "image").lower()
         for index in range(n):
-            raw = await asyncio.to_thread(
-                generate_image,
-                spec["prompt"],
-                spec.get("size") or "1024x1024",
-                base_seed + index,
-                timeout,
-                spec_source if index == 0 else None,
-                denoise,
-            )
-            saved.append(save_generated_image(raw, owner=owner))
+            seed = base_seed + index
+            source = spec_source if index == 0 else None
+            if modality in ("audio", "music"):
+                raw, suffix = await asyncio.to_thread(
+                    generate_audio,
+                    spec["prompt"],
+                    music=modality == "music",
+                    seconds=spec.get("seconds"),
+                    seed=seed,
+                    timeout=max(timeout, AUDIO_TIMEOUT),
+                )
+                saved.append(save_generated_media(raw, owner=owner, suffix=suffix))
+            elif modality in ("video", "i2v"):
+                raw, suffix = await asyncio.to_thread(
+                    generate_video,
+                    spec["prompt"],
+                    spec.get("size") or "640x640",
+                    seed,
+                    max(timeout, WAN_TIMEOUT),
+                    source,
+                )
+                saved.append(save_generated_media(raw, owner=owner, suffix=suffix))
+            else:
+                raw = await asyncio.to_thread(
+                    generate_image,
+                    spec["prompt"],
+                    spec.get("size") or "1024x1024",
+                    seed,
+                    timeout,
+                    source,
+                    denoise,
+                )
+                saved.append(save_generated_image(raw, owner=owner))
     return saved
 
 
@@ -1071,6 +1120,7 @@ def mcp_job_to_dict(job: McpImageJob) -> dict:
         "count": int(job.count),
         "urls": list(job.urls),
         "client_saved": bool(job.client_saved),
+        "modality": job.modality,
         "items": [
             {
                 "prompt": item.prompt,
@@ -1078,6 +1128,7 @@ def mcp_job_to_dict(job: McpImageJob) -> dict:
                 "status": item.status,
                 "urls": list(item.urls),
                 "error": item.error,
+                "modality": item.modality,
             }
             for item in job.items
         ],
@@ -1091,6 +1142,24 @@ def _remember_mcp_job(job: McpImageJob) -> None:
         old = _MCP_ORDER.pop(0)
         if old != job.id:
             _MCP_JOBS.pop(old, None)
+
+
+def _item_modality(raw) -> str:
+    if isinstance(raw, dict):
+        kind = str(raw.get("modality") or "image").strip().lower()
+    else:
+        kind = "image"
+    if kind in ("audio", "music", "video", "i2v", "image"):
+        return kind
+    return "image"
+
+
+def _default_output_path(modality: str) -> str:
+    if modality in ("audio", "music"):
+        return "audio/generated.wav"
+    if modality in ("video", "i2v"):
+        return "videos/generated.mp4"
+    return "images/generated.png"
 
 
 def _item_source_path(raw) -> str:
@@ -1136,7 +1205,13 @@ def _new_items(
             from common.image_prompts import resolved_image_size
             from images.paths import safe_rel_png_path
 
-            rel = safe_rel_png_path(str(raw.get("output_path") or "").strip())
+            modality = _item_modality(raw)
+            dest = str(raw.get("output_path") or "").strip() or _default_output_path(modality)
+            rel = safe_rel_png_path(dest, default=_default_output_path(modality))
+            default_size = "640x640" if modality in ("video", "i2v") else (size or "1024x1024")
+            raw_size = raw.get("size")
+            if modality in ("video", "i2v") and str(raw_size or "") in ("", "1024x1024"):
+                raw_size = None
             parsed.append(
                 McpImageItem(
                     prompt=text,
@@ -1144,20 +1219,22 @@ def _new_items(
                     size=resolved_image_size(
                         prompt=text,
                         filename=rel,
-                        size=raw.get("size"),
-                        fallback=size or "1024x1024",
+                        size=raw_size,
+                        fallback=default_size,
                     ),
                     count=max(1, min(int(raw.get("count") or raw.get("n") or 1), 4)),
                     seed=raw.get("seed", seed),
                     source_image=_item_source_path(raw),
                     denoise=_item_denoise(raw),
+                    modality=modality,
                 )
             )
     if prompt.strip():
         from common.image_prompts import resolved_image_size
         from images.paths import safe_rel_png_path
 
-        rel = safe_rel_png_path(output_path)
+        modality = "image"
+        rel = safe_rel_png_path(output_path or _default_output_path(modality))
         explicit = size if size and str(size) != "1024x1024" else None
         parsed.insert(
             0,
@@ -1172,6 +1249,7 @@ def _new_items(
                 ),
                 count=max(1, min(int(count), 4)),
                 seed=seed,
+                modality=modality,
             ),
         )
     from common.image_prompts import rewrite_comfy_prompt
@@ -1179,7 +1257,8 @@ def _new_items(
 
     resolve_output_paths(parsed)
     for item in parsed:
-        item.prompt = rewrite_comfy_prompt(item.prompt)
+        if item.modality == "image":
+            item.prompt = rewrite_comfy_prompt(item.prompt)
     from common.gen_logging import log_image_translator
 
     log_image_translator("generate", parsed, source="comfy handoff")
@@ -1241,6 +1320,9 @@ async def start_mcp_image_job(
             return busy, "busy"
         if chat_name and not busy_chat:
             busy.chat_id = chat_name
+        new_mod = new_items[0].modality if new_items else "image"
+        if new_mod != busy.modality:
+            return busy, "busy"
         async with busy.lock:
             if busy.accepting and busy.count + sum(
                 max(1, item.count) for item in new_items
@@ -1389,6 +1471,11 @@ def _record_first_render(item: McpImageItem, seconds: float) -> None:
     from common.switch_times import record_ready
 
     field = "qwen_image_s" if uses_qwen_image(item.prompt or "") else "flux_s"
+    modality = str(getattr(item, "modality", "") or "image")
+    if modality in ("audio", "music"):
+        field = "audio_s"
+    elif modality in ("video", "i2v"):
+        field = "wan_s"
     record_ready("comfy", seconds, field=field)
 
 
@@ -1450,6 +1537,7 @@ async def _run_mcp_image_job(job: McpImageJob, delay: float) -> None:
                                 "count": item.count,
                                 "source_image": item.source_image or None,
                                 "denoise": item.denoise,
+                                "modality": item.modality,
                             }
                         ],
                         owner=job.owner or None,

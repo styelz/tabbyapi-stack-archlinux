@@ -284,6 +284,10 @@ class LibraryAndDeleteTests(unittest.TestCase):
             flux = next(row for row in data["catalog"] if row["id"] == "flux")
             self.assertFalse(flux["installed"])
             self.assertEqual(flux["kind"], "image")
+            audio = next(row for row in data["catalog"] if row["id"] == "stable-audio")
+            self.assertEqual(audio["kind"], "audio")
+            wan = next(row for row in data["catalog"] if row["id"] == "wan")
+            self.assertEqual(wan["kind"], "video")
             self.assertIn("free_bytes", data["disk"])
             self.assertIsNone(data["llms"][0]["max_seq_len"])
 

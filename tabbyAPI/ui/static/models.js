@@ -104,8 +104,21 @@ function mountModels(root) {
     if (message) err.hidden = true;
   }
 
+  function destFolderHint(row) {
+    const dests = row.dests || [];
+    const folders = [];
+    dests.forEach((dest) => {
+      const match = String(dest).replace(/\\/g, "/").match(/models\/([^/]+)\//);
+      const folder = match ? match[1] : "";
+      if (folder && !folders.includes(folder)) folders.push(folder);
+    });
+    return folders.join(", ");
+  }
+
   function kindLabel(kind) {
     if (kind === "image") return "Image";
+    if (kind === "audio") return "Audio";
+    if (kind === "video") return "Video";
     if (kind === "embed") return "Embed";
     return "LLM";
   }
@@ -224,8 +237,9 @@ function mountModels(root) {
       if (llm) seen.add(llm.folder || llm.id);
       const installed = Boolean(pick.installed || llm);
       const kind = pick.kind || (pick.id === "embed" ? "embed" : "llm");
+      const catalogKind = kind === "llm" || kind === "embed";
       rows.push({
-        id: kind === "image" ? pick.id : llm ? llm.id : pick.id,
+        id: catalogKind ? (llm ? llm.id : pick.id) : pick.id,
         catalog_id: pick.id,
         kind,
         pretty: (llm && llm.pretty) || pick.label || pick.id,
@@ -235,6 +249,7 @@ function mountModels(root) {
         loaded: Boolean(llm && llm.loaded),
         max_seq_len: llm && llm.max_seq_len,
         vision: llm && llm.vision,
+        dests: (pick.items || []).map((item) => item.dest).filter(Boolean),
         size_bytes: Number((llm && llm.size_bytes) || pick.size_bytes || 0),
         disk_gib: pick.disk_gib,
         min_vram_mib: pick.min_vram_mib,
@@ -372,8 +387,12 @@ function mountModels(root) {
         const del = row.installed || row.partial
           ? `<button type="button" class="btn danger" data-del="${id}">Delete</button>`
           : "";
+        const dests = destFolderHint(row);
+        const destLine = dests
+          ? `<div class="muted models-sub">${TabbyUI.escapeHtml(dests)}</div>`
+          : "";
         return `<tr data-id="${id}" data-kind="${TabbyUI.escapeHtml(row.kind)}" data-catalog="${catalogId}">
-          <td><strong>${name}</strong><div class="muted models-sub">${sub}</div>${modelPrefs(row)}</td>
+          <td><strong>${name}</strong><div class="muted models-sub">${sub}</div>${destLine}${modelPrefs(row)}</td>
           <td class="muted models-kind">${kind}</td>
           <td class="num">${TabbyUI.escapeHtml(size)}</td>
           <td class="models-actions">${actionSlot(primary)}${actionSlot(del)}</td>

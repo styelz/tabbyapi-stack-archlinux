@@ -49,6 +49,14 @@ async function uploadGalleryFiles(fileList) {
   return uploaded;
 }
 
+function galleryMediaKind(item) {
+  if (item && item.kind) return item.kind;
+  const name = String((item && item.name) || "");
+  if (/\.(mp4|webm)$/i.test(name)) return "video";
+  if (/\.(wav|flac|mp3)$/i.test(name)) return "audio";
+  return "image";
+}
+
 function galleryFigureHtml(item, index) {
   const url = TabbyUI.escapeHtml(TabbyUI.resolveUiUrl(item.url));
   const thumb = TabbyUI.escapeHtml(TabbyUI.resolveUiUrl(item.thumb));
@@ -57,13 +65,20 @@ function galleryFigureHtml(item, index) {
   const meta = item.mtime
     ? `${TabbyUI.escapeHtml(item.mtime)} · ${TabbyUI.formatBytes(item.size)}`
     : "";
+  const kind = galleryMediaKind(item);
+  let preview = `<img src="${thumb}" alt="${name}" loading="lazy" />`;
+  if (kind === "video") {
+    preview = `<video src="${url}" poster="${thumb}" controls playsinline preload="metadata"></video>`;
+  } else if (kind === "audio") {
+    preview = `<img src="${thumb}" alt="" loading="lazy" /><audio src="${url}" controls preload="metadata"></audio>`;
+  }
   return `
-        <figure class="shot" data-name="${name}" data-index="${index}" data-url="${url}" data-thumb="${thumb}">
+        <figure class="shot" data-kind="${kind}" data-name="${name}" data-index="${index}" data-url="${url}" data-thumb="${thumb}">
           <label class="pick" title="Select">
             <input type="checkbox" aria-label="Select ${name}" />
           </label>
           <a class="open" href="${url}" data-full="${url}">
-            <img src="${thumb}" alt="${name}" loading="lazy" />
+            ${preview}
           </a>
           <figcaption>${name}${owner}${meta ? "<br>" + meta : ""}</figcaption>
         </figure>`;
@@ -343,6 +358,8 @@ function mountGallery(root) {
     <div class="modal" id="modal">
       <div class="modal-inner">
         <img alt="" />
+        <video controls playsinline hidden></video>
+        <audio controls hidden></audio>
         <div class="modal-bar">
           <span class="modal-name" id="modal-name"></span>
           <a class="btn" id="modal-open" target="_blank" rel="noreferrer">Open original</a>
@@ -362,6 +379,8 @@ function mountGallery(root) {
   const errorEl = root.querySelector("#gallery-error");
   const modal = root.querySelector("#modal");
   const modalImg = modal.querySelector("img");
+  const modalVideo = modal.querySelector("video");
+  const modalAudio = modal.querySelector("audio");
   const modalName = root.querySelector("#modal-name");
   const modalOpen = root.querySelector("#modal-open");
   const modalAttach = root.querySelector("#modal-attach");
@@ -489,6 +508,29 @@ function mountGallery(root) {
     if (!modal.classList.contains("is-open")) return;
     modal.classList.remove("is-open");
     modalImg.removeAttribute("src");
+    modalVideo.removeAttribute("src");
+    modalVideo.pause();
+    modalAudio.removeAttribute("src");
+    modalAudio.pause();
+    modalImg.hidden = false;
+    modalVideo.hidden = true;
+    modalAudio.hidden = true;
+  }
+
+  function openModal(url, name, kind) {
+    const type = kind || galleryMediaKind({ name, url });
+    modalImg.hidden = type !== "image";
+    modalVideo.hidden = type !== "video";
+    modalAudio.hidden = type !== "audio";
+    modalImg.removeAttribute("src");
+    modalVideo.removeAttribute("src");
+    modalAudio.removeAttribute("src");
+    if (type === "video") modalVideo.src = url;
+    else if (type === "audio") modalAudio.src = url;
+    else modalImg.src = url;
+    modalName.textContent = name;
+    modalOpen.href = url;
+    modal.classList.add("is-open");
   }
 
   function imageUrl(fig) {
@@ -557,10 +599,7 @@ function mountGallery(root) {
     const item = itemFromFig(fig);
     TabbyUI.showContextMenu(event, [
       { label: "Open", run: () => {
-        modalImg.src = url;
-        modalName.textContent = name;
-        modalOpen.href = url;
-        modal.classList.add("is-open");
+        openModal(url, name, fig.dataset.kind);
       } },
       { label: "Open original", run: () => window.open(url, "_blank", "noreferrer") },
       { label: "Attach to chat", run: () => attachItems(item ? [item] : []) },
@@ -581,7 +620,7 @@ function mountGallery(root) {
   modal.addEventListener("contextmenu", (event) => {
     if (!modal.classList.contains("is-open")) return;
     const name = modalName.textContent || "";
-    const url = modalImg.getAttribute("src") || modalOpen.href || "";
+    const url = modalVideo.getAttribute("src") || modalAudio.getAttribute("src") || modalImg.getAttribute("src") || modalOpen.href || "";
     if (!url) return;
     TabbyUI.showContextMenu(event, [
       { label: "Open original", run: () => window.open(url, "_blank", "noreferrer") },
@@ -596,15 +635,14 @@ function mountGallery(root) {
 
   grid.addEventListener("click", (event) => {
     if (event.target.closest(".pick")) return;
+    if (event.target.closest("video, audio")) return;
     const link = event.target.closest("a.open");
     if (!link) return;
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
     event.preventDefault();
-    const name = link.closest("figure")?.dataset.name || "";
-    modalImg.src = link.dataset.full;
-    modalName.textContent = name;
-    modalOpen.href = link.dataset.full;
-    modal.classList.add("is-open");
+    const fig = link.closest("figure");
+    const name = fig?.dataset.name || "";
+    openModal(link.dataset.full, name, fig?.dataset.kind);
   });
   modal.addEventListener("click", (event) => {
     if (event.target.closest("#modal-open") || event.target.closest("#modal-attach")) return;
@@ -626,7 +664,7 @@ function mountGallery(root) {
   });
   modalAttach.addEventListener("click", () => {
     const name = modalName.textContent || "";
-    const url = modalImg.getAttribute("src") || modalOpen.href || "";
+    const url = modalVideo.getAttribute("src") || modalAudio.getAttribute("src") || modalImg.getAttribute("src") || modalOpen.href || "";
     if (!name || !url) return;
     attachItems([{ name, url, thumb: "" }]);
   });

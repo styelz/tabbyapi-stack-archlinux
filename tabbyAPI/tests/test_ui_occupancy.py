@@ -30,7 +30,7 @@ class OccupancySnapshotTests(unittest.IsolatedAsyncioTestCase):
                 "busy": True,
             }
         )
-        self.assertIn("alice is generating images", text)
+        self.assertIn("alice is generating media", text)
         self.assertNotIn("You are in a queue", text)
         self.assertNotIn("Your request will wait", text)
 
@@ -171,7 +171,7 @@ class OccupancySnapshotTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(snap["occupant"], "alice")
         self.assertFalse(snap["mine"])
         self.assertFalse(snap["queued"])
-        self.assertIn("alice is generating images", snap["hint"])
+        self.assertIn("alice is generating media", snap["hint"])
         self.assertNotIn("You are in a queue", snap["hint"])
         self.assertTrue(mine["mine"])
         self.assertEqual(mine["chat_id"], "c1")

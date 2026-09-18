@@ -36,6 +36,10 @@ class ImageGenerationRequest(BaseModel):
         default=None,
         description="Different prompts in one Comfy session. Prefer this over repeated POSTs.",
     )
+    seconds: Optional[float] = Field(
+        default=None,
+        description="Audio duration in seconds (Stable Audio Small, max 120).",
+    )
 
 
 class ImageGenerationData(BaseModel):

@@ -409,7 +409,7 @@ class GpuModeTests(unittest.TestCase):
         with mock.patch("common.gpu_mode.comfy_up", return_value=True), mock.patch(
             "common.gpu_mode.flux_checkpoint_ready", return_value=False
         ), mock.patch("common.gpu_mode.request_json", side_effect=fake_request), mock.patch(
-            "common.gpu_mode.fetch_comfy_image", return_value=b"\x89PNG"
+            "common.gpu_mode.fetch_comfy_file", return_value=b"\x89PNG"
         ), mock.patch("common.gpu_mode.strip_png_text", side_effect=lambda raw: raw):
             raw = generate_image("a stunning landscape photo of a futuristic cityscape")
         self.assertEqual(raw, b"\x89PNG")

@@ -50,6 +50,10 @@ STATUS_PATH = ROOT / "model_profiles" / "gpu_mode.json"
 WORKFLOW_PATH = ROOT / "comfy_workflows" / "flux_schnell_api.json"
 IMG2IMG_WORKFLOW_PATH = ROOT / "comfy_workflows" / "flux_schnell_img2img.json"
 QWEN_IMAGE_WORKFLOW_PATH = ROOT / "comfy_workflows" / "qwen_image_api.json"
+STABLE_AUDIO_SFX_WORKFLOW_PATH = ROOT / "comfy_workflows" / "stable_audio_sfx.json"
+STABLE_AUDIO_MUSIC_WORKFLOW_PATH = ROOT / "comfy_workflows" / "stable_audio_music.json"
+WAN_T2V_WORKFLOW_PATH = ROOT / "comfy_workflows" / "wan_t2v.json"
+WAN_I2V_WORKFLOW_PATH = ROOT / "comfy_workflows" / "wan_i2v.json"
 GENERATED_DIR = ROOT / "pasted-images"
 JOBS_PERSIST_NAME = "mcp_jobs.json"
 TURN_PATH = GENERATED_DIR / "turn.json"
@@ -86,6 +90,47 @@ QWEN_IMAGE_LORA = "Qwen-Image-Lightning-8steps-V1.0.safetensors"
 QWEN_IMAGE_STEPS = 8
 QWEN_IMAGE_TIMEOUT = 1200
 QWEN_IMAGE_PREFIX = re.compile(r"(?is)^\s*qwen-image\s*:\s*(.*)$")
+AUDIO_PREFIX = re.compile(r"(?is)^\s*(?:sfx|audio)\s*:\s*(.*)$")
+MUSIC_PREFIX = re.compile(r"(?is)^\s*music\s*:\s*(.*)$")
+VIDEO_PREFIX = re.compile(r"(?is)^\s*(?:wan|video)\s*:\s*(.*)$")
+AUDIO_DURATION_RE = re.compile(r"(?is)\b(\d{1,3})\s*(?:s|sec|secs|seconds?)\b")
+STABLE_AUDIO_SFX = "stable_audio_3_small_sfx.safetensors"
+STABLE_AUDIO_MUSIC = "stable_audio_3_small_music.safetensors"
+STABLE_AUDIO_CLIP = "t5gemma_b_b_ul2.safetensors"
+WAN_UNET = "wan2.2_ti2v_5B_fp16.safetensors"
+WAN_CLIP = "umt5_xxl_fp8_e4m3fn_scaled.safetensors"
+WAN_VAE = "wan2.2_vae.safetensors"
+AUDIO_TIMEOUT = 600
+WAN_TIMEOUT = 1200
+WAN_DEFAULT_SIZE = "640x640"
+WAN_DEFAULT_LENGTH = 81
+WAN_FPS = 24
+AUDIO_SFX_SECONDS = 10
+AUDIO_MUSIC_SECONDS = 30
+AUDIO_MAX_SECONDS = 120
+COMFY_AV_NODES = (
+    "EmptyLatentAudio",
+    "VAEDecodeAudio",
+    "Wan22ImageToVideoLatent",
+    "CreateVideo",
+    "SaveVideo",
+)
+GENERATED_MEDIA_SUFFIXES = (".png", ".wav", ".flac", ".mp3", ".mp4", ".webm")
+MEDIA_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+    ".mp4": "video/mp4",
+    ".webm": "video/webm",
+    ".wav": "audio/wav",
+    ".flac": "audio/flac",
+    ".mp3": "audio/mpeg",
+}
+COMFY_UPDATE_HINT = (
+    "Update ComfyUI (Status → Update all, or update.sh --comfy) and try again."
+)
 QWEN_IMAGE_HINTS = re.compile(
     r"(?is)\b("
     r"text|poster|button|ui|mockup|logo|sign|label|"
@@ -743,6 +788,111 @@ def flux_checkpoint_ready(comfy_dir: Optional[Path] = None) -> bool:
         return False
 
 
+def _comfy_file_ready(rel: str, comfy_dir: Optional[Path] = None) -> bool:
+    root, _python = comfy_paths(comfy_dir)
+    path = root / "models" / rel
+    try:
+        return path.is_file() and path.stat().st_size >= FLUX_CHECKPOINT_MIN_BYTES
+    except OSError:
+        return False
+
+
+def stable_audio_ready(comfy_dir: Optional[Path] = None, *, music: bool = False) -> bool:
+    ckpt = STABLE_AUDIO_MUSIC if music else STABLE_AUDIO_SFX
+    return _comfy_file_ready(f"checkpoints/{ckpt}", comfy_dir) and _comfy_file_ready(
+        f"text_encoders/{STABLE_AUDIO_CLIP}", comfy_dir
+    )
+
+
+def wan_ready(comfy_dir: Optional[Path] = None) -> bool:
+    return (
+        _comfy_file_ready(f"diffusion_models/{WAN_UNET}", comfy_dir)
+        and _comfy_file_ready(f"text_encoders/{WAN_CLIP}", comfy_dir)
+        and _comfy_file_ready(f"vae/{WAN_VAE}", comfy_dir)
+    )
+
+
+def media_type_for_name(name: str) -> str:
+    suffix = Path(name or "").suffix.lower()
+    return MEDIA_TYPES.get(suffix, "application/octet-stream")
+
+
+def media_kind_for_name(name: str) -> str:
+    suffix = Path(name or "").suffix.lower()
+    if suffix in {".mp4", ".webm"}:
+        return "video"
+    if suffix in {".wav", ".flac", ".mp3"}:
+        return "audio"
+    return "image"
+
+
+def strip_media_prefix(prompt: str) -> str:
+    text = prompt or ""
+    for pattern in (AUDIO_PREFIX, MUSIC_PREFIX, VIDEO_PREFIX):
+        match = pattern.match(text)
+        if match:
+            cleaned = (match.group(1) or "").strip()
+            return cleaned or text.strip()
+    return text.strip()
+
+
+def wants_music(prompt: str) -> bool:
+    text = prompt or ""
+    if AUDIO_PREFIX.match(text):
+        return False
+    if MUSIC_PREFIX.match(text):
+        return True
+    return bool(
+        re.search(r"(?is)\b(music|song|track|tune|melody|instrumental)\b", text)
+        and not re.search(r"(?is)\b(sfx|sound\s*effect|foley|ambience)\b", text)
+    )
+
+
+def audio_seconds_for_prompt(prompt: str, *, music: bool = False) -> float:
+    match = AUDIO_DURATION_RE.search(prompt or "")
+    if match:
+        seconds = int(match.group(1))
+        return float(max(1, min(AUDIO_MAX_SECONDS, seconds)))
+    return float(AUDIO_MUSIC_SECONDS if music else AUDIO_SFX_SECONDS)
+
+
+def parse_wan_size(size: Optional[str]) -> tuple[int, int]:
+    width, height = parse_size(size or WAN_DEFAULT_SIZE)
+    width = max(256, min(768, (width // 32) * 32))
+    height = max(256, min(768, (height // 32) * 32))
+    return width, height
+
+
+def comfy_missing_nodes(needed: tuple[str, ...] | list[str]) -> list[str]:
+    if not comfy_up():
+        return list(needed)
+    try:
+        info = request_json("GET", f"{COMFY_URL}/object_info", timeout=30)
+    except Exception:
+        return list(needed)
+    have = set(info) if isinstance(info, dict) else set()
+    return [name for name in needed if name not in have]
+
+
+def require_comfy_nodes(*names: str) -> None:
+    missing = comfy_missing_nodes(names)
+    if missing:
+        raise RuntimeError(
+            "ComfyUI is missing "
+            + ", ".join(missing)
+            + f". {COMFY_UPDATE_HINT}"
+        )
+
+
+def _audio_save_class() -> str:
+    missing = comfy_missing_nodes(("SaveAudioAdvanced", "SaveAudio"))
+    if "SaveAudioAdvanced" not in missing:
+        return "SaveAudioAdvanced"
+    if "SaveAudio" not in missing:
+        return "SaveAudio"
+    raise RuntimeError(f"ComfyUI is missing SaveAudio. {COMFY_UPDATE_HINT}")
+
+
 def wants_qwen_image(prompt: str) -> bool:
     """True when the chat line needs readable words, not a Flux draft."""
     from common.image_prompts import (
@@ -860,6 +1010,64 @@ def build_img2img_prompt(
     return graph
 
 
+def build_audio_prompt(
+    prompt: str,
+    *,
+    music: bool = False,
+    seconds: Optional[float] = None,
+    seed: int = 0,
+) -> dict:
+    path = STABLE_AUDIO_MUSIC_WORKFLOW_PATH if music else STABLE_AUDIO_SFX_WORKFLOW_PATH
+    graph = load_workflow(path)
+    ckpt = STABLE_AUDIO_MUSIC if music else STABLE_AUDIO_SFX
+    text = strip_media_prefix(prompt)
+    duration = audio_seconds_for_prompt(prompt, music=music) if seconds is None else float(seconds)
+    duration = max(1.0, min(AUDIO_MAX_SECONDS, duration))
+    graph["1"]["inputs"]["ckpt_name"] = ckpt
+    graph["2"]["inputs"]["clip_name"] = STABLE_AUDIO_CLIP
+    graph["3"]["inputs"]["text"] = text
+    graph["5"]["inputs"]["seconds"] = duration
+    graph["6"]["inputs"]["seed"] = int(seed)
+    return graph
+
+
+def _apply_audio_save_node(graph: dict) -> dict:
+    save = graph["8"]["inputs"]
+    save_class = _audio_save_class()
+    graph["8"]["class_type"] = save_class
+    if save_class == "SaveAudio":
+        graph["8"]["inputs"] = {
+            "audio": save.get("audio") or ["7", 0],
+            "filename_prefix": save.get("filename_prefix") or "StableAudio",
+        }
+    return graph
+
+
+def build_wan_prompt(
+    prompt: str,
+    width: int = 640,
+    height: int = 640,
+    seed: int = 0,
+    *,
+    source_image: Optional[str] = None,
+    length: int = WAN_DEFAULT_LENGTH,
+) -> dict:
+    graph = load_workflow(WAN_I2V_WORKFLOW_PATH if source_image else WAN_T2V_WORKFLOW_PATH)
+    frames = max(5, min(121, int(length)))
+    frames = 1 + 4 * max(1, (frames - 1) // 4)
+    graph["1"]["inputs"]["unet_name"] = WAN_UNET
+    graph["2"]["inputs"]["clip_name"] = WAN_CLIP
+    graph["3"]["inputs"]["vae_name"] = WAN_VAE
+    graph["4"]["inputs"]["text"] = strip_media_prefix(prompt)
+    graph["6"]["inputs"]["width"] = int(width)
+    graph["6"]["inputs"]["height"] = int(height)
+    graph["6"]["inputs"]["length"] = frames
+    graph["8"]["inputs"]["seed"] = int(seed)
+    if source_image:
+        graph["12"]["inputs"]["image"] = source_image
+    return graph
+
+
 def upload_input_image(path: Path) -> str:
     if not path.is_file():
         raise FileNotFoundError(f"Source image missing: {path}")
@@ -887,13 +1095,24 @@ def upload_input_image(path: Path) -> str:
     return f"{sub}/{name}" if sub else str(name)
 
 
-def _first_image_ref(history_item: dict) -> dict:
+def _first_media_ref(history_item: dict) -> dict:
     outputs = history_item.get("outputs") or {}
+    keys = ("images", "gifs", "audio", "videos")
     for node_out in outputs.values():
-        images = node_out.get("images") or []
-        if images:
-            return images[0]
-    raise RuntimeError("ComfyUI finished but produced no images")
+        if not isinstance(node_out, dict):
+            continue
+        for key in keys:
+            items = node_out.get(key) or []
+            if items and isinstance(items[0], dict) and items[0].get("filename"):
+                return items[0]
+        files = node_out.get("files") or []
+        if files and isinstance(files[0], dict) and files[0].get("filename"):
+            return files[0]
+    raise RuntimeError("ComfyUI finished but produced no media")
+
+
+def _first_image_ref(history_item: dict) -> dict:
+    return _first_media_ref(history_item)
 
 
 PNG_SIG = b"\x89PNG\r\n\x1a\n"
@@ -921,16 +1140,68 @@ def strip_png_text(raw: bytes) -> bytes:
 
 
 def fetch_comfy_image(image_ref: dict) -> bytes:
+    return fetch_comfy_file(image_ref)
+
+
+def fetch_comfy_file(file_ref: dict) -> bytes:
     query = urlencode(
         {
-            "filename": image_ref.get("filename", ""),
-            "subfolder": image_ref.get("subfolder", ""),
-            "type": image_ref.get("type", "output"),
+            "filename": file_ref.get("filename", ""),
+            "subfolder": file_ref.get("subfolder", ""),
+            "type": file_ref.get("type", "output"),
         }
     )
     req = Request(f"{COMFY_URL}/view?{query}")
-    with urlopen(req, timeout=60) as resp:
+    with urlopen(req, timeout=120) as resp:
         return resp.read()
+
+
+def _suffix_from_ref(file_ref: dict, default: str) -> str:
+    name = str(file_ref.get("filename") or "")
+    suffix = Path(name).suffix.lower()
+    if suffix in GENERATED_MEDIA_SUFFIXES:
+        return suffix
+    return default
+
+
+def _run_comfy_graph(graph: dict, timeout: float, default_suffix: str = ".png") -> tuple[bytes, str]:
+    if not comfy_up():
+        raise RuntimeError(f"ComfyUI is not running at {COMFY_HOST}:{COMFY_PORT}")
+    queued = request_json("POST", f"{COMFY_URL}/prompt", {"prompt": graph}, timeout=30)
+    if not isinstance(queued, dict) or not queued.get("prompt_id"):
+        raise RuntimeError(f"ComfyUI /prompt failed: {queued}")
+    prompt_id = queued["prompt_id"]
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            history = request_json(
+                "GET", f"{COMFY_URL}/history/{prompt_id}", timeout=60
+            )
+        except TimeoutError:
+            time.sleep(0.5)
+            continue
+        except HTTPError:
+            raise
+        except URLError as exc:
+            if not _is_http_timeout(exc):
+                raise
+            time.sleep(0.5)
+            continue
+        if isinstance(history, dict) and prompt_id in history:
+            item = history[prompt_id]
+            status = item.get("status") or {}
+            if status.get("status_str") == "error":
+                raise RuntimeError(f"ComfyUI job failed: {status}")
+            if item.get("outputs") or status.get("completed"):
+                ref = _first_media_ref(item)
+                raw = fetch_comfy_file(ref)
+                suffix = _suffix_from_ref(ref, default_suffix)
+                if suffix == ".png":
+                    raw = strip_png_text(raw)
+                return raw, suffix
+        time.sleep(0.5)
+    interrupt_comfy()
+    raise TimeoutError(f"ComfyUI job {prompt_id} timed out after {timeout:.0f}s")
 
 
 def generate_image(
@@ -965,39 +1236,62 @@ def generate_image(
         graph = build_qwen_image_prompt(prompt, width=width, height=height, seed=seed)
     else:
         graph = build_prompt(prompt, width=width, height=height, seed=seed)
-    queued = request_json("POST", f"{COMFY_URL}/prompt", {"prompt": graph}, timeout=30)
-    if not isinstance(queued, dict) or not queued.get("prompt_id"):
-        raise RuntimeError(f"ComfyUI /prompt failed: {queued}")
-    prompt_id = queued["prompt_id"]
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            # Qwen-Image can block Comfy's HTTP thread for tens of seconds
-            # after "prompt executed" while it writes the PNG. A 15s socket
-            # timeout used to abort the whole job with a bare "timed out".
-            history = request_json(
-                "GET", f"{COMFY_URL}/history/{prompt_id}", timeout=60
-            )
-        except TimeoutError:
-            time.sleep(0.5)
-            continue
-        except HTTPError:
-            raise
-        except URLError as exc:
-            if not _is_http_timeout(exc):
-                raise
-            time.sleep(0.5)
-            continue
-        if isinstance(history, dict) and prompt_id in history:
-            item = history[prompt_id]
-            status = item.get("status") or {}
-            if status.get("status_str") == "error":
-                raise RuntimeError(f"ComfyUI job failed: {status}")
-            if item.get("outputs") or status.get("completed"):
-                return strip_png_text(fetch_comfy_image(_first_image_ref(item)))
-        time.sleep(0.5)
-    interrupt_comfy()
-    raise TimeoutError(f"ComfyUI job {prompt_id} timed out after {timeout:.0f}s")
+    raw, _suffix = _run_comfy_graph(graph, timeout, ".png")
+    return strip_png_text(raw)
+
+
+def generate_audio(
+    prompt: str,
+    *,
+    music: Optional[bool] = None,
+    seconds: Optional[float] = None,
+    seed: int = 0,
+    timeout: float = AUDIO_TIMEOUT,
+) -> tuple[bytes, str]:
+    if not comfy_up():
+        raise RuntimeError(f"ComfyUI is not running at {COMFY_HOST}:{COMFY_PORT}")
+    use_music = wants_music(prompt) if music is None else bool(music)
+    if not stable_audio_ready(music=use_music):
+        raise RuntimeError(
+            "Stable Audio 3 Small is not installed. Download it from Models."
+        )
+    require_comfy_nodes("EmptyLatentAudio", "VAEDecodeAudio", "CLIPLoader", "KSampler")
+    graph = _apply_audio_save_node(
+        build_audio_prompt(prompt, music=use_music, seconds=seconds, seed=seed)
+    )
+    return _run_comfy_graph(graph, timeout, ".wav")
+
+
+def generate_video(
+    prompt: str,
+    size: Optional[str] = WAN_DEFAULT_SIZE,
+    seed: int = 0,
+    timeout: float = WAN_TIMEOUT,
+    source_image: Optional[Path] = None,
+) -> tuple[bytes, str]:
+    if not comfy_up():
+        raise RuntimeError(f"ComfyUI is not running at {COMFY_HOST}:{COMFY_PORT}")
+    if not wan_ready():
+        raise RuntimeError("Wan 2.2 5B is not installed. Download it from Models.")
+    require_comfy_nodes(
+        "UNETLoader",
+        "Wan22ImageToVideoLatent",
+        "CreateVideo",
+        "SaveVideo",
+        "VAEDecode",
+    )
+    width, height = parse_wan_size(size)
+    uploaded = None
+    if source_image:
+        uploaded = upload_input_image(Path(source_image))
+    graph = build_wan_prompt(
+        prompt,
+        width=width,
+        height=height,
+        seed=seed,
+        source_image=uploaded,
+    )
+    return _run_comfy_graph(graph, timeout, ".mp4")
 
 
 def png_bytes_from_upload(raw: bytes) -> bytes:
@@ -1039,18 +1333,34 @@ def png_bytes_from_upload(raw: bytes) -> bytes:
 
 
 def save_generated_image(
-    raw: bytes, owner: str | None = None, *, as_latest: bool = True
+    raw: bytes, owner: str | None = None, *, as_latest: bool = True, suffix: str = ".png"
 ) -> Path:
+    return save_generated_media(raw, owner=owner, as_latest=as_latest, suffix=suffix)
+
+
+def save_generated_media(
+    raw: bytes,
+    owner: str | None = None,
+    *,
+    as_latest: bool = True,
+    suffix: str = ".png",
+) -> Path:
+    ext = suffix if str(suffix).startswith(".") else f".{suffix}"
+    ext = ext.lower()
+    if ext not in GENERATED_MEDIA_SUFFIXES:
+        ext = ".png"
     GENERATED_DIR.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    dest = GENERATED_DIR / f"generated-{stamp}-{os.getpid()}.png"
+    dest = GENERATED_DIR / f"generated-{stamp}-{os.getpid()}{ext}"
     if dest.exists():
         dest = (
-            GENERATED_DIR / f"generated-{stamp}-{os.getpid()}-{int(time.time() * 1000) % 1000}.png"
+            GENERATED_DIR
+            / f"generated-{stamp}-{os.getpid()}-{int(time.time() * 1000) % 1000}{ext}"
         )
-    raw = strip_png_text(raw)
+    if ext == ".png":
+        raw = strip_png_text(raw)
     dest.write_bytes(raw)
-    if as_latest:
+    if as_latest and ext == ".png":
         latest = GENERATED_DIR / "generated-latest.png"
         latest.write_bytes(raw)
     ensure_gallery_thumb(dest)
@@ -1122,8 +1432,12 @@ def recent_generated_files(
     if since is None:
         since = (time.time() - window_sec) if window_sec is not None else current_turn_started()
     files = []
-    for path in GENERATED_DIR.glob("generated-*.png"):
+    for path in GENERATED_DIR.iterdir():
+        if not path.is_file() or not path.name.startswith("generated-"):
+            continue
         if path.name == "generated-latest.png":
+            continue
+        if path.suffix.lower() not in GENERATED_MEDIA_SUFFIXES:
             continue
         try:
             if path.stat().st_mtime >= since:
@@ -1194,18 +1508,20 @@ def delete_generated_images(
 
 
 def list_generated_files() -> list[Path]:
-    """All timestamped Flux PNGs, newest first. Skips the latest alias."""
+    """All timestamped generated media, newest first. Skips the latest alias."""
     if not GENERATED_DIR.exists():
         return []
     files = []
-    for path in GENERATED_DIR.glob("generated-*.png"):
+    for path in GENERATED_DIR.iterdir():
+        if not path.is_file():
+            continue
         if path.name == "generated-latest.png":
             continue
-        try:
-            if path.is_file():
-                files.append(path)
-        except OSError:
+        if not path.name.startswith("generated-"):
             continue
+        if path.suffix.lower() not in GENERATED_MEDIA_SUFFIXES:
+            continue
+        files.append(path)
     files.sort(key=lambda item: item.stat().st_mtime, reverse=True)
     return files
 
@@ -1225,12 +1541,12 @@ def public_image_url(
 
 # Live saver names: generated-YYYYMMDD-HHMMSS-PID.png (optional extra suffix).
 TIMESTAMPED_GENERATED_PNG_RE = re.compile(
-    r"^generated-\d{8}-\d{6}-\d+(?:-\d+)?\.png$"
+    r"^generated-\d{8}-\d{6}-\d+(?:-\d+)?\.(?:png|wav|flac|mp3|mp4|webm)$"
 )
 
 
 def is_public_generated_png(name: str) -> bool:
-    """Timestamped gallery PNGs can be fetched without a bearer (coding-PC curl)."""
+    """Timestamped gallery files can be fetched without a bearer (coding-PC curl)."""
     return bool(TIMESTAMPED_GENERATED_PNG_RE.match(name or ""))
 
 
@@ -1239,7 +1555,10 @@ def generated_image_path(name: str) -> Optional[Path]:
         name = "generated-latest.png"
     if "/" in name or "\\" in name or name.startswith("."):
         return None
-    if not name.endswith(".png") or not name.startswith("generated-"):
+    suffix = Path(name).suffix.lower()
+    if suffix not in GENERATED_MEDIA_SUFFIXES and name != "generated-latest.png":
+        return None
+    if not name.startswith("generated-"):
         return None
     path = (GENERATED_DIR / name).resolve()
     if path.parent != GENERATED_DIR.resolve() or not path.is_file():
@@ -1260,12 +1579,19 @@ def gallery_thumb_href(name: str) -> str:
 
 
 def ensure_gallery_thumb(src: Path) -> Optional[Path]:
-    """Write a small JPEG next to the gallery so the grid does not load full PNGs."""
+    """Write a small JPEG next to the gallery so the grid does not load full files."""
     dest = GENERATED_DIR / "thumbs" / f"{src.stem}.jpg"
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
         if dest.is_file() and dest.stat().st_mtime >= src.stat().st_mtime:
             return dest
+        kind = media_kind_for_name(src.name)
+        if kind == "video":
+            if _ffmpeg_video_thumb(src, dest):
+                return dest
+            return _placeholder_thumb(dest, "VIDEO")
+        if kind == "audio":
+            return _placeholder_thumb(dest, "AUDIO")
         from PIL import Image
 
         tmp = dest.with_name(dest.name + ".tmp")
@@ -1284,9 +1610,78 @@ def ensure_gallery_thumb(src: Path) -> Optional[Path]:
         return None
 
 
+def _ffmpeg_video_thumb(src: Path, dest: Path) -> bool:
+    from shutil import which
+    from subprocess import run
+
+    ffmpeg = which("ffmpeg")
+    if not ffmpeg:
+        return False
+    tmp = dest.with_name(dest.name + ".tmp.jpg")
+    result = run(
+        [
+            ffmpeg,
+            "-y",
+            "-ss",
+            "0",
+            "-i",
+            str(src),
+            "-frames:v",
+            "1",
+            "-vf",
+            f"scale={GALLERY_THUMB_MAX}:-2",
+            str(tmp),
+        ],
+        capture_output=True,
+        timeout=20,
+        check=False,
+    )
+    if result.returncode != 0 or not tmp.is_file():
+        tmp.unlink(missing_ok=True)
+        return False
+    tmp.replace(dest)
+    return True
+
+
+def _placeholder_thumb(dest: Path, label: str) -> Optional[Path]:
+    try:
+        from PIL import Image, ImageDraw
+
+        tmp = dest.with_name(dest.name + ".tmp")
+        im = Image.new("RGB", (480, 270), (36, 36, 40))
+        draw = ImageDraw.Draw(im)
+        draw.text((24, 110), label, fill=(220, 220, 220))
+        im.save(tmp, "JPEG", quality=GALLERY_THUMB_QUALITY)
+        tmp.replace(dest)
+        return dest
+    except (OSError, ValueError):
+        return None
+
+
 def generated_thumb_path(name: str) -> Optional[Path]:
-    """Safe JPEG preview for a generated PNG. Creates the file on first use."""
-    src = generated_image_path(_png_name_for_thumb(name))
+    """Safe JPEG preview for generated media. Creates the file on first use."""
+    src = generated_source_for_thumb(name)
     if not src:
         return None
     return ensure_gallery_thumb(src)
+
+
+def generated_source_for_thumb(name: str) -> Optional[Path]:
+    stem = Path(_png_name_for_thumb(name)).stem
+    if stem == "generated-latest":
+        return generated_image_path("generated-latest.png")
+    for suffix in GENERATED_MEDIA_SUFFIXES:
+        path = generated_image_path(f"{stem}{suffix}")
+        if path:
+            return path
+    return None
+
+
+def latest_generated_still() -> Optional[Path]:
+    for path in list_generated_files():
+        if path.suffix.lower() == ".png":
+            return path
+    latest = GENERATED_DIR / "generated-latest.png"
+    if latest.is_file():
+        return latest
+    return None

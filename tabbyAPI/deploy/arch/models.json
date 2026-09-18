@@ -1,7 +1,7 @@
 {
   "sets": {
     "core": ["qwen", "embed", "qwen-image-unet", "qwen-image-clip", "qwen-image-vae", "qwen-image-lora"],
-    "all": ["qwen", "qwen35", "qwen36", "gemma", "gemma26", "glm", "embed", "flux", "qwen-image-unet", "qwen-image-clip", "qwen-image-vae", "qwen-image-lora"]
+    "all": ["qwen", "qwen35", "qwen36", "gemma", "gemma26", "glm", "embed", "flux", "qwen-image-unet", "qwen-image-clip", "qwen-image-vae", "qwen-image-lora", "stable-audio-sfx", "stable-audio-music", "stable-audio-clip", "wan-unet", "wan-clip", "wan-vae"]
   },
   "picks": [
     {
@@ -66,6 +66,22 @@
       "label": "Qwen-Image — text / posters / UI",
       "min_vram_mib": 10240,
       "disk_gib": 20
+    },
+    {
+      "id": "stable-audio",
+      "kind": "audio",
+      "items": ["stable-audio-sfx", "stable-audio-music", "stable-audio-clip"],
+      "label": "Stable Audio 3 Small — SFX and music",
+      "min_vram_mib": 8192,
+      "disk_gib": 8
+    },
+    {
+      "id": "wan",
+      "kind": "video",
+      "items": ["wan-unet", "wan-clip", "wan-vae"],
+      "label": "Wan 2.2 5B — short video (text or image)",
+      "min_vram_mib": 12288,
+      "disk_gib": 19
     }
   ],
   "items": {
@@ -159,6 +175,48 @@
       "remote": "Qwen-Image-Lightning-8steps-V1.0.safetensors",
       "dest": "comfy/models/loras/Qwen-Image-Lightning-8steps-V1.0.safetensors",
       "cache": ["ComfyUI/models/loras/Qwen-Image-Lightning-8steps-V1.0.safetensors"]
+    },
+    "stable-audio-sfx": {
+      "kind": "file",
+      "repo": "Comfy-Org/stable-audio-3",
+      "remote": "checkpoints/stable_audio_3_small_sfx.safetensors",
+      "dest": "comfy/models/checkpoints/stable_audio_3_small_sfx.safetensors",
+      "cache": ["ComfyUI/models/checkpoints/stable_audio_3_small_sfx.safetensors"]
+    },
+    "stable-audio-music": {
+      "kind": "file",
+      "repo": "Comfy-Org/stable-audio-3",
+      "remote": "checkpoints/stable_audio_3_small_music.safetensors",
+      "dest": "comfy/models/checkpoints/stable_audio_3_small_music.safetensors",
+      "cache": ["ComfyUI/models/checkpoints/stable_audio_3_small_music.safetensors"]
+    },
+    "stable-audio-clip": {
+      "kind": "file",
+      "repo": "Comfy-Org/stable-audio-3",
+      "remote": "text_encoders/t5gemma_b_b_ul2.safetensors",
+      "dest": "comfy/models/text_encoders/t5gemma_b_b_ul2.safetensors",
+      "cache": ["ComfyUI/models/text_encoders/t5gemma_b_b_ul2.safetensors"]
+    },
+    "wan-unet": {
+      "kind": "file",
+      "repo": "Comfy-Org/Wan_2.2_ComfyUI_Repackaged",
+      "remote": "split_files/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors",
+      "dest": "comfy/models/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors",
+      "cache": ["ComfyUI/models/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors"]
+    },
+    "wan-clip": {
+      "kind": "file",
+      "repo": "Comfy-Org/Wan_2.2_ComfyUI_Repackaged",
+      "remote": "split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+      "dest": "comfy/models/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+      "cache": ["ComfyUI/models/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors"]
+    },
+    "wan-vae": {
+      "kind": "file",
+      "repo": "Comfy-Org/Wan_2.2_ComfyUI_Repackaged",
+      "remote": "split_files/vae/wan2.2_vae.safetensors",
+      "dest": "comfy/models/vae/wan2.2_vae.safetensors",
+      "cache": ["ComfyUI/models/vae/wan2.2_vae.safetensors"]
     }
   }
 }

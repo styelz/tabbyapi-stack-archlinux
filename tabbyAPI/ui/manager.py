@@ -541,7 +541,7 @@ def gallery_listing(
     is_admin: bool = False,
 ) -> dict[str, Any]:
     from common.gallery_owners import filter_files, owner_of
-    from common.gpu_mode import gallery_page, gallery_thumb_href, list_generated_files
+    from common.gpu_mode import gallery_page, gallery_thumb_href, list_generated_files, media_kind_for_name
 
     files = filter_files(list_generated_files(), username, is_admin)
     shown, page, pages, per_page = gallery_page(files, page, per_page)
@@ -563,6 +563,7 @@ def gallery_listing(
                 "thumb": f"/v1/ui/gallery/thumb/{path.name}",
                 "public_thumb": gallery_thumb_href(path.name),
                 "owner": owner_of(path.name) or "",
+                "kind": media_kind_for_name(path.name),
             }
         )
     return {

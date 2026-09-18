@@ -330,11 +330,21 @@
   }
 
   function isImageHref(href) {
+    const value = String(href || "");
+    if (/\.(mp4|webm|wav|flac|mp3)(\?|$)/i.test(value)) return false;
     return (
-      /\.(png|jpg|jpeg|webp)(\?|$)/i.test(href) ||
-      href.includes("/gallery/file/") ||
-      href.includes("/v1/images/")
+      /\.(png|jpg|jpeg|webp)(\?|$)/i.test(value) ||
+      value.includes("/gallery/file/") ||
+      value.includes("/v1/images/")
     );
+  }
+
+  function isVideoHref(href) {
+    return /\.(mp4|webm)(\?|$)/i.test(String(href || ""));
+  }
+
+  function isAudioHref(href) {
+    return /\.(wav|flac|mp3)(\?|$)/i.test(String(href || ""));
   }
 
   function workspaceImageHint(alt) {
@@ -362,6 +372,8 @@
   }
 
   function markdownImage(href, alt, inlineImages) {
+    if (isVideoHref(href)) return markdownPlayer(href, "video");
+    if (isAudioHref(href)) return markdownPlayer(href, "audio");
     const resolved = resolveUiUrl(href);
     const allowed = markdownHrefAllowed(resolved);
     const safeHref = escapeHtml(allowed ? resolved : "#");
@@ -390,6 +402,31 @@
     return (
       `<figure class="md-image">` +
       `<img src="${safeHref}" alt="${safeAlt}">` +
+      `<button type="button" class="btn ghost md-image-dl" data-href="${safeHref}" data-name="${escapeHtml(fallback)}">Download</button>` +
+      `</figure>`
+    );
+  }
+
+  function markdownPlayer(href, kind) {
+    const resolved = resolveUiUrl(href);
+    const allowed = markdownHrefAllowed(resolved);
+    const safeHref = escapeHtml(allowed ? resolved : "#");
+    const cleanHref = String(href || "").split(/[?#]/, 1)[0];
+    const fallback = cleanHref.slice(cleanHref.lastIndexOf("/") + 1) || kind;
+    if (!allowed) {
+      return `<span class="md-image-link-name">${escapeHtml(fallback)}</span>`;
+    }
+    if (kind === "video") {
+      return (
+        `<figure class="md-image md-video">` +
+        `<video src="${safeHref}" controls playsinline></video>` +
+        `<button type="button" class="btn ghost md-image-dl" data-href="${safeHref}" data-name="${escapeHtml(fallback)}">Download</button>` +
+        `</figure>`
+      );
+    }
+    return (
+      `<figure class="md-image md-audio">` +
+      `<audio src="${safeHref}" controls></audio>` +
       `<button type="button" class="btn ghost md-image-dl" data-href="${safeHref}" data-name="${escapeHtml(fallback)}">Download</button>` +
       `</figure>`
     );
@@ -473,6 +510,16 @@
       (url) => {
         const href = resolveUiUrl(url);
         if (used.has(url) || used.has(href)) return "";
+        if (isVideoHref(href)) {
+          used.add(href);
+          used.add(url);
+          return markdownPlayer(href, "video");
+        }
+        if (isAudioHref(href)) {
+          used.add(href);
+          used.add(url);
+          return markdownPlayer(href, "audio");
+        }
         if (isImageHref(href)) {
           used.add(href);
           used.add(url);
