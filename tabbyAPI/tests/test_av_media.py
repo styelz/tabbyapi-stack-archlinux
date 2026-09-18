@@ -162,24 +162,13 @@ class AvMediaTests(unittest.TestCase):
         self.assertEqual(swapped["8"]["class_type"], "SaveAudioAdvanced")
         self.assertEqual(swapped["8"]["inputs"]["format"], {"format": "flac"})
 
-    def test_video_save_uses_v3_format_combo(self):
+    def test_video_save_keeps_sibling_format_keys(self):
         from common.gpu_mode import _apply_video_save_node
 
         graph = build_wan_prompt("a lantern in fog")
-        with mock.patch("common.gpu_mode.comfy_up", return_value=True), mock.patch(
-            "common.gpu_mode.request_json",
-            return_value={
-                "SaveVideo": {
-                    "input": {"required": {"format": ["COMFY_DYNAMICCOMBO_V3", {}]}}
-                }
-            },
-        ):
-            applied = _apply_video_save_node(graph)
-        self.assertEqual(
-            applied["11"]["inputs"]["format"],
-            {"format": "mp4", "codec": {"codec": "h264"}},
-        )
-        self.assertNotIn("codec", applied["11"]["inputs"])
+        applied = _apply_video_save_node(graph)
+        self.assertEqual(applied["11"]["inputs"]["format"], "mp4")
+        self.assertEqual(applied["11"]["inputs"]["codec"], "h264")
 
     def test_generation_routes_exist(self):
         from endpoints.core.router import router

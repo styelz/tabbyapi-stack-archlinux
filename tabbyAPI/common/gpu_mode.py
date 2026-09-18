@@ -1055,30 +1055,16 @@ def _apply_audio_save_node(graph: dict) -> dict:
 
 
 def _apply_video_save_node(graph: dict) -> dict:
+    # SaveVideo's v3 DynamicCombo expands sibling string keys (`format`,
+    # `codec`) into the execute() dict. Passing that dict in the graph
+    # drops `format` and the node fails.
     save = graph["11"]["inputs"]
-    prefix = save.get("filename_prefix") or "Wan22"
-    video = save.get("video") or ["10", 0]
-    combo = False
-    if comfy_up():
-        try:
-            info = request_json("GET", f"{COMFY_URL}/object_info", timeout=30)
-            fmt = ((info.get("SaveVideo") or {}).get("input") or {}).get("required") or {}
-            combo = (fmt.get("format") or [None])[0] == "COMFY_DYNAMICCOMBO_V3"
-        except Exception:
-            combo = False
-    if combo:
-        graph["11"]["inputs"] = {
-            "video": video,
-            "filename_prefix": prefix,
-            "format": {"format": "mp4", "codec": {"codec": "h264"}},
-        }
-    else:
-        graph["11"]["inputs"] = {
-            "video": video,
-            "filename_prefix": prefix,
-            "format": "mp4",
-            "codec": "h264",
-        }
+    graph["11"]["inputs"] = {
+        "video": save.get("video") or ["10", 0],
+        "filename_prefix": save.get("filename_prefix") or "Wan22",
+        "format": "mp4",
+        "codec": "h264",
+    }
     return graph
 
 
