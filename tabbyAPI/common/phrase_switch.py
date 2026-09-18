@@ -142,7 +142,8 @@ MAX_IMAGE_PROMPT_CHARS = 4000
 META_IMAGE_RE = re.compile(
     r"(?is)\b("
     r"when i asked|it worked|not what i asked|stuck in a loop|"
-    r"showed a preview|over and over|the image is not"
+    r"showed a preview|over and over|the image is not|"
+    r"the video is (?:only|just|too short)|asked for a .{0,24}video"
     r")\b"
 )
 # IDEs (GitHub Copilot, Cursor, ...) send a separate, low-stakes completion
@@ -205,6 +206,16 @@ CHAT_QUESTION_RE = re.compile(
 )
 CHAT_FOLLOWUP_RE = re.compile(
     r"(?is)^\s*(?:please\s+)?(?:retry|try again|continue|again)[\s!.?]*$"
+)
+VIDEO_LENGTH_CHAT_RE = re.compile(
+    r"(?is)("
+    r"(?:video|clip|animation|movie).{0,48}(?:only|just|too short|shorter)|"
+    r"(?:only|just)\s+\d+\s*(?:s|sec|secs|seconds?)\b|"
+    r"asked for.{0,32}(?:video|clip)|"
+    r"(?:wanted|need|make(?:\s+it)?).{0,24}\d+\s*(?:s|sec|secs|seconds?)|"
+    r"(?:make|render)\s+(?:it|the\s+(?:video|clip))\s+longer|"
+    r"(?:too short|longer video|\d+\s*seconds? video)"
+    r")"
 )
 
 
@@ -974,7 +985,8 @@ def help_text(api_base: Optional[str] = None, request=None) -> str:
             "- Prefix `sfx:` or `generate audio of …` for Stable Audio sound effects; "
             "`music:` or `generate a song …` for a short track.",
             "- Prefix `video:` / `wan:` or `generate a video of …` for a ~3 s Wan 2.2 clip "
-            "(12 GB default). `animate this` plus a still is image-to-video.",
+            "(81 frames on 12 GB; longer asks stay at that cap). `animate this` plus a still "
+            "is image-to-video.",
             "- Describe hero and header art as a scene, not as a screenshot of the whole website.",
             "",
             "## Use an existing image",
@@ -1777,6 +1789,10 @@ def image_job_done_text(
     if elapsed_s is not None and elapsed_s >= 1:
         lead += f" in {_compact_elapsed(elapsed_s)}"
     lead += "."
+    if kind in ("video", "i2v"):
+        cap = wan_length_cap_note(texts)
+        if cap:
+            lead += " " + cap
     if restore:
         lead += " The coding model is loaded again."
     return lead
@@ -1862,6 +1878,8 @@ def requested_image_prompt(
         return None
     if looks_like_chat_not_image(text):
         return None
+    if video_length_followup(text):
+        return None
     if refuses_new_images(text) and not IMAGE_GEN_RE.match(text):
         return None
     if explicit_only and is_coding_task(text):
@@ -1941,6 +1959,44 @@ def border_edit_prompt(text: str) -> str:
     )
 
 
+def video_length_followup(text: str) -> bool:
+    """True when this line is about the last clip being too short, not a new render."""
+    raw = (text or "").strip()
+    if not raw:
+        return False
+    if VIDEO_GEN_RE.match(raw) or I2V_RE.match(raw):
+        return False
+    if raw.lower().startswith(("wan:", "video:")):
+        return False
+    return bool(VIDEO_LENGTH_CHAT_RE.search(raw))
+
+
+def wan_length_cap_note(prompts: Optional[list[str]] = None, text: str = "") -> str:
+    """Empty unless a prompt asked for more seconds than the 12 GB Wan clip."""
+    from common.gpu_mode import WAN_DEFAULT_LENGTH, wan_asked_too_long
+
+    asked = None
+    for item in list(prompts or []) + ([text] if text else []):
+        value = wan_asked_too_long(item)
+        if value is not None:
+            asked = max(asked or 0, value)
+    if asked is None:
+        return ""
+    return (
+        f"Wan clips on this 12 GB card stay about 3 seconds "
+        f"({WAN_DEFAULT_LENGTH} frames at 24 fps) so they fit in VRAM. "
+        f"A {asked}-second clip is not available."
+    )
+
+
+def video_length_cap_text(text: str = "") -> str:
+    note = wan_length_cap_note(text=text) or (
+        "Wan clips on this 12 GB card stay about 3 seconds (81 frames at 24 fps) "
+        "so they fit in VRAM. Longer clips are not available."
+    )
+    return note + " Ask for another short scene, or switch models from Status."
+
+
 def looks_like_chat_not_image(text: str) -> bool:
     """True when this line is conversation, not a Comfy picture prompt."""
     raw = (text or "").strip()
@@ -1956,6 +2012,8 @@ def looks_like_chat_not_image(text: str) -> bool:
         return False
     if raw.lower().startswith(("sfx:", "audio:", "music:", "wan:", "video:")):
         return False
+    if video_length_followup(raw):
+        return True
     if CHAT_FOLLOWUP_RE.match(raw) or CHAT_QUESTION_RE.match(raw):
         return True
     if IMAGE_NOUN_RE.search(raw):

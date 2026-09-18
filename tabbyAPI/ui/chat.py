@@ -29,6 +29,8 @@ from common.phrase_switch import (
     stream_tool_calls,
     switch_reply_text,
     text_response,
+    video_length_cap_text,
+    video_length_followup,
 )
 from endpoints.OAI.types.chat_completion import ChatCompletionRequest
 from endpoints.OAI.utils.pipeline import run_chat_completion_turn
@@ -226,6 +228,9 @@ async def _run_console_work(
     )
     if not llm_ready:
         if gpu_is_comfy() and looks_like_chat_not_image(last_user_text(data)):
+            ask = last_user_text(data)
+            if video_length_followup(ask):
+                return text_response(data, video_length_cap_text(ask))
             return text_response(data, comfy_chat_suggest_text())
     try:
         return await run_chat_completion_turn(

@@ -1817,10 +1817,13 @@ def _console_ready_text(
         else:
             lines.append("It's also in Gallery and in this chat's Files.")
     else:
-        lines.append(
-            "It's also in Gallery. Describe another picture to generate it, "
-            "or switch models from Status."
-        )
+        if kind in ("audio", "music"):
+            more = "Describe another sound to generate it, or switch models from Status."
+        elif kind in ("video", "i2v"):
+            more = "Describe another short clip to generate it, or switch models from Status."
+        else:
+            more = "Describe another picture to generate it, or switch models from Status."
+        lines.append("It's also in Gallery. " + more)
     return "\n".join(lines).strip()
 
 
@@ -2039,6 +2042,8 @@ async def handle(
         requested_image_prompt,
         text_response,
         turn_needs_image_classify,
+        video_length_cap_text,
+        video_length_followup,
         wants_border_trim,
     )
 
@@ -2156,6 +2161,8 @@ async def handle(
     from common.phrase_switch import requested_media_prompt
 
     media = requested_media_prompt(data, explicit_only=bool(llm_ready))
+    if not media and video_length_followup(ask):
+        return text_response(data, video_length_cap_text(ask))
     if media:
         modality, prompt = media
         source = source_image

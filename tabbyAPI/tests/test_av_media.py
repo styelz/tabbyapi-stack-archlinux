@@ -25,10 +25,19 @@ from common.gpu_mode import (
     media_type_for_name,
     parse_wan_size,
     public_generated_href,
+    requested_video_seconds,
     strip_media_prefix,
+    wan_asked_too_long,
     wants_music,
 )
-from common.phrase_switch import looks_like_chat_not_image, requested_media_prompt
+from common.phrase_switch import (
+    image_job_done_text,
+    looks_like_chat_not_image,
+    requested_image_prompt,
+    requested_media_prompt,
+    video_length_cap_text,
+    video_length_followup,
+)
 from endpoints.OAI.types.chat_completion import ChatCompletionMessage, ChatCompletionRequest
 from images.jobs import _new_items
 
@@ -149,6 +158,35 @@ class AvMediaTests(unittest.TestCase):
         self.assertTrue(wants_music("music: a short piano loop"))
         self.assertFalse(wants_music("sfx: a thunder crack"))
         self.assertEqual(strip_media_prefix("video: cobblestone street"), "cobblestone street")
+
+    def test_video_duration_ask_stays_video_and_caps(self):
+        long_ask = "generate a video of a spaceship flying through space for 20 seconds"
+        self.assertEqual(requested_media_prompt(_chat(long_ask))[0], "video")
+        self.assertFalse(looks_like_chat_not_image(long_ask))
+        self.assertEqual(requested_video_seconds(long_ask), 20)
+        self.assertEqual(wan_asked_too_long(long_ask), 20)
+        self.assertIsNone(wan_asked_too_long("generate a video of a red bicycle"))
+        job = SimpleNamespace(
+            modality="video",
+            items=[SimpleNamespace(prompt=long_ask)],
+            restore=False,
+            started_at=0,
+        )
+        done = image_job_done_text(job=job)
+        self.assertIn("Rendered with Wan", done)
+        self.assertIn("20-second clip is not available", done)
+        self.assertIn("about 3 seconds", done)
+
+    def test_video_length_followup_is_chat_not_flux(self):
+        follow = "the video is only 3 seconds, i asked for a 20 seconds video"
+        self.assertTrue(video_length_followup(follow))
+        self.assertTrue(looks_like_chat_not_image(follow))
+        self.assertIsNone(requested_media_prompt(_chat(follow)))
+        self.assertIsNone(requested_image_prompt(_chat(follow)))
+        reply = video_length_cap_text(follow)
+        self.assertIn("20-second clip is not available", reply)
+        self.assertIn("about 3 seconds", reply)
+        self.assertFalse(video_length_followup("generate a video of a spaceship for 20 seconds"))
 
     def test_audio_save_prefers_simple_node(self):
         from common.gpu_mode import _apply_audio_save_node

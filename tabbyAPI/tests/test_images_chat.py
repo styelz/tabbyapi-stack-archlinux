@@ -150,6 +150,7 @@ class ClassifySkipTests(unittest.TestCase):
             "Did you create the images?",
             "Why is there no logo?",
             "what happened to the header photo",
+            "the video is only 3 seconds, i asked for a 20 seconds video",
         ):
             self.assertTrue(looks_like_chat_not_image(text), text)
             self.assertIsNone(requested_image_prompt(_user(text)))

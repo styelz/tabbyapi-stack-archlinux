@@ -105,6 +105,7 @@ WAN_TIMEOUT = 1200
 WAN_DEFAULT_SIZE = "640x640"
 WAN_DEFAULT_LENGTH = 81
 WAN_FPS = 24
+WAN_CLIP_SECONDS = WAN_DEFAULT_LENGTH / WAN_FPS
 AUDIO_SFX_SECONDS = 10
 AUDIO_MUSIC_SECONDS = 30
 AUDIO_MAX_SECONDS = 120
@@ -872,6 +873,22 @@ def audio_seconds_for_prompt(prompt: str, *, music: bool = False) -> float:
         seconds = int(match.group(1))
         return float(max(1, min(AUDIO_MAX_SECONDS, seconds)))
     return float(AUDIO_MUSIC_SECONDS if music else AUDIO_SFX_SECONDS)
+
+
+def requested_video_seconds(prompt: str) -> Optional[int]:
+    """Largest N from 'N seconds' in a video ask, or None if they did not say."""
+    found = [int(match.group(1)) for match in AUDIO_DURATION_RE.finditer(prompt or "")]
+    return max(found) if found else None
+
+
+def wan_asked_too_long(prompt: str) -> Optional[int]:
+    """Requested seconds when that is longer than the 12 GB Wan clip."""
+    asked = requested_video_seconds(prompt)
+    if asked is None:
+        return None
+    if asked > int(round(WAN_CLIP_SECONDS)):
+        return asked
+    return None
 
 
 def parse_wan_size(size: Optional[str]) -> tuple[int, int]:
