@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import inspect
 import json
 import os
 import re
@@ -643,6 +644,19 @@ def copy_from_cache(src: Path, dest: Path, kind: str) -> None:
     verify_tree(src, dest)
 
 
+def _hf_progress_kwargs(func, progress_cls) -> dict:
+    """Pass tqdm_class only when this huggingface_hub build accepts it."""
+    if progress_cls is None:
+        return {}
+    try:
+        params = inspect.signature(func).parameters
+    except (TypeError, ValueError):
+        return {}
+    if "tqdm_class" in params:
+        return {"tqdm_class": progress_cls}
+    return {}
+
+
 def download_item(item: dict, dest: Path, tqdm_class=None) -> None:
     try:
         from huggingface_hub import hf_hub_download, snapshot_download
@@ -677,7 +691,7 @@ def download_item(item: dict, dest: Path, tqdm_class=None) -> None:
                     revision=revision,
                     local_dir=str(tmp),
                     token=token,
-                    tqdm_class=progress_cls,
+                    **_hf_progress_kwargs(hf_hub_download, progress_cls),
                 )
                 shutil.move(path, dest)
             finally:
@@ -690,7 +704,7 @@ def download_item(item: dict, dest: Path, tqdm_class=None) -> None:
             revision=revision,
             local_dir=str(dest),
             token=token,
-            tqdm_class=progress_cls,
+            **_hf_progress_kwargs(snapshot_download, progress_cls),
         )
     except Exception as exc:
         if exc.__class__.__name__ == "DownloadCancelled":

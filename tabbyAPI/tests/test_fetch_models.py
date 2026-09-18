@@ -11,6 +11,7 @@ ARCH = Path(__file__).resolve().parents[1] / "deploy" / "arch"
 sys.path.insert(0, str(ARCH))
 
 from fetch_models import (  # noqa: E402
+    _hf_progress_kwargs,
     baseline_pick_ids,
     copy_from_cache,
     dest_path,
@@ -44,6 +45,21 @@ class FetchModelsTests(unittest.TestCase):
         self.assertIn("qwen", catalog["sets"]["core"])
         self.assertIn("qwen36", catalog["sets"]["all"])
         self.assertNotIn("qwen36", catalog["sets"]["core"])
+        self.assertIn("stable-audio-sfx", catalog["sets"]["all"])
+        self.assertIn("wan-unet", catalog["sets"]["all"])
+        self.assertNotIn("stable-audio-sfx", catalog["sets"]["core"])
+        self.assertNotIn("wan-unet", catalog["sets"]["core"])
+
+    def test_hf_progress_kwargs_omit_unknown_tqdm_class(self):
+        def old_hub(**kwargs):
+            return None
+
+        def new_hub(*, tqdm_class=None, **kwargs):
+            return tqdm_class
+
+        self.assertEqual(_hf_progress_kwargs(old_hub, object()), {})
+        cls = object()
+        self.assertEqual(_hf_progress_kwargs(new_hub, cls), {"tqdm_class": cls})
 
     def test_select_ids_rejects_unknown_set(self):
         with self.assertRaises(SystemExit):
