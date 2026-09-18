@@ -22,6 +22,26 @@ def clean_reply_model(name: str) -> str:
     return text[:80]
 
 
+def abort_keeps_going(
+    user_abort: bool,
+    assembled: str = "",
+    held_job_id: str = "",
+    recovered: str = "",
+) -> bool:
+    if user_abort:
+        return False
+    blob = f"{assembled or ''}\n{recovered or ''}"
+    if re.search(
+        r"here's the (picture|audio|video|clip)|here are the \d+ (pictures|audio clips|videos)|/v1/images/generated-",
+        blob,
+        flags=re.I,
+    ):
+        return True
+    if " ".join(str(assembled or "").split()).strip():
+        return True
+    return bool(held_job_id)
+
+
 def compose_action(in_flight: bool, typed: str, queued: str) -> tuple[str, bool]:
     text = (typed or "").strip()
     has_queue = bool((queued or "").strip())
@@ -145,6 +165,19 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
         self.assertIn("queueFollowup(text)", self.src)
         self.assertIn('label: "Queue"', self.src)
         self.assertIn("id=\"chat-queue\"", self.src)
+
+    def test_finished_media_abort_flushes_queued_followup(self):
+        self.assertIn("function tabbyChatAbortKeepsGoing(", self.src)
+        self.assertIn("if (stopKind === \"stop\") userAbort = true", self.src)
+        self.assertIn("!tabbyChatAbortKeepsGoing(", self.src)
+        self.assertIn("if (!userAbort && queuedTextFor(flightChatId))", self.src)
+        self.assertIn("tabby-chat-queue", self.src)
+        self.assertTrue(
+            abort_keeps_going(False, "Here's the picture.\n![](/v1/images/generated-1.png)")
+        )
+        self.assertTrue(abort_keeps_going(False, "", "job-1"))
+        self.assertFalse(abort_keeps_going(True, "Here's the picture."))
+        self.assertFalse(abort_keeps_going(False, "", ""))
 
     def test_gguf_base_model_gets_a_composer_hint(self):
         self.assertIn('id="chat-gguf-base-hint"', self.src)

@@ -6,6 +6,20 @@ function tabbyChatComposeAction(inFlight, typed, queued) {
   return { mode: "stop", label: "Stop", showSteer: hasQueue };
 }
 
+function tabbyChatAbortKeepsGoing(userAbort, assembled, heldJobId, recovered) {
+  if (userAbort) return false;
+  const blob = `${assembled || ""}\n${recovered || ""}`;
+  if (
+    /here's the (picture|audio|video|clip)|here are the \d+ (pictures|audio clips|videos)|\/v1\/images\/generated-/i.test(
+      blob
+    )
+  ) {
+    return true;
+  }
+  if (String(assembled || "").replace(/\s+/g, " ").trim()) return true;
+  return Boolean(heldJobId);
+}
+
 // sse-starlette keep-alives look like "ping - 2026-08-24 21:42:59.522485+00:00".
 function tabbyIsSsePing(text) {
   return /^ping\s*-\s*\d{4}-\d{2}-\d{2}[T\s]\d/i.test(String(text || "").trim());
@@ -11810,7 +11824,20 @@ function mountChat(root) {
   let abortController = null;
   let inFlight = false;
   const queuedByChat = Object.create(null);
+  const QUEUE_STORE_KEY = "tabby-chat-queue";
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(QUEUE_STORE_KEY) || "{}");
+    if (saved && typeof saved === "object") {
+      Object.keys(saved).forEach((id) => {
+        const text = String(saved[id] || "").trim();
+        if (id && text) queuedByChat[id] = text;
+      });
+    }
+  } catch {
+    /* ignore */
+  }
   let stopKind = "";
+  let userAbort = false;
   let loopBusy = false;
   let flightChatId = "";
   let flightWorking = null;
@@ -12272,6 +12299,7 @@ function mountChat(root) {
 
   function abortSession(kind) {
     stopKind = kind || "stop";
+    if (stopKind === "stop") userAbort = true;
     stopSpeak();
     TabbyUI.api("chat", {
       method: "POST",
@@ -12294,10 +12322,19 @@ function mountChat(root) {
     return String(queuedByChat[chatId] || "").trim();
   }
 
+  function persistQueue() {
+    try {
+      sessionStorage.setItem(QUEUE_STORE_KEY, JSON.stringify(queuedByChat));
+    } catch {
+      /* ignore */
+    }
+  }
+
   function takeQueue(chatId) {
     const id = chatId || flightChatId || store.activeId;
     const text = queuedTextFor(id);
     delete queuedByChat[id];
+    persistQueue();
     return text;
   }
 
@@ -12305,12 +12342,14 @@ function mountChat(root) {
     const id = chatId || store.activeId;
     if (!id) return;
     queuedByChat[id] = String(text || "").trim();
+    persistQueue();
     paintCompose();
   }
 
   function clearQueue(chatId) {
     const id = chatId || store.activeId;
     if (id) delete queuedByChat[id];
+    persistQueue();
   }
 
   function paintCompose() {
@@ -13009,7 +13048,17 @@ function mountChat(root) {
       } catch (err) {
         const aborted = Boolean(err && err.name === "AbortError");
         if (aborted) {
-          if (!stopKind) stopKind = "stop";
+          if (
+            !stopKind
+            && !tabbyChatAbortKeepsGoing(
+              userAbort,
+              assembled,
+              working.heldJobId,
+              lastAssistantAfterLastUser(chatId)
+            )
+          ) {
+            stopKind = "stop";
+          }
           break;
         }
         const restartLike = tabbyLooksLikeRestart(err)
@@ -13332,6 +13381,7 @@ function mountChat(root) {
       }
       while (next) {
         stopKind = "";
+        userAbort = false;
         const writeAgent = (sendOpts && sendOpts.agent) || codeAgent;
         const flightChat = store.chats.find((item) => item.id === flightChatId);
         if (chatMode(flightChat) === "code" && await blockThinkingOnlyWrite(next, writeAgent)) {
@@ -13358,6 +13408,14 @@ function mountChat(root) {
           continue;
         }
         if (stopKind === "stop") {
+          if (!userAbort && queuedTextFor(flightChatId)) {
+            const last = lastAssistantAfterLastUser(flightChatId);
+            if (looksLikeImageReply(last)) {
+              stopKind = "";
+              next = takeQueue(flightChatId);
+              continue;
+            }
+          }
           if (queuedTextFor(flightChatId) && store.activeId === flightChatId && !input.value.trim()) {
             input.value = takeQueue(flightChatId);
           } else if (store.activeId === flightChatId) {
