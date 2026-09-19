@@ -1448,7 +1448,10 @@ def restore_run(
     restored: list[str] = []
     deleted: list[str] = []
     for rel, row in targets:
-        drop = bool(row.get("created")) or rel in created_set
+        # Only delete when this rewind's oldest snapshot is the create
+        # marker. A later edit's "created" flag must not wipe a file that
+        # already had content before these runs.
+        drop = bool(row.get("created"))
         try:
             if drop:
                 delete_file(username, chat_id, rel, record_history=False)

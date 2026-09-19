@@ -393,6 +393,7 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
         self.assertIn("function revertCodeHistory(", self.src)
         self.assertIn("function laterWorkspaceChats(", self.src)
         self.assertIn("function historySpecFromMessages(", self.src)
+        self.assertIn("prev && prev.created && prev.run && prev.run === run", self.src)
         self.assertIn("Workspace files will revert to before this chat.", self.src.split("async function deleteChat")[1].split("function startNestedChat")[0])
         self.assertIn("revertCodeHistory(spec, workspaceId(chat))", self.src.split("async function deleteChat")[1].split("function startNestedChat")[0])
         self.assertIn("laterWorkspaceChats(chat)", self.src.split("async function deleteChat")[1].split("function startNestedChat")[0])

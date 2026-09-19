@@ -2608,12 +2608,16 @@ function mountChat(root) {
     if (!isChangePath(clean)) return;
     const prev = filesChanged.find((row) => row.path === clean);
     filesChanged = filesChanged.filter((row) => row.path !== clean);
+    const run = (extra && extra.run) || lastHistoryRun || (prev && prev.run) || "";
     filesChanged.unshift({
       path: clean,
       ts: Date.now(),
       written: Boolean(written || (prev && prev.written)),
-      run: (extra && extra.run) || (prev && prev.run) || lastHistoryRun || "",
-      created: Boolean((extra && extra.created) || (prev && prev.created)),
+      run,
+      created: Boolean(
+        (extra && extra.created)
+        || (prev && prev.created && prev.run && prev.run === run)
+      ),
     });
     if (filesChanged.length > 40) filesChanged.length = 40;
     paintFilesChanges();

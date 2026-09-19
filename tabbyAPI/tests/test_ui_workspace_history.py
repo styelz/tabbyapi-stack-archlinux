@@ -84,6 +84,24 @@ class RestoreRunTests(unittest.TestCase):
         self.assertIn("app.js", result["restored"])
         self.assertEqual(workspace.read_text("u", "w", "app.js"), "v1")
 
+    def test_sticky_created_flag_does_not_delete_older_file(self):
+        token = self._run("run-a")
+        try:
+            workspace.write_text("u", "w", "app.js", "v1")
+        finally:
+            workspace.pop_history_run(token)
+        token = self._run("run-b")
+        try:
+            workspace.write_text("u", "w", "app.js", "v2")
+        finally:
+            workspace.pop_history_run(token)
+        result = workspace.restore_run(
+            "u", "w", "run-b", created=["app.js"]
+        )
+        self.assertEqual(result["restored"], ["app.js"])
+        self.assertEqual(result["deleted"], [])
+        self.assertEqual(workspace.read_text("u", "w", "app.js"), "v1")
+
     def test_list_history_hides_create_markers(self):
         workspace.write_text("u", "w", "only.js", "one")
         self.assertEqual(workspace.list_history("u", "w", "only.js"), [])
