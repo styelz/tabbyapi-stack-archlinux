@@ -36,6 +36,14 @@ class CodeToolSpecTests(unittest.TestCase):
         self.assertIn("sudo apt-get install", code_agent.CODE_SYSTEM)
         self.assertIn("/work/.venv", code_agent.CODE_SYSTEM)
 
+    def test_generate_video_exposes_source_image(self):
+        specs = {
+            spec.function.name: spec.function.parameters
+            for spec in code_agent.code_tool_specs("agent")
+        }
+        props = specs["GenerateVideo"]["properties"]
+        self.assertIn("source_image", props)
+
 
 class GenerateToolTests(unittest.TestCase):
     def setUp(self):
@@ -135,6 +143,107 @@ class GenerateToolTests(unittest.TestCase):
         self.assertEqual(job.id, "same")
         self.assertEqual(len(job.items), 2)
         self.assertEqual(job.items[1].output_path, "images/logo.png")
+
+    def test_generate_busy_does_not_note_foreign_dests(self):
+        job = mock.Mock()
+        job.items = [mock.Mock(output_path="images/other.png")]
+        with mock.patch(
+            "images.jobs.queue_code_media_job",
+            return_value=(job, "busy"),
+        ):
+            label, result, change = code_agent.execute_tool(
+                "alice",
+                "c1",
+                "GenerateImage",
+                {"prompt": "a tree", "output_path": "images/tree.png"},
+                agent="agent",
+            )
+        self.assertEqual(label, "Tool error")
+        self.assertIn("busy", result.lower())
+        self.assertEqual(change, {})
+
+    def test_generate_video_resolves_workspace_still(self):
+        try:
+            from PIL import Image
+        except ImportError:
+            self.skipTest("pillow is not installed")
+        root = workspace.workspace_root("alice", "c1", create=True, box=False)
+        dest = root / "images" / "hero.webp"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (64, 32), (20, 30, 40)).save(dest, "WEBP")
+        captured: dict = {}
+
+        def fake_queue(**kwargs):
+            captured.update(kwargs)
+            job = mock.Mock()
+            job.items = [mock.Mock(output_path="videos/clip.mp4")]
+            return job, "coding"
+
+        with mock.patch("images.jobs.queue_code_media_job", side_effect=fake_queue):
+            label, result, change = code_agent.execute_tool(
+                "alice",
+                "c1",
+                "GenerateVideo",
+                {
+                    "prompt": "gentle camera pan",
+                    "output_path": "videos/clip.mp4",
+                    "source_image": "images/hero.png",
+                },
+                agent="agent",
+            )
+        self.assertEqual(label, "Queuing media")
+        self.assertEqual(change["kind"], "generate")
+        source = Path(captured["items"][0]["source_image"])
+        self.assertTrue(source.is_file())
+        self.assertEqual(source.resolve(), dest.resolve())
+        self.assertEqual(captured["items"][0]["modality"], "i2v")
+
+    def test_generate_video_missing_source_is_error(self):
+        with mock.patch("images.jobs.queue_code_media_job") as queued:
+            label, result, change = code_agent.execute_tool(
+                "alice",
+                "c1",
+                "GenerateVideo",
+                {"prompt": "gentle pan", "source_image": "images/missing.png"},
+                agent="agent",
+            )
+        queued.assert_not_called()
+        self.assertEqual(label, "Tool error")
+        self.assertIn("not a project image", result)
+        self.assertEqual(change, {})
+
+
+class WireJobDestsTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        workspace.set_workspaces_dir(Path(self._tmp.name))
+        workspace.workspace_root("alice", "c1", create=True, box=False)
+
+    def tearDown(self):
+        workspace.set_workspaces_dir(None)
+        self._tmp.cleanup()
+
+    def test_wire_does_not_point_img_or_hero_at_mp4(self):
+        workspace.write_text(
+            "alice",
+            "c1",
+            "index.html",
+            '<img src="assets/clip.png"><img src="assets/hero.png">',
+        )
+        workspace.write_text("alice", "c1", "styles.css", ".hero {\n  color: red;\n}")
+        workspace._wire_job_dests(
+            "alice",
+            "c1",
+            ["images/hero.png", "videos/clip.mp4", "videos/hero.mp4", "audio/track.wav"],
+        )
+        html = workspace.read_text("alice", "c1", "index.html")
+        css = workspace.read_text("alice", "c1", "styles.css")
+        blob = html + css
+        self.assertIn("assets/clip.png", html)
+        self.assertIn("assets/hero.png", html)
+        self.assertNotIn("videos/clip.mp4", blob)
+        self.assertNotIn("videos/hero.mp4", blob)
+        self.assertNotIn("audio/track.wav", blob)
 
 
 class InspectAndShellTests(unittest.TestCase):

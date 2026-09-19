@@ -1072,6 +1072,13 @@ def code_tool_specs(agent: str = "agent") -> list[ToolSpec]:
                             "type": "string",
                             "description": "WIDTHxHEIGHT. Default 640x640.",
                         },
+                        "source_image": {
+                            "type": "string",
+                            "description": (
+                                "Relative path of a project still for image-to-video. "
+                                "A .png dest that is already .webp on disk is fine."
+                            ),
+                        },
                     },
                     "required": ["prompt"],
                 },
@@ -1366,6 +1373,20 @@ def _generate_items(kind: str, args: dict) -> list[dict]:
     return [item]
 
 
+def _workspace_still_path(username: str, chat_id: str, source: str) -> str:
+    """Host path of a jailed project still. .png dests may already be .webp."""
+    text = str(source or "").strip()
+    if not text:
+        return ""
+    try:
+        dest = workspace.resolve_preview_file(username, chat_id, text)
+    except (OSError, ValueError, FileNotFoundError):
+        return ""
+    if dest.suffix.lower() not in _STILL_SUFFIXES:
+        return ""
+    return str(dest)
+
+
 def _queue_generate(
     username: str,
     chat_id: str,
@@ -1377,6 +1398,14 @@ def _queue_generate(
     items = [row for row in _generate_items(kind, args) if row.get("prompt")]
     if not items:
         return "Tool error", "prompt is required"
+    for row in items:
+        source = str(row.get("source_image") or "").strip()
+        if not source:
+            continue
+        resolved = _workspace_still_path(username, chat_id, source)
+        if not resolved:
+            return "Tool error", f"{source} is not a project image"
+        row["source_image"] = resolved
     from images.jobs import queue_code_media_job
 
     try:
@@ -1387,6 +1416,11 @@ def _queue_generate(
         )
     except ValueError as exc:
         return "Tool error", str(exc)
+    if status == "busy":
+        return (
+            "Tool error",
+            "The GPU is busy with another job. Wait for it to finish, then try again.",
+        )
     dests = [
         str(getattr(item, "output_path", "") or "")
         for item in getattr(job, "items", None) or []
@@ -1405,11 +1439,6 @@ def _queue_generate(
         extra["images"] = ",".join(stills)
     _note_change(change, "generate", first, **extra)
     listed = ", ".join(dests) if dests else first
-    if status == "busy":
-        return (
-            "Tool error",
-            "The GPU is busy with another job. Wait for it to finish, then try again.",
-        )
     if status == "appended":
         return (
             "Queuing media",
@@ -1664,6 +1693,8 @@ def execute_tool(
             deletes_used=deletes_used,
             change=change,
         )
+        if label == "Tool error":
+            change.clear()
         return label, result, change
     finally:
         workspace.pop_history_run(token)

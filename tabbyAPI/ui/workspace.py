@@ -2550,7 +2550,12 @@ def _publish_dest_aliases(username: str, chat_id: str, dests: list[str]) -> list
 def _ensure_logo_img(username: str, chat_id: str, dests: list[str]) -> None:
     """If a GPU logo exists but the page only has a text .logo, insert the img."""
     logo = next(
-        (dest for dest in dests if Path(dest).stem.lower() == "logo"),
+        (
+            dest
+            for dest in dests
+            if Path(dest).stem.lower() == "logo"
+            and Path(dest).suffix.lower() in IMAGE_SUFFIXES
+        ),
         "",
     )
     if not logo:
@@ -2686,10 +2691,13 @@ def _ensure_hero_background(username: str, chat_id: str, dests: list[str]) -> No
 
 def _wire_job_dests(username: str, chat_id: str, dests: list[str]) -> None:
     """After GPU rasters land, make the page actually use them."""
-    if not dests:
+    stills = [
+        dest for dest in dests if Path(dest).suffix.lower() in IMAGE_SUFFIXES
+    ]
+    if not stills:
         return
-    _rewrite_stub_image_refs(username, chat_id, dests)
-    _ensure_hero_background(username, chat_id, dests)
+    _rewrite_stub_image_refs(username, chat_id, stills)
+    _ensure_hero_background(username, chat_id, stills)
 
 
 def copy_job_pngs(username: str, chat_id: str, job) -> list[str]:
@@ -2743,8 +2751,11 @@ def copy_job_pngs(username: str, chat_id: str, job) -> list[str]:
             optimized.append(dest)
     dests = optimized or copied
     dests.extend(_publish_dest_aliases(username, chat_id, dests))
-    _ensure_logo_img(username, chat_id, dests)
-    _wire_job_dests(username, chat_id, dests)
+    stills = [
+        dest for dest in dests if Path(dest).suffix.lower() in IMAGE_SUFFIXES
+    ]
+    _ensure_logo_img(username, chat_id, stills)
+    _wire_job_dests(username, chat_id, stills)
     return list(dict.fromkeys(dests))
 
 
