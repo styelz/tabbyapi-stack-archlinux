@@ -693,6 +693,9 @@ class ChatHoldTests(unittest.IsolatedAsyncioTestCase):
             mock.patch("images.chat.get_mcp_image_job", return_value=None),
             mock.patch("images.chat.active_mcp_image_job", return_value=None),
             mock.patch("images.chat.classify_image_turn", new=classify),
+            mock.patch("images.chat.llm_plan_images", new=mock.AsyncMock(return_value=[])),
+            mock.patch("images.chat._start_prompt_job", new=mock.AsyncMock()),
+            mock.patch("images.chat._hold_then_reply", new=mock.AsyncMock()),
             mock.patch("ui.flight.publish_console_status", new=publish),
         ):
             await handle(data, "https://gpu.example/v1")
@@ -2345,6 +2348,40 @@ class LiveCodeStreamTests(unittest.IsolatedAsyncioTestCase):
             mock.patch("common.phrase_switch.profile_parses_tools", return_value=True),
         ):
             self.assertTrue(_profile_writes_files())
+
+
+class SiteMediaDestTests(unittest.TestCase):
+    def test_music_store_ask_is_explicit(self):
+        data = _user(
+            "create a music store website. Add video, audio and images where possible."
+        )
+        self.assertTrue(_explicit_new_rasters(data))
+        self.assertFalse(
+            _explicit_new_rasters(_user("implement the new images into the webpage"))
+        )
+
+    def test_classifier_none_still_plans_site_media(self):
+        from images.chat import _ensure_site_media_dests
+
+        ask = "create a music store website. Add video, audio and images where possible."
+        plan = _ensure_site_media_dests(ImageTurnPlan(action="none", items=[]), ask)
+        dests = [row["output_path"] for row in plan.items]
+        self.assertEqual(plan.action, "generate")
+        self.assertTrue(any(path.endswith(".png") for path in dests))
+        self.assertIn("videos/clip.mp4", dests)
+        self.assertIn("audio/track.wav", dests)
+
+    def test_planned_dest_facts_mention_audio_video(self):
+        note = planned_dest_fact_list(
+            [
+                {"output_path": "images/hero.png"},
+                {"output_path": "videos/clip.mp4"},
+                {"output_path": "audio/track.wav"},
+            ]
+        )
+        self.assertIn("videos/clip.mp4", note)
+        self.assertIn("audio/track.wav", note)
+        self.assertIn("video src", note)
 
 
 if __name__ == "__main__":

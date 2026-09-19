@@ -490,6 +490,7 @@ def _apply_approved_asset_dests(plan: ImageTurnPlan, ask: str) -> ImageTurnPlan:
 
 def _explicit_new_rasters(data: ChatCompletionRequest) -> bool:
     from common.phrase_switch import last_user_text, requested_image_prompt
+    from images.plan import site_wants_generated_media
 
     if requested_image_prompt(data, explicit_only=True):
         return True
@@ -497,6 +498,8 @@ def _explicit_new_rasters(data: ChatCompletionRequest) -> bool:
 
     text = (last_user_text(data) or "").strip()
     if _EXPLICIT_NEW_RE.search(text):
+        return True
+    if site_wants_generated_media(text):
         return True
     if _CREATE_SITE_RE.search(text) and (
         _PAGE_LOGO_RE.search(text) or _PAGE_HERO_RE.search(text)
@@ -675,13 +678,33 @@ def _job_plan_items(job) -> list[dict[str, str]]:
     for item in getattr(job, "items", None) or []:
         dest = _item_output_path(item)
         if dest:
-            items.append(
-                {
-                    "prompt": _item_prompt(item),
-                    "output_path": dest,
-                }
-            )
+            row = {
+                "prompt": _item_prompt(item),
+                "output_path": dest,
+            }
+            kind = str(getattr(item, "modality", "") or "").strip()
+            if kind:
+                row["modality"] = kind
+            items.append(row)
     return items
+
+
+def _ensure_site_media_dests(plan: ImageTurnPlan, ask: str) -> ImageTurnPlan:
+    """Classifier often returns none/PNG-only; keep video/audio dests the page asked for."""
+    from images.plan import plan_mixed_site_media, site_wants_generated_media
+
+    if not site_wants_generated_media(ask):
+        return plan
+    extras = plan_mixed_site_media(
+        ask, existing=list(plan.items) if plan.action == "generate" else None
+    )
+    if not extras:
+        return plan
+    return ImageTurnPlan(
+        action="generate",
+        items=extras,
+        from_model=plan.from_model,
+    )
 
 
 def _tool_write_path(args: dict) -> str:
@@ -1010,6 +1033,7 @@ def _expand_job_dests_from_ask(job, ask: str) -> None:
         str(getattr(job, "owner", "") or ""),
         str(getattr(job, "chat_id", "") or ""),
     )
+    upgraded = _ensure_site_media_dests(upgraded, ask)
     have = {
         str(row.get("output_path") or "")
         for row in _job_plan_items(job)
@@ -1023,7 +1047,12 @@ def _expand_job_dests_from_ask(job, ask: str) -> None:
         if not dest or dest in have:
             continue
         job.items.append(
-            McpImageItem(prompt=str(row.get("prompt") or dest), output_path=dest)
+            McpImageItem(
+                prompt=str(row.get("prompt") or dest),
+                output_path=dest,
+                size=str(row.get("size") or "1024x1024"),
+                modality=str(row.get("modality") or "image"),
+            )
         )
         have.add(dest)
         added = True
@@ -1683,10 +1712,11 @@ def _code_reply(data: ChatCompletionRequest, job, code_response):
     hint = ""
     if dests and not hinted and turns <= 1:
         hint = (
-            f" Point img src or CSS url() at these exact paths: {', '.join(dests)}. "
+            f" Point img src, video src, audio src, or CSS url() at these exact "
+            f"paths: {', '.join(dests)}. "
             "Write HTML, CSS, and JS only — if the HTML links styles.css or "
             "app.js, Write those files before pictures. Do not Write PNG, WebP, "
-            "or placeholder image files."
+            "WAV, MP4, or placeholder media files."
         )
     if content == f"{JOB_MARK} {job.id}":
         if hint:
@@ -2093,7 +2123,10 @@ async def handle(
             and not IMAGE_GEN_RE.match(ask)
             and not _explicit_new_rasters(data)
         ):
-            return None
+            from images.plan import site_wants_generated_media
+
+            if not site_wants_generated_media(ask):
+                return None
         if workspace:
             bound_owner, bound_chat = workspace
             if bound_owner and (not job.owner or job.owner == bound_owner):
@@ -2236,6 +2269,7 @@ async def handle(
         existing = _existing_raster_paths(job, rasters, owner, chat_id)
         plan = _upgrade_missing_named_dests(plan, ask, existing, owner, chat_id)
         plan = _apply_approved_asset_dests(plan, ask)
+        plan = _ensure_site_media_dests(plan, ask)
         if (
             (plan.action != "generate" or not plan.items)
             and _explicit_new_rasters(data)

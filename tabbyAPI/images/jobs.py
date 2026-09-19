@@ -507,6 +507,7 @@ def _item_to_persist(item: McpImageItem) -> dict:
         "status": item.status,
         "urls": list(item.urls),
         "error": item.error,
+        "modality": str(item.modality or "image"),
     }
     if item.source_image:
         data["source_image"] = item.source_image
@@ -532,6 +533,7 @@ def _item_from_persist(data: dict) -> McpImageItem:
         status=str(data.get("status") or "queued"),
         urls=[str(u) for u in (data.get("urls") or []) if u],
         error=str(data.get("error") or ""),
+        modality=_item_modality(data),
     )
 
 
@@ -557,7 +559,7 @@ def _job_to_persist(job: McpImageJob) -> dict:
     }
 
 
-def _job_from_persist(data: dict) -> Optional[McpImageJob]:
+def _job_from_persist(data: dict, *, revive: bool = True) -> Optional[McpImageJob]:
     job_id = str(data.get("id") or "").strip()
     raw_items = data.get("items")
     if not job_id or not isinstance(raw_items, list) or not raw_items:
@@ -588,12 +590,45 @@ def _job_from_persist(data: dict) -> Optional[McpImageJob]:
         owner=str(data.get("owner") or ""),
         chat_id=str(data.get("chat_id") or ""),
     )
-    return _maybe_revive_restarted_job(job)
+    if revive:
+        return _maybe_revive_restarted_job(job)
+    return job
+
+
+def _read_disk_jobs(*, revive: bool = True) -> list["McpImageJob"]:
+    try:
+        path = _persist_path()
+        if not path.exists():
+            return []
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(raw, list):
+        return []
+    found: list[McpImageJob] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        job = _job_from_persist(entry, revive=revive)
+        if job:
+            found.append(job)
+    return found
+
+
+def _merge_disk_jobs(*, revive: bool = False) -> None:
+    """Pick up jobs another process wrote without clobbering in-memory work."""
+    for job in _read_disk_jobs(revive=revive):
+        if job.id in _MCP_JOBS:
+            continue
+        _MCP_JOBS[job.id] = job
+        if job.id not in _MCP_ORDER:
+            _MCP_ORDER.append(job.id)
 
 
 def _persist_jobs() -> None:
     """Best-effort snapshot so a restart does not lose finished renders."""
     try:
+        _merge_disk_jobs()
         path = _persist_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = [
@@ -611,24 +646,10 @@ def _persist_jobs() -> None:
 def _load_persisted_jobs() -> None:
     global _PERSIST_LOADED
     if _PERSIST_LOADED:
+        _merge_disk_jobs(revive=False)
         return
     _PERSIST_LOADED = True
-    try:
-        path = _persist_path()
-        if not path.exists():
-            return
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return
-    if not isinstance(raw, list):
-        return
-    for entry in raw:
-        if not isinstance(entry, dict):
-            continue
-        job = _job_from_persist(entry)
-        if job and job.id not in _MCP_JOBS:
-            _MCP_JOBS[job.id] = job
-            _MCP_ORDER.append(job.id)
+    _merge_disk_jobs(revive=True)
     _drop_dead_jobs()
     _persist_jobs()
 
@@ -956,13 +977,12 @@ async def resume_persisted_jobs() -> int:
 def refresh_job_wait(job: McpImageJob) -> None:
     from common.phrase_switch import image_job_wait_seconds, image_job_wait_text
 
-    prompts = [item.prompt for item in job.items for _ in range(max(1, item.count))]
-    job.wait_text = image_job_wait_text(
-        prompts=prompts, restore=job.restore, modality=job.modality
-    )
-    job.wait_s = image_job_wait_seconds(
-        prompts=prompts, restore=job.restore, modality=job.modality
-    )
+    specs = [
+        (item.prompt, str(item.modality or "image"), max(1, int(item.count or 1)))
+        for item in job.items
+    ]
+    job.wait_text = image_job_wait_text(item_specs=specs, restore=job.restore)
+    job.wait_s = image_job_wait_seconds(item_specs=specs, restore=job.restore)
 
 
 def _normalize_image_specs(

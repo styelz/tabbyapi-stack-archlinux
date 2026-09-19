@@ -69,9 +69,9 @@ Download **Stable Audio 3 Small** and **Wan 2.2 5B** from the Models page first.
 
 ### Coding plus images (same chat)
 
-A line like “create a webpage and generate a header and logo” is a **coding task**. Write HTML/CSS/JS first, then generate PNGs on the GPU. Do not use React/Vite boilerplate, SVG/CSS art, or Pillow/`generate_images.py`.
+A line like “create a webpage and generate a header and logo” is a **coding task**. Write HTML/CSS/JS first, then generate media on the GPU. The same ask can include images, a short Wan clip, and audio. Do not use React/Vite boilerplate, SVG/CSS art, or Pillow/`generate_images.py`.
 
-- **Browser Code:** ask for the files and named PNGs together. The browser writes the project with workspace tools (those writes stream into the chat). When Comfy starts, the coding transcript auto-collapses and the live reply shows image generation (Starting Comfy, Rendering image N, Reloading). The API holds until PNGs exist and copies them into the Files pane. Do not treat the page write as the end of the job.
+- **Browser Code:** ask for the files and named dests together (`images/hero.png`, `videos/clip.mp4`, `audio/track.wav`). The browser writes the project with workspace tools (those writes stream into the chat). When Comfy starts, the coding transcript auto-collapses and the live reply shows generation (Starting Comfy, Rendering, Reloading). The API holds until those files exist and copies them into the Files pane. Do not treat the page write as the end of the job. Do not fake media with ffmpeg in the jail.
 - **Editor:** apply **your** file tools on your computer. Point `img src` at planned paths such as `images/logo.png`. Do not dump the page in chat or overwrite those PNGs. After the page is written, the next reply holds until every planned PNG exists, then returns **one** Shell `curl` of those real URLs (the URL keeps any reverse-proxy prefix such as `/openai/v1`). Run that `curl`. Do not `sleep`/`ls`, invent timestamps, or curl another chat’s leftovers. A 404 means the file is missing on the GPU host.
 
 Prefix `qwen-image:` for logos and readable text. Hero/header photos: a scene, not a website.

@@ -483,6 +483,55 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(recovered.items[1].status, "error")
                 await reset_mcp_image_jobs_for_tests()
 
+    async def test_get_job_merges_jobs_written_by_another_process(self):
+        from endpoints.core.image_jobs import (
+            JOBS_PERSIST_NAME,
+            get_mcp_image_job,
+            reset_mcp_image_jobs_for_tests,
+        )
+
+        payload = [
+            {
+                "id": "from-other-process",
+                "items": [
+                    {
+                        "prompt": "hero",
+                        "output_path": "images/hero.png",
+                        "status": "queued",
+                        "urls": [],
+                        "error": "",
+                        "modality": "image",
+                    }
+                ],
+                "restore": True,
+                "restore_name": "qwen",
+                "api_base": "http://127.0.0.1:5001/v1",
+                "wait_text": "",
+                "wait_s": 0,
+                "status": "coding",
+                "phase": "writing_code",
+                "urls": [],
+                "error": "",
+                "started_at": time.time(),
+                "current_index": 0,
+                "client_saved": False,
+                "code_turns": 1,
+                "owner": "",
+                "chat_id": "",
+            }
+        ]
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            with mock.patch("common.gpu_mode.GENERATED_DIR", root):
+                await reset_mcp_image_jobs_for_tests()
+                self.assertIsNone(get_mcp_image_job("from-other-process"))
+                (root / JOBS_PERSIST_NAME).write_text(json.dumps(payload))
+                found = get_mcp_image_job("from-other-process")
+                self.assertIsNotNone(found)
+                self.assertEqual(found.status, "coding")
+                self.assertEqual(found.items[0].output_path, "images/hero.png")
+                await reset_mcp_image_jobs_for_tests()
+
     async def test_restart_abandon_error_resumes_unfinished_items(self):
         from endpoints.core.image_jobs import (
             McpImageItem,

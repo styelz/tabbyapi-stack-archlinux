@@ -284,6 +284,45 @@ class AvMediaTests(unittest.TestCase):
         self.assertIn("![](/v1/images/generated-20260919-042559-1.mp4)", text)
         self.assertNotIn("Here's the picture.", text)
 
+    def test_site_ask_plans_image_audio_and_video(self):
+        from images.plan import plan_mixed_site_media, site_wants_generated_media
+
+        ask = "create a music store website. Add video, audio and images where possible."
+        self.assertTrue(site_wants_generated_media(ask))
+        items = plan_mixed_site_media(ask)
+        dests = [row["output_path"] for row in items]
+        kinds = {row.get("modality") for row in items}
+        self.assertTrue(any(path.endswith(".png") for path in dests))
+        self.assertIn("videos/clip.mp4", dests)
+        self.assertIn("audio/track.wav", dests)
+        self.assertIn("image", kinds)
+        self.assertIn("video", kinds)
+        self.assertTrue(kinds & {"audio", "music"})
+
+    def test_media_tools_followup_is_not_plain_chat(self):
+        from common.phrase_switch import looks_like_chat_not_image, turn_needs_image_classify
+        from images.plan import site_wants_generated_media
+
+        ask = "i want you to use the audio/video tools you have to do it"
+        self.assertTrue(site_wants_generated_media(ask))
+        self.assertFalse(looks_like_chat_not_image(ask))
+        self.assertTrue(turn_needs_image_classify(ask))
+
+    def test_mixed_wait_text_sums_modalities(self):
+        from common.phrase_switch import image_job_wait_text
+
+        text = image_job_wait_text(
+            item_specs=[
+                ("a vinyl shop", "image", 1),
+                ("lo-fi beat", "music", 1),
+                ("records spinning", "video", 1),
+            ],
+            restore=True,
+        )
+        self.assertIn("image", text)
+        self.assertIn("audio", text)
+        self.assertIn("video", text)
+
 
 if __name__ == "__main__":
     unittest.main()

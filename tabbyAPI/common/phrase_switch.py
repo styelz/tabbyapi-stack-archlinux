@@ -1669,20 +1669,83 @@ def is_page_layout_ask(text: str) -> bool:
     return bool(CODING_TASK_RE.search(raw) or USE_IN_UI_RE.search(raw))
 
 
+def _item_wait_specs(
+    prompt: str = "",
+    count: int = 1,
+    prompts: Optional[list[str]] = None,
+    modality: str = "image",
+    item_specs: Optional[list[tuple[str, str, int]]] = None,
+) -> list[tuple[str, str, int]]:
+    if item_specs:
+        rows: list[tuple[str, str, int]] = []
+        for spec in item_specs:
+            text = str(spec[0] or "")
+            kind = str(spec[1] or "image").lower()
+            n = max(1, int(spec[2] or 1))
+            rows.append((text, kind, n))
+        return rows
+    texts = list(prompts) if prompts else [prompt or ""] * max(1, int(count))
+    kind = str(modality or "image").lower()
+    return [(text, kind, 1) for text in texts]
+
+
+def _render_seconds_for_spec(prompt: str, modality: str) -> int:
+    from common.gpu_mode import wants_qwen_image
+
+    kind = str(modality or "image").lower()
+    if kind in ("audio", "music"):
+        extra = extra_seconds("comfy", "audio_s")
+        return int(extra) if extra is not None else 60
+    if kind in ("video", "i2v"):
+        extra = extra_seconds("comfy", "wan_s")
+        return int(extra) if extra is not None else 240
+    qwen = wants_qwen_image(prompt) if prompt else False
+    extra = extra_seconds("comfy", "qwen_image_s" if qwen else "flux_s")
+    return int(extra) if extra is not None else (240 if qwen else 180)
+
+
 def image_job_wait_text(
     prompt: str = "",
     restore: bool = True,
     count: int = 1,
     prompts: Optional[list[str]] = None,
     modality: str = "image",
+    item_specs: Optional[list[tuple[str, str, int]]] = None,
 ) -> str:
     """Measured wait for one Comfy batch, from switch_times.json."""
     from common.gpu_mode import wants_qwen_image
 
-    kind = str(modality or "image").lower()
-    texts = list(prompts) if prompts else [prompt or ""] * max(1, int(count))
-    n = len(texts)
+    specs = _item_wait_specs(
+        prompt, count, prompts, modality, item_specs
+    )
+    kinds = {kind for _text, kind, _n in specs}
     llm_s = format_duration(ready_seconds("llm"))
+    if len(kinds) > 1:
+        total_render = sum(
+            _render_seconds_for_spec(text, kind) * n for text, kind, n in specs
+        )
+        labels = []
+        n_img = sum(n for text, kind, n in specs if kind == "image")
+        n_aud = sum(n for text, kind, n in specs if kind in ("audio", "music"))
+        n_vid = sum(n for text, kind, n in specs if kind in ("video", "i2v"))
+        if n_img:
+            labels.append(f"{n_img} image" + ("s" if n_img != 1 else ""))
+        if n_aud:
+            labels.append(f"{n_aud} audio clip" + ("s" if n_aud != 1 else ""))
+        if n_vid:
+            labels.append(f"{n_vid} video" + ("s" if n_vid != 1 else ""))
+        bits = [
+            f"{', '.join(labels)} in one Comfy session",
+            f"about {format_duration(total_render)} to render",
+        ]
+        if restore:
+            bits.append(f"about {llm_s} to reload the coding model once at the end")
+        return ", ".join(bits) + "."
+    kind = next(iter(kinds), str(modality or "image").lower())
+    texts: list[str] = []
+    for text, _kind, n in specs:
+        texts.extend([text] * n)
+    n = len(texts)
     if kind in ("audio", "music"):
         extra = extra_seconds("comfy", "audio_s")
         render_s = format_duration(int(extra) if extra is not None else 60)
@@ -1804,24 +1867,10 @@ def image_job_wait_seconds(
     count: int = 1,
     prompts: Optional[list[str]] = None,
     modality: str = "image",
+    item_specs: Optional[list[tuple[str, str, int]]] = None,
 ) -> int:
-    from common.gpu_mode import uses_qwen_image
-
-    texts = list(prompts) if prompts else [prompt or ""] * max(1, int(count))
-    n = len(texts)
-    kind = str(modality or "image").lower()
-    if kind in ("audio", "music"):
-        extra = extra_seconds("comfy", "audio_s")
-        total = n * int(extra if extra is not None else 60)
-    elif kind in ("video", "i2v"):
-        extra = extra_seconds("comfy", "wan_s")
-        total = n * int(extra if extra is not None else 240)
-    else:
-        total = 0
-        for text in texts:
-            qwen = uses_qwen_image(text) if text else False
-            extra = extra_seconds("comfy", "qwen_image_s" if qwen else "flux_s")
-            total += int(extra) if extra is not None else (240 if qwen else 180)
+    specs = _item_wait_specs(prompt, count, prompts, modality, item_specs)
+    total = sum(_render_seconds_for_spec(text, kind) * n for text, kind, n in specs)
     if restore:
         total += ready_seconds("llm")
     return max(30, total)
@@ -2008,6 +2057,13 @@ def looks_like_chat_not_image(text: str) -> bool:
         return False
     if I2V_RE.match(raw):
         return False
+    try:
+        from images.plan import SITE_MEDIA_TOOLS_RE
+
+        if SITE_MEDIA_TOOLS_RE.search(raw):
+            return False
+    except Exception:
+        pass
     if raw.lower().startswith("qwen-image:"):
         return False
     if raw.lower().startswith(("sfx:", "audio:", "music:", "wan:", "video:")):
@@ -2050,6 +2106,13 @@ def turn_needs_image_classify(text: str) -> bool:
         return False
     if turn_looks_like_image(raw):
         return True
+    try:
+        from images.plan import site_wants_generated_media
+
+        if site_wants_generated_media(raw):
+            return True
+    except Exception:
+        pass
     return is_coding_task(raw)
 
 

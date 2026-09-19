@@ -84,9 +84,43 @@ CLASSIFY_SYSTEM = (
     "images are a scene, not a website screenshot. Keep the user's "
     "imaginary or fantasy description; do not substitute a stock real-world "
     "photograph unless they asked for one. One file per named subject they "
-    "asked to create. Do not invent a category. Skip CSS, HTML, JavaScript, "
-    "React, Vue, pricing tiers, and etc."
+    "asked to create. If they also asked for video or audio on that page, "
+    "include those dests too (videos/clip.mp4, audio/track.wav) with a short "
+    "scene or music prompt. Do not invent a category. Skip CSS, HTML, "
+    "JavaScript, React, Vue, pricing tiers, and etc."
 )
+SITE_IMAGE_ASK_RE = re.compile(
+    r"(?is)\b(?:images?|pictures?|photos?|pics?|pngs?|logo|hero(?:\s+photo)?)\b"
+)
+SITE_VIDEO_ASK_RE = re.compile(
+    r"(?is)\b(?:videos?|clips?|mp4|animations?)\b|\bwan:"
+)
+SITE_AUDIO_ASK_RE = re.compile(
+    r"(?is)\b(?:audio|sfx|sound(?:\s*effects?)?)\b"
+    r"|\b(?:add|include|with|need|want|generate|use)\b.{0,48}\b"
+    r"(?:music|tracks?|songs?)\b"
+)
+SITE_MEDIA_TOOLS_RE = re.compile(
+    r"(?is)\b(?:audio|video|image)s?(?:\s*/\s*|\s+and\s+|\s+)"
+    r"(?:audio|video|image)s?\s+tools?\b"
+    r"|\b(?:audio|video|image)\s+tools?\b"
+    r"|\buse\s+(?:the\s+)?(?:gpu\s+)?(?:audio|video|image)"
+)
+_WIRE_EXISTING_MEDIA_RE = re.compile(
+    r"(?is)\b(?:implement|wire|hook|drop)\b.{0,48}\b(?:into|onto|on|in)\b"
+)
+_MEDIA_SUFFIX = {
+    ".png": "image",
+    ".jpg": "image",
+    ".jpeg": "image",
+    ".webp": "image",
+    ".gif": "image",
+    ".mp4": "video",
+    ".webm": "video",
+    ".wav": "audio",
+    ".flac": "audio",
+    ".mp3": "audio",
+}
 _PLAN_CACHE: OrderedDict[str, "ImageTurnPlan"] = OrderedDict()
 _PLAN_CACHE_MAX = 24
 _SKIP_SLUGS = frozenset(
@@ -221,6 +255,9 @@ def parse_plan_json(raw: str) -> list[dict[str, str]]:
             size = str(row.get("size") or "").strip()
             if size:
                 row_out["size"] = size
+            kind = str(row.get("modality") or "").strip().lower()
+            if kind:
+                row_out["modality"] = kind
             found.append(row_out)
     return found
 
@@ -265,6 +302,65 @@ def site_images_dir(text: str) -> str:
     return "images"
 
 
+def item_modality(row) -> str:
+    if isinstance(row, dict):
+        kind = str(row.get("modality") or "").strip().lower()
+        path = str(row.get("output_path") or row.get("filename") or "")
+    else:
+        kind = str(getattr(row, "modality", "") or "").strip().lower()
+        path = str(getattr(row, "output_path", "") or "")
+    if kind in ("audio", "music", "video", "i2v", "image"):
+        return kind
+    return _MEDIA_SUFFIX.get(Path(path).suffix.lower(), "image")
+
+
+def site_asks_for_images(text: str) -> bool:
+    return bool(SITE_IMAGE_ASK_RE.search(text or ""))
+
+
+def site_asks_for_video(text: str) -> bool:
+    raw = text or ""
+    return bool(SITE_VIDEO_ASK_RE.search(raw) or SITE_MEDIA_TOOLS_RE.search(raw))
+
+
+def site_asks_for_audio(text: str) -> bool:
+    raw = text or ""
+    return bool(SITE_AUDIO_ASK_RE.search(raw) or SITE_MEDIA_TOOLS_RE.search(raw))
+
+
+def site_wants_generated_media(text: str) -> bool:
+    """True when this turn asked the GPU for page images, audio, or video."""
+    raw = text or ""
+    if SITE_MEDIA_TOOLS_RE.search(raw):
+        return True
+    from common.phrase_switch import is_coding_task
+
+    if _WIRE_EXISTING_MEDIA_RE.search(raw) and not (
+        site_asks_for_video(raw) or site_asks_for_audio(raw)
+    ):
+        return False
+    if not is_coding_task(raw):
+        return bool(site_asks_for_video(raw) or site_asks_for_audio(raw))
+    return bool(
+        site_asks_for_images(raw)
+        or site_asks_for_video(raw)
+        or site_asks_for_audio(raw)
+    )
+
+
+def _site_theme(text: str) -> str:
+    from common.image_prompts import company_name
+
+    brand = company_name(text or "")
+    if brand:
+        return brand
+    raw = re.sub(r"(?is)\b(?:create|write|make|build|add|include)\b", " ", text or "")
+    raw = re.sub(r"(?is)\b(?:website|web\s*page|webpage|landing\s*page)\b", " ", raw)
+    raw = re.sub(r"(?is)\b(?:video|audio|images?|where possible)\b", " ", raw)
+    cleaned = re.sub(r"\s+", " ", raw).strip(" .,")
+    return cleaned[:80] or "the scene the user described"
+
+
 def plan_from_extracted(text: str, rows: list[dict[str, str]]) -> list[dict[str, str]]:
     dest_dir = site_images_dir(text)
     items: list[dict[str, str]] = []
@@ -285,9 +381,38 @@ def plan_from_extracted(text: str, rows: list[dict[str, str]]) -> list[dict[str,
             or _CSS_SLUG_RE.match(slug)
         ):
             continue
-        name = "logo.png" if slug == "logo" else f"{slug}.png"
         subject = str(row.get("subject") or slug).strip() or slug
+        modality = item_modality(row if isinstance(row, dict) else {"filename": filename})
+        if not str(row.get("modality") or "").strip():
+            modality = _MEDIA_SUFFIX.get(Path(filename or raw_path).suffix.lower(), "image")
         seen.add(slug)
+        if modality in ("video", "i2v"):
+            name = filename if Path(filename).suffix.lower() in {".mp4", ".webm"} else f"{slug}.mp4"
+            dest = raw_path if "/" in raw_path and Path(raw_path).suffix.lower() in {".mp4", ".webm"} else f"videos/{name}"
+            items.append(
+                {
+                    "prompt": subject,
+                    "output_path": dest,
+                    "size": str(row.get("size") or "640x640"),
+                    "modality": "video" if modality != "i2v" else "i2v",
+                }
+            )
+            continue
+        if modality in ("audio", "music"):
+            name = filename if Path(filename).suffix.lower() in {".wav", ".flac", ".mp3"} else f"{slug}.wav"
+            dest = raw_path if "/" in raw_path and Path(raw_path).suffix.lower() in {".wav", ".flac", ".mp3"} else f"audio/{name}"
+            items.append(
+                {
+                    "prompt": subject,
+                    "output_path": dest,
+                    "size": str(row.get("size") or "1024x1024"),
+                    "modality": "music" if modality == "music" else "audio",
+                }
+            )
+            continue
+        name = "logo.png" if slug == "logo" else f"{slug}.png"
+        if slug == "header" or slug == "banner":
+            name = "header.png"
         if "/" in raw_path and Path(raw_path).suffix.lower() in {
             ".png",
             ".jpg",
@@ -310,9 +435,74 @@ def plan_from_extracted(text: str, rows: list[dict[str, str]]) -> list[dict[str,
                     size=row.get("size"),
                     spec=text,
                 ),
+                "modality": "image",
             }
         )
     return items
+
+
+def plan_mixed_site_media(
+    text: str, existing: list[dict[str, str]] | None = None
+) -> list[dict[str, str]]:
+    """PNG dests plus video/audio when a Code page ask named those media."""
+    from common.image_prompts import SCENE_TAIL, plan_mixed_images
+
+    raw = text or ""
+    items = [dict(row) for row in (existing or [])]
+    if not items and site_asks_for_images(raw):
+        items = [dict(row) for row in plan_mixed_images(raw)]
+        for row in items:
+            row.setdefault("modality", "image")
+    if site_asks_for_images(raw) and not any(item_modality(row) == "image" for row in items):
+        theme = _site_theme(raw)
+        items.append(
+            {
+                "prompt": rewrite_comfy_prompt(
+                    f"wide photographic scene of {theme}, atmospheric, {SCENE_TAIL}"
+                ),
+                "output_path": "images/hero.png",
+                "size": "1536x768",
+                "modality": "image",
+            }
+        )
+        if re.search(r"(?is)\b(?:music|album|record|vinyl|store)\b", raw):
+            items.append(
+                {
+                    "prompt": rewrite_comfy_prompt(
+                        "qwen-image: A music album cover with abstract neon waves "
+                        "and a stylized microphone, 768x768"
+                    ),
+                    "output_path": "images/album.png",
+                    "size": "768x768",
+                    "modality": "image",
+                }
+            )
+    if site_asks_for_video(raw) and not any(item_modality(row) in ("video", "i2v") for row in items):
+        theme = _site_theme(raw)
+        items.append(
+            {
+                "prompt": f"a short cinematic clip of {theme}, gentle camera motion",
+                "output_path": "videos/clip.mp4",
+                "size": "640x640",
+                "modality": "video",
+            }
+        )
+    if site_asks_for_audio(raw) and not any(item_modality(row) in ("audio", "music") for row in items):
+        music = bool(re.search(r"(?is)\b(?:music|song|track|album|playlist|store)\b", raw))
+        theme = _site_theme(raw)
+        items.append(
+            {
+                "prompt": (
+                    "warm vinyl store playlist, lo-fi beat with soft keys, no vocals"
+                    if music
+                    else f"ambient sound of {theme}"
+                ),
+                "output_path": "audio/track.wav",
+                "size": "1024x1024",
+                "modality": "music" if music else "audio",
+            }
+        )
+    return items[:MAX_PLANNED_IMAGES]
 
 
 def fallback_item(text: str = "") -> list[dict[str, str]]:
