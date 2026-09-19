@@ -136,6 +136,17 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
         self.assertIn("function thoughtStepsSignature()", self.src)
         self.assertIn("function ensureLiveReasonBlock()", self.src)
         self.assertIn("if (live && thought.childElementCount && sig === thoughtStepSig)", self.src)
+        self.assertIn("function freezeLiveReason()", self.src)
+        self.assertIn("function appendReasonBlock(live)", self.src)
+        self.assertIn("thought.appendChild(block);", self.src)
+        self.assertNotIn("thought.insertBefore(block, thought.firstChild);", self.src)
+        self.assertIn("freezeLiveReason();", self.src)
+        self.assertIn('steps.push({ type: "thought", content: reasoningText });', self.src)
+        paint = self.src.split("function paintThought()")[1].split("function addStatusNote(")[0]
+        self.assertLess(paint.find("steps.forEach("), paint.find("appendReasonBlock(live)"))
+        add_step = self.src.split("addStep(step, origin)")[1].split("setReasoning(text)")[0]
+        self.assertIn("freezeLiveReason();", add_step)
+        self.assertLess(add_step.find("if (step.type === \"demote\")"), add_step.rfind("freezeLiveReason();"))
         css = CHAT_CSS.read_text(encoding="utf-8")
         self.assertIn(".think-reason.is-live", css)
         self.assertIn("contain: paint", css)

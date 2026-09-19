@@ -10549,6 +10549,19 @@ function mountChat(root) {
       }).join("|");
     }
 
+    function freezeLiveReason() {
+      if (!reasoningFromModel || !reasoningText) return;
+      const lastThought = [...steps].reverse().find((item) => item && item.type === "thought");
+      if (lastThought && String(lastThought.content || "") === String(reasoningText)) {
+        reasoningText = "";
+        reasoningFromModel = false;
+        return;
+      }
+      steps.push({ type: "thought", content: reasoningText });
+      reasoningText = "";
+      reasoningFromModel = false;
+    }
+
     function ensureLiveReasonBlock() {
       let block = thought.querySelector(":scope > .think-reason");
       if (!reasoningText) {
@@ -10558,10 +10571,21 @@ function mountChat(root) {
       if (!block) {
         block = document.createElement("div");
         block.className = "think-reason";
-        thought.insertBefore(block, thought.firstChild);
+        thought.appendChild(block);
+      } else if (block !== thought.lastElementChild) {
+        thought.appendChild(block);
       }
       paintLiveReason(block);
       return block;
+    }
+
+    function appendReasonBlock(live) {
+      if (!reasoningText) return;
+      const block = document.createElement("div");
+      block.className = "think-reason";
+      if (live) paintLiveReason(block);
+      else block.innerHTML = TabbyUI.renderMarkdown(reasoningText);
+      thought.appendChild(block);
     }
 
     function paintThought() {
@@ -10585,17 +10609,11 @@ function mountChat(root) {
       const keepScroll = thought.scrollTop;
       pinningThought = true;
       thought.innerHTML = "";
-      if (reasoningText) {
-        const block = document.createElement("div");
-        block.className = "think-reason";
-        if (live) paintLiveReason(block);
-        else block.innerHTML = TabbyUI.renderMarkdown(reasoningText);
-        thought.appendChild(block);
-      }
       steps.forEach((step) => {
         const row = renderAgentStep(step);
         if (row) thought.appendChild(row);
       });
+      appendReasonBlock(live);
       thoughtStepSig = sig;
       thought.hidden = (finished || imageHoldActive) ? !expanded : false;
       if (finished || imageHoldActive) {
@@ -10741,6 +10759,7 @@ function mountChat(root) {
           reasoningText = "";
         }
         if (step.type === "demote") {
+          freezeLiveReason();
           const draft = visibleAnswerText(answerText);
           const lastSaid = [...steps].reverse().find((item) => item && item.type === "said");
           const lastText = lastSaid ? visibleAnswerText(lastSaid.content) : "";
@@ -10767,6 +10786,7 @@ function mountChat(root) {
             _stream: prev._stream != null ? prev._stream : row._stream,
           });
         } else {
+          freezeLiveReason();
           steps.push(row);
         }
         paintThoughtSoon();
