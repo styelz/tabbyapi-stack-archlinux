@@ -948,7 +948,8 @@ def code_tool_specs(agent: str = "agent") -> list[ToolSpec]:
                 description=(
                     "Read size, format, dimensions, duration, and codec for one "
                     "project image, audio, or video file. Use this instead of Read "
-                    "on binary media."
+                    "on binary media or Shell ffprobe. If ffprobe is missing, this "
+                    "installs ffmpeg in the chat container."
                 ),
                 parameters={
                     "type": "object",
@@ -1231,6 +1232,15 @@ _SHELL_DESTROY = re.compile(
     r"(?:os|pathlib|shutil)\.(?:remove|unlink|rmtree)\b"
     r")"
 )
+_CMD_NOT_FOUND = re.compile(r"(?i)\bcommand not found\b")
+_SHELL_INSTALL_HINT = (
+    "That command is not installed in this container. "
+    "Install it with `sudo apt-get update && sudo apt-get install -y <package>`."
+)
+_INSTALL_FFMPEG = (
+    "sudo apt-get update -qq && "
+    "sudo apt-get install -y --no-install-recommends ffmpeg"
+)
 
 
 def _shell_is_destructive(command: str) -> bool:
@@ -1415,43 +1425,18 @@ def _queue_generate(
     )
 
 
-def _inspect_media(username: str, chat_id: str, rel: str) -> tuple[str, str]:
-    try:
-        root = workspace.workspace_root(username, chat_id, create=False)
-        dest = workspace.resolve_rel(root, rel)
-    except (OSError, ValueError) as exc:
-        return "Tool error", str(exc)
-    if not dest.is_file():
-        return "Tool error", f"{rel} is not a file"
-    suffix = dest.suffix.lower()
-    size = dest.stat().st_size
-    if suffix not in _MEDIA_SUFFIXES and suffix not in {".ogg", ".m4a", ".mov"}:
-        return (
-            f"Inspecting {rel}",
-            f"{rel}: {size} bytes, suffix {suffix or '(none)'}",
-        )
-    work = Path("/work") / dest.relative_to(root.resolve()).as_posix()
-    import shlex
+def _ffprobe_missing(code: int, output: str) -> bool:
+    if int(code or 0) == 0:
+        return False
+    text = (output or "").lower()
+    return "command not found" in text or "ffprobe: not found" in text
 
-    from ui import codebox
 
-    cmd = (
-        "ffprobe -v error -print_format json -show_format -show_streams "
-        + shlex.quote(str(work))
-    )
-    try:
-        code, output = codebox.run_shell(username, chat_id, cmd, timeout=30)
-    except codebox.CodeboxError as exc:
-        return "Tool error", str(exc)
-    if code:
-        return (
-            f"Inspecting {rel}",
-            f"{rel}: {size} bytes\nexit {code}\n{output.strip() or '(no output)'}",
-        )
+def _summarize_ffprobe(rel: str, size: int, output: str) -> Optional[str]:
     try:
         data = json.loads(output)
     except json.JSONDecodeError:
-        return f"Inspecting {rel}", f"{rel}: {size} bytes\n{output.strip()}"
+        return None
     fmt = data.get("format") if isinstance(data, dict) else {}
     streams = data.get("streams") if isinstance(data, dict) else []
     if not isinstance(fmt, dict):
@@ -1478,7 +1463,159 @@ def _inspect_media(username: str, chat_id: str, rel: str) -> tuple[str, str]:
         if stream.get("sample_rate"):
             bits.append(f"{stream.get('sample_rate')}Hz")
         lines.append("stream: " + " ".join(str(part) for part in bits if part))
-    return f"Inspecting {rel}", "\n".join(lines)
+    return "\n".join(lines)
+
+
+def _inspect_still(dest: Path, rel: str, size: int) -> Optional[str]:
+    try:
+        from PIL import Image
+    except ImportError:
+        return None
+    try:
+        with Image.open(dest) as image:
+            image.load()
+            width, height = image.size
+            fmt = (image.format or dest.suffix.lstrip(".")).lower()
+    except OSError:
+        return None
+    return (
+        f"{rel}: {size} bytes\n"
+        f"format: {fmt}\n"
+        f"stream: video {width}x{height}"
+    )
+
+
+def _inspect_wav(dest: Path, rel: str, size: int) -> Optional[str]:
+    import wave
+
+    try:
+        with wave.open(str(dest), "rb") as handle:
+            channels = handle.getnchannels()
+            rate = handle.getframerate()
+            frames = handle.getnframes()
+            width = handle.getsampwidth()
+    except (OSError, wave.Error, EOFError):
+        return None
+    duration = (frames / float(rate)) if rate else 0.0
+    bits = width * 8
+    return (
+        f"{rel}: {size} bytes\n"
+        f"format: wav\n"
+        f"duration: {duration:.3f}s\n"
+        f"stream: audio pcm_s{bits}le {rate}Hz {channels}ch"
+    )
+
+
+def _host_ffprobe(path: Path) -> Optional[tuple[int, str]]:
+    import shutil
+    import subprocess
+
+    binary = shutil.which("ffprobe")
+    if not binary:
+        return None
+    try:
+        proc = subprocess.run(
+            [
+                binary,
+                "-v",
+                "error",
+                "-print_format",
+                "json",
+                "-show_format",
+                "-show_streams",
+                str(path),
+            ],
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        return None
+    out = (proc.stdout or b"") + (proc.stderr or b"")
+    return int(proc.returncode), out.decode("utf-8", "replace")
+
+
+def _container_ffprobe(username: str, chat_id: str, work: Path) -> tuple[int, str]:
+    import shlex
+
+    from ui import codebox
+
+    cmd = (
+        "ffprobe -v error -print_format json -show_format -show_streams "
+        + shlex.quote(str(work))
+    )
+    return codebox.run_shell(username, chat_id, cmd, timeout=30)
+
+
+def _install_container_ffmpeg(username: str, chat_id: str) -> tuple[int, str]:
+    from ui import codebox
+
+    try:
+        return codebox.run_shell(username, chat_id, _INSTALL_FFMPEG, timeout=180)
+    except codebox.CodeboxError as exc:
+        return 1, str(exc)
+
+
+def _probe_result(rel: str, size: int, code: int, output: str) -> tuple[str, str]:
+    if code == 0:
+        summary = _summarize_ffprobe(rel, size, output)
+        if summary:
+            return f"Inspecting {rel}", summary
+        return f"Inspecting {rel}", f"{rel}: {size} bytes\n{output.strip()}"
+    extra = ""
+    if _ffprobe_missing(code, output):
+        extra = (
+            "\nffprobe is missing in this chat container. "
+            "Install it with `sudo apt-get update && sudo apt-get install -y ffmpeg`."
+        )
+    return (
+        f"Inspecting {rel}",
+        f"{rel}: {size} bytes\nexit {code}\n{output.strip() or '(no output)'}{extra}",
+    )
+
+
+def _inspect_media(username: str, chat_id: str, rel: str) -> tuple[str, str]:
+    try:
+        root = workspace.workspace_root(username, chat_id, create=False)
+        dest = workspace.resolve_rel(root, rel)
+    except (OSError, ValueError) as exc:
+        return "Tool error", str(exc)
+    if not dest.is_file():
+        return "Tool error", f"{rel} is not a file"
+    suffix = dest.suffix.lower()
+    size = dest.stat().st_size
+    if suffix not in _MEDIA_SUFFIXES and suffix not in {".ogg", ".m4a", ".mov"}:
+        return (
+            f"Inspecting {rel}",
+            f"{rel}: {size} bytes, suffix {suffix or '(none)'}",
+        )
+    if suffix in _STILL_SUFFIXES:
+        still = _inspect_still(dest, rel, size)
+        if still:
+            return f"Inspecting {rel}", still
+    if suffix == ".wav":
+        wav = _inspect_wav(dest, rel, size)
+        if wav:
+            return f"Inspecting {rel}", wav
+    host = _host_ffprobe(dest)
+    if host is not None:
+        code, output = host
+        if not _ffprobe_missing(code, output):
+            return _probe_result(rel, size, code, output)
+    work = Path("/work") / dest.relative_to(root.resolve()).as_posix()
+    from ui import codebox
+
+    try:
+        code, output = _container_ffprobe(username, chat_id, work)
+    except codebox.CodeboxError as exc:
+        return "Tool error", str(exc)
+    if _ffprobe_missing(code, output):
+        _install_container_ffmpeg(username, chat_id)
+        try:
+            code, output = _container_ffprobe(username, chat_id, work)
+        except codebox.CodeboxError as exc:
+            return "Tool error", str(exc)
+    return _probe_result(rel, size, code, output)
 
 
 def _note_change(sink: Optional[dict], kind: str, path: str, **extra: str) -> None:
@@ -1575,6 +1712,8 @@ def _execute_tool(
         text = output if output.strip() else "(no output)"
         if code:
             text = f"exit {code}\n{text}"
+            if _CMD_NOT_FOUND.search(output):
+                text = f"{text}\n{_SHELL_INSTALL_HINT}"
         _note_change(change, "shell", "/work")
         return "Running command", text
     if kind == "list":

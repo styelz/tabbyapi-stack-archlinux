@@ -156,14 +156,80 @@ class InspectAndShellTests(unittest.TestCase):
                 {"codec_type": "video", "codec_name": "h264", "width": 640, "height": 640}
             ],
         }
-        with mock.patch("ui.codebox.run_shell", return_value=(0, json.dumps(payload))):
-            label, result, change = code_agent.execute_tool(
-                "alice", "c1", "InspectMedia", {"path": "videos/clip.mp4"}
-            )
+        with mock.patch.object(code_agent, "_host_ffprobe", return_value=None):
+            with mock.patch("ui.codebox.run_shell", return_value=(0, json.dumps(payload))):
+                label, result, change = code_agent.execute_tool(
+                    "alice", "c1", "InspectMedia", {"path": "videos/clip.mp4"}
+                )
         self.assertIn("Inspecting", label)
         self.assertIn("640x640", result)
         self.assertIn("3.2", result)
         self.assertEqual(change, {})
+
+    def test_inspect_media_reads_stills_without_ffprobe(self):
+        try:
+            from PIL import Image
+        except ImportError:
+            self.skipTest("pillow is not installed")
+
+        root = workspace.workspace_root("alice", "c1", create=False)
+        dest = root / "images" / "hero.webp"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (64, 32), (20, 30, 40)).save(dest, "WEBP")
+        with mock.patch("ui.codebox.run_shell") as ran:
+            label, result, change = code_agent.execute_tool(
+                "alice", "c1", "InspectMedia", {"path": "images/hero.webp"}
+            )
+        ran.assert_not_called()
+        self.assertIn("Inspecting", label)
+        self.assertIn("64x32", result)
+        self.assertIn("webp", result.lower())
+        self.assertEqual(change, {})
+
+    def test_inspect_media_installs_ffmpeg_when_ffprobe_missing(self):
+        workspace.write_text("alice", "c1", "videos/clip.mp4", "not-really-mp4")
+        payload = {
+            "format": {"duration": "3.2", "format_name": "mov,mp4,m4a"},
+            "streams": [
+                {"codec_type": "video", "codec_name": "h264", "width": 640, "height": 640}
+            ],
+        }
+        calls: list[str] = []
+
+        def fake_shell(_user, _chat, command, timeout=None):
+            calls.append(command)
+            if "apt-get" in command:
+                return 0, "installed"
+            if any("apt-get" in item for item in calls[:-1]):
+                return 0, json.dumps(payload)
+            return 127, "bash: line 1: ffprobe: command not found"
+
+        with mock.patch.object(code_agent, "_host_ffprobe", return_value=None):
+            with mock.patch("ui.codebox.run_shell", side_effect=fake_shell):
+                label, result, change = code_agent.execute_tool(
+                    "alice", "c1", "InspectMedia", {"path": "videos/clip.mp4"}
+                )
+        self.assertIn("Inspecting", label)
+        self.assertIn("640x640", result)
+        self.assertTrue(any("apt-get" in command and "ffmpeg" in command for command in calls))
+        self.assertEqual(change, {})
+
+    def test_shell_missing_command_hints_apt_install(self):
+        with mock.patch(
+            "ui.codebox.run_shell",
+            return_value=(127, "bash: line 1: jq: command not found"),
+        ):
+            label, result, change = code_agent.execute_tool(
+                "alice",
+                "c1",
+                "Shell",
+                {"command": "jq ."},
+                agent="agent",
+            )
+        self.assertEqual(label, "Running command")
+        self.assertIn("command not found", result)
+        self.assertIn("sudo apt-get install", result)
+        self.assertEqual(change["kind"], "shell")
 
     def test_shell_passes_timeout_and_records_change(self):
         with mock.patch("ui.codebox.run_shell", return_value=(0, "ok")) as ran:
