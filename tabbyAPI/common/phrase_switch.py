@@ -880,8 +880,10 @@ def help_text(api_base: Optional[str] = None, request=None) -> str:
         "model commands, and image generation.",
         "- **Browser Code:** a self-contained IDE on this host. Same Chat Completions "
         "pipeline; the browser runs the tool loop against a jailed workspace "
-        "(Grep, Glob, Read, Write, Shell, …), plus Monaco, preview, and a container terminal. "
-        "Nested chats under a workspace share the same files. **Agent** can write; "
+        "(Grep, Glob, Read, Write, Shell, InspectMedia, GenerateImage/Audio/Video), "
+        "plus Monaco, preview, and a container terminal. "
+        "Nested chats under a workspace share the same files. **Agent** can write, "
+        "install into that chat's container, and queue GPU media; "
         "**Ask** and **Plan** are read-only. File writes stream into the chat.",
         "- **Status:** model switching, GPU occupancy, restart, updates, health, "
         "resource graphs, and administrator-only stack backup/restore.",

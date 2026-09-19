@@ -80,6 +80,7 @@ class McpImageItem:
     seed: Optional[int] = None
     source_image: str = ""
     denoise: Optional[float] = None
+    seconds: Optional[float] = None
     status: str = "queued"
     urls: list[str] = field(default_factory=list)
     error: str = ""
@@ -513,6 +514,8 @@ def _item_to_persist(item: McpImageItem) -> dict:
         data["source_image"] = item.source_image
     if item.denoise is not None:
         data["denoise"] = item.denoise
+    if item.seconds is not None:
+        data["seconds"] = item.seconds
     return data
 
 
@@ -530,6 +533,7 @@ def _item_from_persist(data: dict) -> McpImageItem:
         seed=seed,
         source_image=_item_source_path(data),
         denoise=_item_denoise(data),
+        seconds=_item_seconds(data),
         status=str(data.get("status") or "queued"),
         urls=[str(u) for u in (data.get("urls") or []) if u],
         error=str(data.get("error") or ""),
@@ -1224,6 +1228,21 @@ def _item_denoise(raw) -> Optional[float]:
     return strength
 
 
+def _item_seconds(raw) -> Optional[float]:
+    if not isinstance(raw, dict):
+        return None
+    value = raw.get("seconds")
+    if value is None or value == "":
+        return None
+    try:
+        length = float(value)
+    except (TypeError, ValueError):
+        return None
+    if length <= 0:
+        return None
+    return min(length, 120.0)
+
+
 def _new_items(
     *,
     prompt: str = "",
@@ -1263,6 +1282,7 @@ def _new_items(
                     seed=raw.get("seed", seed),
                     source_image=_item_source_path(raw),
                     denoise=_item_denoise(raw),
+                    seconds=_item_seconds(raw),
                     modality=modality,
                 )
             )
@@ -1402,6 +1422,81 @@ async def start_mcp_image_job(
         return job, "coding"
     await launch_mcp_image_job(job, delay=delay)
     return job, "started"
+
+
+def queue_code_media_job(
+    *,
+    owner: str,
+    chat_id: str,
+    items: list[dict],
+    api_base: str = "",
+) -> tuple["McpImageJob", str]:
+    """Remember dests for this Code chat. Does not start Comfy.
+
+    handle() writes the page first, then launches. Never attaches another
+    conversation's in-flight job.
+    """
+    new_items = _new_items(items=items)
+    if not new_items:
+        raise ValueError("prompt is required")
+    owner_name = str(owner or "").strip()
+    chat_name = str(chat_id or "").strip()
+    if not owner_name or not chat_name:
+        raise ValueError("workspace is required")
+    busy = active_mcp_image_job()
+    if busy and abandon_foreign_coding_job(
+        busy, owner=owner_name, chat_id=chat_name
+    ):
+        busy = None
+    if busy:
+        busy_owner = str(busy.owner or "").strip()
+        busy_chat = str(busy.chat_id or "").strip()
+        if busy_owner != owner_name:
+            return busy, "busy"
+        if busy_chat and busy_chat != chat_name:
+            return busy, "busy"
+        if chat_name and not busy_chat:
+            busy.chat_id = chat_name
+        new_mod = new_items[0].modality if new_items else "image"
+        if new_mod != busy.modality:
+            return busy, "busy"
+        can_append = busy.status == "coding" or (
+            busy.status == "queued" and busy.accepting
+        )
+        if can_append and busy.count + sum(
+            max(1, item.count) for item in new_items
+        ) <= MCP_MAX_BATCH:
+            from images.paths import resolve_output_paths
+
+            resolve_output_paths(
+                new_items,
+                reserved=[item.output_path for item in busy.items],
+            )
+            busy.items.extend(new_items)
+            refresh_job_wait(busy)
+            _signal(busy)
+            return busy, "appended"
+        return busy, "busy"
+
+    job = McpImageJob(
+        id=str(uuid4()),
+        items=new_items,
+        restore=True,
+        restore_name=restore_llm_profile(),
+        api_base=api_base or "",
+        wait_text="",
+        wait_s=0,
+        started_at=time.time(),
+        owner=owner_name,
+        chat_id=chat_name,
+    )
+    refresh_job_wait(job)
+    _remember_mcp_job(job)
+    job.status = "coding"
+    job.phase = "writing_code"
+    job.code_turns = 1
+    _signal(job)
+    return job, "coding"
 
 
 async def launch_mcp_image_job(
@@ -1574,6 +1669,7 @@ async def _run_mcp_image_job(job: McpImageJob, delay: float) -> None:
                                 "count": item.count,
                                 "source_image": item.source_image or None,
                                 "denoise": item.denoise,
+                                "seconds": item.seconds,
                                 "modality": item.modality,
                             }
                         ],

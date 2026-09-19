@@ -406,6 +406,18 @@ class InstallShHeadlessUpdateTests(unittest.TestCase):
         self.assertIn("systemctl restart tabby-saver", src)
         self.assertIn("systemctl start tabby-saver", src)
 
+    def test_codebox_image_rebuilds_when_dockerfile_hash_changes(self):
+        src = INSTALL_SH.read_text()
+        self.assertIn("codebox-dockerfile.sha256", src)
+        self.assertIn("sha256sum", src)
+        df = Path(__file__).resolve().parents[2] / "tabbyAPI/ui/codebox/Dockerfile"
+        text = df.read_text()
+        self.assertIn("ffmpeg", text)
+        self.assertIn("sudo", text)
+        self.assertIn("python3-venv", text)
+        self.assertIn("NOPASSWD: /usr/bin/apt-get, /usr/bin/apt", text)
+        self.assertIn("build-essential", text)
+
     def test_dialogrc_hides_unused_percent_marker(self):
         src = INSTALL_SH.read_text()
         self.assertIn("use_scrollbar = OFF", src)

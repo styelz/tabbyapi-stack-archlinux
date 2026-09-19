@@ -42,16 +42,42 @@ class ShellJailTests(unittest.TestCase):
         self.assertIn(f"{root.resolve()}:/work", vols)
         self.assertTrue(any(item.endswith(":/etc/passwd:ro") for item in vols))
         self.assertTrue(any(item.endswith(":/etc/tabby-git-credentials:ro") for item in vols))
-        self.assertIn("--network", cmd)
-        self.assertIn("none", cmd)
+        self.assertNotIn("none", cmd)
+        self.assertNotIn("no-new-privileges", cmd)
+        self.assertNotIn("/var/run/docker.sock", " ".join(cmd))
+        self.assertNotIn("-p", cmd)
         self.assertIn("GIT_CONFIG_VALUE_0=store --file=/etc/tabby-git-credentials", cmd)
         self.assertIn("--cap-drop", cmd)
         self.assertIn("ALL", cmd)
+        self.assertIn("--cap-add", cmd)
+        self.assertIn("SETUID", cmd)
+        self.assertNotIn("SYS_ADMIN", cmd)
+        self.assertIn(f"PATH={codebox.WORK_PATH}", cmd)
+        self.assertIn("2g", cmd)
         self.assertIn("tabbyapi-stack-code:local", cmd)
         self.assertIn(
             "alice:x:1000:1000:alice:/work:/bin/bash",
             (root.parent / "c.codebox" / "passwd").read_text(),
         )
+        self.assertIn(
+            "sudo:x:27:alice",
+            (root.parent / "c.codebox" / "group").read_text(),
+        )
+
+    def test_shell_timeout_is_clamped(self):
+        self.assertEqual(codebox.SHELL_TIMEOUT_S, 600)
+        self.assertEqual(codebox.SHELL_TIMEOUT_MAX_S, 1200)
+        self.assertGreaterEqual(codebox.SHELL_MAX_BYTES, 256 * 1024)
+
+    def test_sandbox_outdated_when_network_is_none(self):
+        def fake_inspect(_name, fmt):
+            if "NetworkMode" in fmt:
+                return "none"
+            return None
+        with mock.patch.object(codebox, "_inspect_field", side_effect=fake_inspect):
+            with mock.patch.object(codebox, "_stale_container", return_value=False):
+                with mock.patch.object(codebox, "_missing_git_creds_mount", return_value=False):
+                    self.assertTrue(codebox._sandbox_outdated("tabby-code-alice-c"))
 
 
 if __name__ == "__main__":

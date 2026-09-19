@@ -23,55 +23,66 @@ CODE_SYSTEM = (
     "are included in their message. Use the file tools (Grep, Glob, Write, "
     "StrReplace, Read, Rename, Delete, List) to search, create, and edit text "
     "files. Use OptimizeImage to "
-    "compress, resize, or convert project images. List first: generated website "
-    "images are often already WebP, not PNG. OptimizeImage finds the real file "
-    "when the prompt still says .png, updates code references, and does not "
-    "need you to delete the original. If they attach a picture and ask to "
-    "remove a border or frame, wait for the new GPU PNG; do not fake it with "
-    "CSS, background-size, or JavaScript. Use Shell to run project commands in "
-    "this workspace's container (cwd is /work). Never use Shell to delete, move, or overwrite project files. Do not create placeholder files when an "
-    "attached project image can be processed with OptimizeImage. Do not dump "
-    "whole files in chat. Do not try to run the site for the user; they have "
-    "preview. A later user message wins over an earlier example brief: if they "
-    "say a different theme or names, do not keep the example's industry or "
-    "setting. For a layout, alignment, or color fix, Read the file and use "
-    "StrReplace on the few rules that are wrong. Do not Write the whole "
-    "HTML/CSS/JS again and do not touch img src or regenerate pictures. "
-    "If hero text sits off to the left, the usual cause is a full-size "
-    "canvas in the flex row: give that canvas position:absolute; inset:0. "
-    "After images exist, List and keep the on-disk paths (often .webp even "
-    "when the plan said .png). Never change a working src back to .png. "
-    "On first write, point img src or CSS url() at the planned local paths. "
-    "Do not Write PNG/WebP dest files or text placeholders with those names. Generated "
-    "assets for an HTML website are automatically converted to web-optimized "
-    "files and their code references are updated after rendering. Unused cleanup means "
-    "empty folders only, plus files the page does not reference. Never delete "
-    "HTML, CSS, JS, or images the page still uses. When you are done, give a "
-    "short summary of what you wrote or optimized. "
-    "If the user asked to change files, do not stop after only Read, Grep, "
-    "Glob, or List — Write or StrReplace, then summarize. "
-    "Do not say you are done, or that you will edit, unless that same "
-    "reply calls Write or StrReplace. "
-    "When several files need edits, emit every Write and StrReplace in one "
-    "response. After those tools succeed, stop and summarize. Do not Read, "
-    "Grep, or List to check your own edits unless a tool returned an error. "
-    "If they named files such as index.html, styles.css, and app.js, Write "
-    "each of those files. If HTML links local CSS or JS, Write those files "
-    "in the same coding pass — do not leave broken stylesheet or script "
-    "hrefs for later, and do not inline them instead. "
-    "Earlier messages in this thread are the brief, including an "
+    "compress, resize, or convert project images. Use InspectMedia for "
+    "dimensions, duration, and codec of images, audio, or video. List first: "
+    "generated website images are often already WebP, not PNG. OptimizeImage "
+    "finds the real file when the prompt still says .png, updates code "
+    "references, and does not need you to delete the original. If they attach "
+    "a picture and ask to remove a border or frame, wait for the new GPU PNG; "
+    "do not fake it with CSS, background-size, or JavaScript. Use "
+    "GenerateImage, GenerateAudio, or GenerateVideo when they want another "
+    "GPU asset after the page exists, or when a dest was missed. Prefix "
+    "qwen-image: for logos and readable text; heroes are a scene, not a "
+    "website. Use Shell to run project commands in this workspace's container "
+    "(cwd is /work). The container has outbound internet. Prefer project-local "
+    "installs that persist under /work (`python3 -m venv /work/.venv`, "
+    "`pip install --user`, `npm install`). `sudo apt-get install` is allowed "
+    "and lasts only until this chat's container is recreated. Never use Shell "
+    "to delete, move, or overwrite project files, and never invent PNG, WAV, "
+    "or MP4 with Pillow, canvas, or ffmpeg. Do not create placeholder files "
+    "when an attached project image can be processed with OptimizeImage. Do "
+    "not dump whole files in chat. Do not try to run the site for the user; "
+    "they have preview. A later user message wins over an earlier example "
+    "brief: if they say a different theme or names, do not keep the example's "
+    "industry or setting. For a layout, alignment, or color fix, Read the "
+    "file and use StrReplace on the few rules that are wrong. Do not Write "
+    "the whole HTML/CSS/JS again and do not touch img src, video src, or "
+    "audio src or regenerate media. If hero text sits off to the left, the "
+    "usual cause is a full-size canvas in the flex row: give that canvas "
+    "position:absolute; inset:0. After media exist, List and InspectMedia "
+    "and keep the on-disk paths (stills are often .webp even when the plan "
+    "said .png). Never change a working src back to .png. On first write, "
+    "point img src, video src, audio src, or CSS url() at the planned local "
+    "paths. Do not Write PNG/WebP/WAV/MP4 dest files or text placeholders "
+    "with those names. Generated stills for an HTML website are automatically "
+    "converted to web-optimized files and their code references are updated "
+    "after rendering. Unused cleanup means empty folders only, plus files the "
+    "page does not reference. Never delete HTML, CSS, JS, or media the page "
+    "still uses. When you are done, give a short summary of what you wrote "
+    "or optimized. If the user asked to change files, do not stop after only "
+    "Read, Grep, Glob, or List — Write or StrReplace, then summarize. Do not "
+    "say you are done, or that you will edit, unless that same reply calls "
+    "Write or StrReplace. When several files need edits, emit every Write "
+    "and StrReplace in one response. After those tools succeed, stop and "
+    "summarize. Do not Read, Grep, or List to check your own edits unless a "
+    "tool returned an error. If they named files such as index.html, "
+    "styles.css, and app.js, Write each of those files. If HTML links local "
+    "CSS or JS, Write those files in the same coding pass — do not leave "
+    "broken stylesheet or script hrefs for later, and do not inline them "
+    "instead. Earlier messages in this thread are the brief, including an "
     "<approved_plan> or the last Plan reply. Implement that plan's "
     "## Checklist in order; do not skip items and do not ask for a new spec. "
     "If the plan says to canvas-draw, Node-export, Pillow, or "
-    "base64 fake site PNGs, ignore those steps: point img src at the Asset "
-    "dest paths. JS/CSS may still animate stars."
+    "base64 fake site media, ignore those steps: point img, video, or audio "
+    "src at the Asset dest paths. JS/CSS may still animate stars."
 )
 ASK_SYSTEM = (
     "You are answering questions about a workspace project folder on this "
     "TabbyAPI Stack host. This conversation is one thread in that workspace; "
     "extra chats share the same files. Use this thread and the project "
     "files together: earlier Plan or Ask turns are part of the brief. Do "
-    "not ignore them. Use Grep, Glob, Read, and List to inspect files. Do not create, "
+    "not ignore them. Use Grep, Glob, Read, List, and InspectMedia to inspect "
+    "files. Do not create, "
     "edit, delete, rename, or optimize files. Do not run Shell. Do not "
     "implement changes. Answer clearly from the conversation and the project."
 )
@@ -79,7 +90,8 @@ PLAN_SYSTEM = (
     "You are Plan mode for a workspace project folder on this TabbyAPI Stack "
     "host. This conversation is one thread in that workspace; extra chats "
     "share the same files. A workspace file list is already in this prompt; "
-    "only Grep, Glob, or Read a file if you need its contents. Do not List just to confirm "
+    "only Grep, Glob, Read, or InspectMedia a file if you need its contents. "
+    "Do not List just to confirm "
     "the file list. If a plan is already in this thread, revise that plan; "
     "do not start from a blank page. Do not create, edit, delete, rename, "
     "or optimize files, and do not run Shell. "
@@ -90,16 +102,17 @@ PLAN_SYSTEM = (
     "Files: concrete relative paths and what each one is for. "
     "Steps: numbered and specific enough to implement without asking again. "
     "Assets: dest paths the GPU will render after Build (hero/scene = Flux "
-    "photo; logos/text/named ships = qwen-image:), shown with img src, or "
-    "None. Do not plan canvas, toDataURL, Pillow, Node, or base64 fake "
-    "PNGs, or placeholders reserved for later. JS/CSS starfield and warp "
-    "animation is allowed and is not an Asset. Overlay canvases (stars, "
-    "fireflies, particles) must be position:absolute covering the hero — "
-    "never a flex or grid sibling, or they shove the title off-screen. "
-    "OptimizeImage is after real "
+    "photo; logos/text/named ships = qwen-image:; clips = videos/clip.mp4; "
+    "sfx/music = audio/track.wav), shown with img src, video src, or audio "
+    "src, or None. Do not plan canvas, toDataURL, Pillow, Node, ffmpeg, or "
+    "base64 fake media, or placeholders reserved for later. JS/CSS starfield "
+    "and warp animation is allowed and is not an Asset. Overlay canvases "
+    "(stars, fireflies, particles) must be position:absolute covering the "
+    "hero — never a flex or grid sibling, or they shove the title off-screen. "
+    "OptimizeImage and InspectMedia are after real "
     "files exist, not canvas export. "
     "Checklist: one `- [ ]` item per user request in this thread (each "
-    "page file, each Asset dest with img src, JS/CSS effects, mobile/nav, "
+    "page file, each Asset dest with img/video/audio src, JS/CSS effects, mobile/nav, "
     "optimize if they asked). When revising, keep earlier items and add "
     "new ones. Build will implement only this list. "
     "If they say the pasted brief is only an example, or they do not want "
@@ -113,7 +126,8 @@ PLAN_USER_SUFFIX = (
     "Write the full implementation plan now as markdown with headings Goal, "
     "Files, Steps, Assets, Checklist, and Risks. Name concrete relative "
     "paths. Number the steps. Assets are GPU dest paths (or None), not "
-    "canvas/Node exports. Page pictures use img tags. Starfields may be JS. "
+    "canvas/Node/ffmpeg exports. Page pictures use img tags; clips use "
+    "video; sound uses audio. Starfields may be JS. "
     "Checklist is `- [ ]` todos covering every user request; Build will "
     "follow only that list. Do not implement. Do not announce a plan — "
     "this reply is the plan. The user will click Build later.\n"
@@ -136,8 +150,9 @@ _LAYOUT_SRC_REFUSE = (
     "only on CSS position or alignment rules."
 )
 _RASTER_WRITE_REFUSE = (
-    "Do not Write PNG, JPEG, WebP, or GIF dest files. Point img src at the "
-    "planned path; the GPU will save that file after the page is written."
+    "Do not Write PNG, JPEG, WebP, GIF, WAV, or MP4 dest files. Point img, "
+    "video, or audio src at the planned path; the GPU will save that file "
+    "after the page is written."
 )
 _PAGE_EDIT_SUFFIXES = frozenset({".html", ".htm", ".css", ".js", ".mjs"})
 _IMAGE_IN_TEXT = re.compile(
@@ -187,12 +202,22 @@ _PLAN_PREAMBLE = re.compile(
     r"i have (?:read|listed|checked) (?:the )?(?:project|directory|workspace))\b"
 )
 _MUTATE_KINDS = frozenset(
-    ("write", "replace", "delete", "rename", "optimize", "shell")
+    (
+        "write",
+        "replace",
+        "delete",
+        "rename",
+        "optimize",
+        "shell",
+        "generate_image",
+        "generate_audio",
+        "generate_video",
+    )
 )
-_READONLY_TOOLS = frozenset(("read", "list", "grep", "glob"))
+_READONLY_TOOLS = frozenset(("read", "list", "grep", "glob", "inspect"))
 _READONLY_REFUSE = (
-    "This prompt mode is read-only. Use Grep, Glob, Read, or List, or switch "
-    "to Agent to change files."
+    "This prompt mode is read-only. Use Grep, Glob, Read, List, or InspectMedia, "
+    "or switch to Agent to change files."
 )
 MODE_HINT_MARK = "<mode_hint>"
 _HOWTO_PROMPT = re.compile(
@@ -234,10 +259,12 @@ BUILD_USER_SUFFIX = (
     "Do not skip items and do not start extra work that is not on the list. "
     "After you finish each checklist item, write Done: <exact item> on its own line. "
     "After the last item, stop calling tools and give a short summary. "
-    "Site images listed under Assets are GPU PNGs: point img src at those "
-    "dest paths; do not draw them on canvas or export Node/Pillow/base64 "
-    "PNGs. JS/CSS may still animate stars and warp effects. Use "
-    "OptimizeImage after real image files exist if they asked to optimize.\n"
+    "Site media listed under Assets are GPU files: point img, video, or "
+    "audio src at those dest paths; do not draw them on canvas or export "
+    "Node/Pillow/ffmpeg/base64 stand-ins. JS/CSS may still animate stars "
+    "and warp effects. Use OptimizeImage after real stills exist if they "
+    "asked to optimize. Use GenerateImage, GenerateAudio, or GenerateVideo "
+    "only for extra dests the plan missed.\n"
     "</build_mode>"
 )
 _APPROVED_PLAN_RE = re.compile(r"(?is)<approved_plan>(.*?)</approved_plan>")
@@ -657,6 +684,12 @@ _RENAME_NAMES = ("rename", "rename_file", "move_file", "mv")
 _LIST_NAMES = ("list", "list_dir", "listdir", "list_files")
 _OPTIMIZE_NAMES = ("optimizeimage", "optimize_image", "compress_image", "resize_image")
 _SHELL_NAMES = ("shell", "bash", "run_command", "run_terminal_cmd")
+_INSPECT_NAMES = ("inspectmedia", "inspect_media", "ffprobe", "media_info")
+_GENERATE_IMAGE_NAMES = ("generateimage", "generate_image", "gen_image")
+_GENERATE_AUDIO_NAMES = ("generateaudio", "generate_audio", "gen_audio")
+_GENERATE_VIDEO_NAMES = ("generatevideo", "generate_video", "gen_video")
+_STILL_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif"})
+_MEDIA_SUFFIXES = _STILL_SUFFIXES | {".wav", ".mp3", ".flac", ".mp4", ".webm"}
 
 
 def code_tool_specs(agent: str = "agent") -> list[ToolSpec]:
@@ -884,18 +917,162 @@ def code_tool_specs(agent: str = "agent") -> list[ToolSpec]:
                 name="Shell",
                 description=(
                     "Run a command in this workspace's project container. cwd is /work. "
-                    "Use for installs, builds, and checks. Prefer file tools for edits. "
-                    "Do not delete, move, or overwrite project files from Shell."
+                    "Outbound internet is on. Prefer venv/pip --user/npm under /work so "
+                    "deps survive a container recreate; sudo apt-get install is allowed "
+                    "for this chat only. Use for installs, builds, and checks. Prefer "
+                    "file tools for edits. Do not delete, move, or overwrite project "
+                    "files, and do not invent PNG/WAV/MP4 with ffmpeg."
                 ),
                 parameters={
                     "type": "object",
                     "properties": {
                         "command": {
                             "type": "string",
-                            "description": "Shell command to run, e.g. python3 -m http.server --help",
-                        }
+                            "description": "Shell command to run, e.g. python3 -m pip install --user pytest",
+                        },
+                        "timeout": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 1200,
+                            "description": "Seconds to wait (default 600, max 1200).",
+                        },
                     },
                     "required": ["command"],
+                },
+            ),
+        ),
+        ToolSpec(
+            type="function",
+            function=Function(
+                name="InspectMedia",
+                description=(
+                    "Read size, format, dimensions, duration, and codec for one "
+                    "project image, audio, or video file. Use this instead of Read "
+                    "on binary media."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Relative path, e.g. images/hero.webp or videos/clip.mp4",
+                        }
+                    },
+                    "required": ["path"],
+                },
+            ),
+        ),
+        ToolSpec(
+            type="function",
+            function=Function(
+                name="GenerateImage",
+                description=(
+                    "Queue GPU stills for this chat (Flux Schnell, or Qwen-Image "
+                    "when the prompt starts with qwen-image:). Returns dest paths "
+                    "immediately. Point img src at those paths; do not Write the "
+                    "PNG. Submit every still in one call via images[]."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "prompt": {
+                            "type": "string",
+                            "description": (
+                                "Image description. Prefix qwen-image: for logos "
+                                "and readable text. Heroes are a scene, not a website."
+                            ),
+                        },
+                        "output_path": {
+                            "type": "string",
+                            "description": "Project-relative dest, e.g. images/hero.png",
+                        },
+                        "size": {
+                            "type": "string",
+                            "description": "WIDTHxHEIGHT, e.g. 1536x768 for a header.",
+                        },
+                        "qwen_image": {
+                            "type": "boolean",
+                            "description": "Force the Qwen-Image workflow for text/UI.",
+                        },
+                        "images": {
+                            "type": "array",
+                            "description": "Every still in one Comfy session.",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "prompt": {"type": "string"},
+                                    "output_path": {"type": "string"},
+                                    "size": {"type": "string"},
+                                    "qwen_image": {"type": "boolean"},
+                                },
+                                "required": ["prompt"],
+                            },
+                        },
+                    },
+                },
+            ),
+        ),
+        ToolSpec(
+            type="function",
+            function=Function(
+                name="GenerateAudio",
+                description=(
+                    "Queue GPU audio for this chat (sfx or music). Returns the dest "
+                    "path immediately. Point audio src at that path; do not Write "
+                    "the WAV."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "prompt": {
+                            "type": "string",
+                            "description": "Sound description, e.g. rain on a tin roof.",
+                        },
+                        "output_path": {
+                            "type": "string",
+                            "description": "Project-relative dest, e.g. audio/track.wav",
+                        },
+                        "seconds": {
+                            "type": "number",
+                            "minimum": 1,
+                            "maximum": 120,
+                            "description": "Length in seconds (default ~10 sfx / ~30 music).",
+                        },
+                        "music": {
+                            "type": "boolean",
+                            "description": "True for a short track; false for SFX.",
+                        },
+                    },
+                    "required": ["prompt"],
+                },
+            ),
+        ),
+        ToolSpec(
+            type="function",
+            function=Function(
+                name="GenerateVideo",
+                description=(
+                    "Queue a short GPU clip for this chat (Wan). Returns the dest "
+                    "path immediately. Point video src at that path; do not Write "
+                    "the MP4. A pasted still becomes image-to-video."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "prompt": {
+                            "type": "string",
+                            "description": "Clip description, e.g. lanterns in fog.",
+                        },
+                        "output_path": {
+                            "type": "string",
+                            "description": "Project-relative dest, e.g. videos/clip.mp4",
+                        },
+                        "size": {
+                            "type": "string",
+                            "description": "WIDTHxHEIGHT. Default 640x640.",
+                        },
+                    },
+                    "required": ["prompt"],
                 },
             ),
         ),
@@ -982,6 +1159,14 @@ def _kind(name: str) -> str:
         return "optimize"
     if match_tool_name([key], _SHELL_NAMES):
         return "shell"
+    if match_tool_name([key], _INSPECT_NAMES):
+        return "inspect"
+    if match_tool_name([key], _GENERATE_IMAGE_NAMES):
+        return "generate_image"
+    if match_tool_name([key], _GENERATE_AUDIO_NAMES):
+        return "generate_audio"
+    if match_tool_name([key], _GENERATE_VIDEO_NAMES):
+        return "generate_video"
     return ""
 
 
@@ -1101,6 +1286,201 @@ def _delete_refusal(
     return ""
 
 
+def _qwen_prompt(prompt: str, force: bool = False) -> str:
+    text = str(prompt or "").strip()
+    if not text:
+        return ""
+    if force and not re.match(r"(?is)^\s*qwen-image\s*:", text):
+        return f"qwen-image: {text}"
+    return text
+
+
+def _generate_items(kind: str, args: dict) -> list[dict]:
+    if kind == "generate_image":
+        rows = args.get("images")
+        items: list[dict] = []
+        if isinstance(rows, list):
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                prompt = _qwen_prompt(
+                    row.get("prompt"), _arg_bool(row, "qwen_image", False)
+                )
+                if not prompt:
+                    continue
+                item = {
+                    "prompt": prompt,
+                    "output_path": str(row.get("output_path") or "images/generated.png"),
+                    "modality": "image",
+                }
+                if row.get("size"):
+                    item["size"] = str(row.get("size"))
+                if row.get("n") or row.get("count"):
+                    item["n"] = row.get("n") or row.get("count")
+                if row.get("seed") is not None:
+                    item["seed"] = row.get("seed")
+                items.append(item)
+        if items:
+            return items
+        prompt = _qwen_prompt(args.get("prompt"), _arg_bool(args, "qwen_image", False))
+        item = {
+            "prompt": prompt,
+            "output_path": str(args.get("output_path") or "images/generated.png"),
+            "modality": "image",
+        }
+        if args.get("size"):
+            item["size"] = str(args.get("size"))
+        return [item]
+    if kind == "generate_audio":
+        music = _arg_bool(args, "music", False) or str(
+            args.get("kind") or ""
+        ).strip().lower() in ("music", "song", "track")
+        item = {
+            "prompt": str(args.get("prompt") or "").strip(),
+            "output_path": str(args.get("output_path") or "audio/track.wav"),
+            "modality": "music" if music else "audio",
+        }
+        if args.get("seconds") is not None:
+            item["seconds"] = args.get("seconds")
+        return [item]
+    source = str(args.get("source_image") or args.get("source") or "").strip()
+    modality = "i2v" if source else "video"
+    item = {
+        "prompt": str(args.get("prompt") or "").strip(),
+        "output_path": str(args.get("output_path") or "videos/clip.mp4"),
+        "modality": modality,
+        "size": str(args.get("size") or "640x640"),
+    }
+    if source:
+        item["source_image"] = source
+    return [item]
+
+
+def _queue_generate(
+    username: str,
+    chat_id: str,
+    kind: str,
+    args: dict,
+    *,
+    change: Optional[dict] = None,
+) -> tuple[str, str]:
+    items = [row for row in _generate_items(kind, args) if row.get("prompt")]
+    if not items:
+        return "Tool error", "prompt is required"
+    from images.jobs import queue_code_media_job
+
+    try:
+        job, status = queue_code_media_job(
+            owner=username,
+            chat_id=chat_id,
+            items=items,
+        )
+    except ValueError as exc:
+        return "Tool error", str(exc)
+    dests = [
+        str(getattr(item, "output_path", "") or "")
+        for item in getattr(job, "items", None) or []
+        if getattr(item, "output_path", "")
+    ]
+    stills = [
+        dest
+        for dest in dests
+        if Path(dest).suffix.lower() in _STILL_SUFFIXES
+    ]
+    first = dests[0] if dests else "images/generated.png"
+    extra = {}
+    if dests:
+        extra["dests"] = ",".join(dests)
+    if stills:
+        extra["images"] = ",".join(stills)
+    _note_change(change, "generate", first, **extra)
+    listed = ", ".join(dests) if dests else first
+    if status == "busy":
+        return (
+            "Tool error",
+            "The GPU is busy with another job. Wait for it to finish, then try again.",
+        )
+    if status == "appended":
+        return (
+            "Queuing media",
+            f"Added to this chat's GPU job. Dest paths: {listed}. "
+            "Point img src, video src, or audio src at those paths. "
+            "Do not Write the media files.",
+        )
+    return (
+        "Queuing media",
+        f"Queued {listed} for the GPU. Point img src, video src, or audio src "
+        "at those paths. Do not Write the media files. Comfy starts after this "
+        "coding pass, or on the next reply if the page already exists.",
+    )
+
+
+def _inspect_media(username: str, chat_id: str, rel: str) -> tuple[str, str]:
+    try:
+        root = workspace.workspace_root(username, chat_id, create=False)
+        dest = workspace.resolve_rel(root, rel)
+    except (OSError, ValueError) as exc:
+        return "Tool error", str(exc)
+    if not dest.is_file():
+        return "Tool error", f"{rel} is not a file"
+    suffix = dest.suffix.lower()
+    size = dest.stat().st_size
+    if suffix not in _MEDIA_SUFFIXES and suffix not in {".ogg", ".m4a", ".mov"}:
+        return (
+            f"Inspecting {rel}",
+            f"{rel}: {size} bytes, suffix {suffix or '(none)'}",
+        )
+    work = Path("/work") / dest.relative_to(root.resolve()).as_posix()
+    import shlex
+
+    from ui import codebox
+
+    cmd = (
+        "ffprobe -v error -print_format json -show_format -show_streams "
+        + shlex.quote(str(work))
+    )
+    try:
+        code, output = codebox.run_shell(username, chat_id, cmd, timeout=30)
+    except codebox.CodeboxError as exc:
+        return "Tool error", str(exc)
+    if code:
+        return (
+            f"Inspecting {rel}",
+            f"{rel}: {size} bytes\nexit {code}\n{output.strip() or '(no output)'}",
+        )
+    try:
+        data = json.loads(output)
+    except json.JSONDecodeError:
+        return f"Inspecting {rel}", f"{rel}: {size} bytes\n{output.strip()}"
+    fmt = data.get("format") if isinstance(data, dict) else {}
+    streams = data.get("streams") if isinstance(data, dict) else []
+    if not isinstance(fmt, dict):
+        fmt = {}
+    if not isinstance(streams, list):
+        streams = []
+    duration = fmt.get("duration") or ""
+    format_name = fmt.get("format_name") or ""
+    lines = [f"{rel}: {size} bytes"]
+    if format_name:
+        lines.append(f"format: {format_name}")
+    if duration:
+        lines.append(f"duration: {duration}s")
+    for stream in streams:
+        if not isinstance(stream, dict):
+            continue
+        codec = stream.get("codec_name") or ""
+        kind = stream.get("codec_type") or ""
+        width = stream.get("width")
+        height = stream.get("height")
+        bits = [kind, codec]
+        if width and height:
+            bits.append(f"{width}x{height}")
+        if stream.get("sample_rate"):
+            bits.append(f"{stream.get('sample_rate')}Hz")
+        lines.append("stream: " + " ".join(str(part) for part in bits if part))
+    return f"Inspecting {rel}", "\n".join(lines)
+
+
 def _note_change(sink: Optional[dict], kind: str, path: str, **extra: str) -> None:
     """Record what a mutating tool actually changed, for the browser to act on.
 
@@ -1181,13 +1561,21 @@ def _execute_tool(
             )
         from ui import codebox
 
+        timeout = args.get("timeout")
         try:
-            code, output = codebox.run_shell(username, chat_id, command)
+            timeout_s = float(timeout) if timeout is not None else None
+        except (TypeError, ValueError):
+            timeout_s = None
+        try:
+            code, output = codebox.run_shell(
+                username, chat_id, command, timeout=timeout_s
+            )
         except codebox.CodeboxError as exc:
             return "Tool error", str(exc)
         text = output if output.strip() else "(no output)"
         if code:
             text = f"exit {code}\n{text}"
+        _note_change(change, "shell", "/work")
         return "Running command", text
     if kind == "list":
         prefix = rel.rstrip("/")
@@ -1231,10 +1619,12 @@ def _execute_tool(
         if not pattern:
             return "Tool error", "pattern is required"
         return "Finding files", workspace.glob_paths(username, chat_id, pattern)
+    if kind in ("generate_image", "generate_audio", "generate_video"):
+        return _queue_generate(username, chat_id, kind, args, change=change)
     if not rel:
         return "Tool error", "path is required"
     if kind == "write":
-        if Path(rel).suffix.lower() in workspace.IMAGE_SUFFIXES:
+        if Path(rel).suffix.lower() in _MEDIA_SUFFIXES:
             return "Tool error", _RASTER_WRITE_REFUSE
         if (
             is_layout_fix_prompt(user_text)
@@ -1269,10 +1659,12 @@ def _execute_tool(
             limit_n = int(limit) if limit is not None else None
         except (TypeError, ValueError):
             limit_n = None
-        return (
-            f"Reading {rel}",
-            workspace.read_text_window(username, chat_id, rel, offset_n, limit_n),
-        )
+        text = workspace.read_text_window(username, chat_id, rel, offset_n, limit_n)
+        if text.startswith("[binary "):
+            text = f"{text} Use InspectMedia on this path."
+        return (f"Reading {rel}", text)
+    if kind == "inspect":
+        return _inspect_media(username, chat_id, rel)
     if kind == "delete":
         root = workspace.workspace_root(username, chat_id, create=False)
         dest = workspace.resolve_rel(root, rel)
@@ -1317,7 +1709,9 @@ def _execute_tool(
         return f"Optimizing {result['path']}", json.dumps(result, separators=(",", ":"))
     return (
         "Tool error",
-        f"Unknown tool {name!r}. Use Grep, Glob, Write, StrReplace, Read, Rename, Delete, List, OptimizeImage, or Shell.",
+        f"Unknown tool {name!r}. Use Grep, Glob, Write, StrReplace, Read, Rename, "
+        "Delete, List, OptimizeImage, InspectMedia, GenerateImage, GenerateAudio, "
+        "GenerateVideo, or Shell.",
     )
 
 

@@ -12536,6 +12536,7 @@ function mountChat(root) {
       const content = lastAssistantAfterLastUser(chatId);
       if (looksLikeImageReply(content) || /^\s*Error:/i.test(content)) {
         if (working && working.setAnswer) working.setAnswer(content);
+        if (looksLikeImageReply(content)) await attachPendingVision(chatId);
         return content;
       }
     }
@@ -12600,7 +12601,17 @@ function mountChat(root) {
   }
 
   const MAX_AGENT_ROUNDS = 64;
-  const INSPECT_TOOL_NAMES = new Set(["read", "grep", "glob", "list", "list_files"]);
+  const INSPECT_TOOL_NAMES = new Set([
+    "read",
+    "grep",
+    "glob",
+    "list",
+    "list_files",
+    "inspectmedia",
+    "inspect_media",
+    "ffprobe",
+    "media_info",
+  ]);
 
   function toolNameKey(name) {
     return String(name || "").trim().toLowerCase();
@@ -12632,7 +12643,7 @@ function mountChat(root) {
   function isMutateToolCall(call) {
     const key = toolNameKey(call.name);
     if (INSPECT_TOOL_NAMES.has(key)) return false;
-    return /write|strreplace|search_replace|replace_in_file|apply_patch|edit_notebook|edit_file|delete|rename|optimize/.test(key);
+    return /write|strreplace|search_replace|replace_in_file|apply_patch|edit_notebook|edit_file|delete|rename|optimize|shell|bash|run_command|run_terminal_cmd|generate/.test(key);
   }
 
   function isCompleteJsonValue(text) {
@@ -12789,7 +12800,54 @@ function mountChat(root) {
     const change = { kind, path };
     if (raw.previous) change.previous = String(raw.previous);
     if (raw.created === "1" || raw.created === true) change.created = true;
+    if (raw.dests) change.dests = String(raw.dests);
+    if (raw.images) change.images = String(raw.images);
     return change;
+  }
+
+  function noteGenerateVision(chatId, change) {
+    const chat = store.chats.find((item) => item.id === chatId);
+    if (!chat || !change) return;
+    const raw = String(change.images || change.dests || "");
+    const dests = raw.split(",").map((part) => part.trim()).filter((path) => (
+      path && IMAGE_SUFFIXES.has(fileSuffix(path))
+    ));
+    if (!dests.length) return;
+    const have = new Set(chat.pendingVision || []);
+    dests.forEach((path) => have.add(path));
+    chat.pendingVision = [...have];
+  }
+
+  async function fetchWorkspaceImageCompact(chatId, path) {
+    try {
+      const res = await fetch(fileUrl(chatId, path), { credentials: "same-origin" });
+      if (!res.ok) return "";
+      const dataUrl = await blobToDataUrl(await res.blob());
+      return resizeDataUrl(dataUrl, 1280, 0.82);
+    } catch {
+      return "";
+    }
+  }
+
+  async function attachPendingVision(chatId) {
+    const chat = store.chats.find((item) => item.id === chatId);
+    const dests = (chat && Array.isArray(chat.pendingVision)) ? chat.pendingVision : [];
+    if (!dests.length) return;
+    const user = lastRealUserItemFor(chatId);
+    if (!user) return;
+    if (!Array.isArray(user.attachedFiles)) user.attachedFiles = [];
+    const remaining = [];
+    for (const path of dests) {
+      if (user.attachedFiles.some((file) => file.path === path && file.dataUrl)) continue;
+      const dataUrl = await fetchWorkspaceImageCompact(chatId, path);
+      if (!dataUrl) {
+        remaining.push(path);
+        continue;
+      }
+      user.attachedFiles.push({ path, kind: "image", dataUrl });
+    }
+    chat.pendingVision = remaining;
+    persist();
   }
 
   function lastRealUserItemFor(chatId) {
@@ -12929,6 +12987,7 @@ function mountChat(root) {
     while (true) {
     toolCalls = [];
     while (true) {
+      if (!streamResume) await attachPendingVision(chatId);
       const body = streamResume
         ? { resume: true, conversation_id: chatId, stream: true }
         : { messages: outboundMessagesFor(chatId), stream: true, conversation_id: chatId };
@@ -13245,11 +13304,14 @@ function mountChat(root) {
             if (written) mutatedPaths.delete(written);
           }
         }
+        if (ran.change && ran.change.kind === "generate") {
+          noteGenerateVision(chatId, ran.change);
+        }
         if (ran.change && chatsShareWorkspace(chatId)) {
           const written = ran.change.path;
           if (isChangePath(written)) {
             reloadPreviewIfNeeded(written);
-            if (ran.change.kind !== "delete") {
+            if (ran.change.kind !== "delete" && ran.change.kind !== "generate" && ran.change.kind !== "shell") {
               noteAgentWrite(written, { run: historyRun, created: Boolean(ran.change.created) });
             }
           }

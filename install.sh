@@ -3728,17 +3728,36 @@ drop_codebox_containers() {
 build_codebox_image() {
   local df="$DEST_TABBY/ui/codebox/Dockerfile"
   local dir="$DEST_TABBY/ui/codebox"
+  local stamp="/var/lib/tsos/codebox-dockerfile.sha256"
   [[ -f "$df" ]] || return 0
   [[ -f /var/lib/tsos/offline-docker-loaded ]] && return 0
-  if sudo -n docker image inspect tabbyapi-stack-code:local >/dev/null 2>&1; then
+  local hash=""
+  if command -v sha256sum >/dev/null 2>&1; then
+    hash="$(sha256sum "$df" | awk '{print $1}')"
+  fi
+  local have=0
+  if sudo -n docker image inspect tabbyapi-stack-code:local >/dev/null 2>&1 \
+     || { need_cmd docker && docker image inspect tabbyapi-stack-code:local >/dev/null 2>&1; }; then
+    have=1
+  fi
+  if [[ "$have" -eq 1 && -n "$hash" && -f "$stamp" && "$(cat "$stamp" 2>/dev/null)" == "$hash" ]]; then
     return 0
   fi
+  _write_codebox_stamp() {
+    [[ -n "$hash" ]] || return 0
+    sudo -n mkdir -p /var/lib/tsos >/dev/null 2>&1 || mkdir -p /var/lib/tsos >/dev/null 2>&1 || true
+    if [[ -d /var/lib/tsos ]]; then
+      echo "$hash" | sudo -n tee "$stamp" >/dev/null 2>&1 || echo "$hash" >"$stamp" 2>/dev/null || true
+    fi
+  }
   if sudo -n docker build -t tabbyapi-stack-code:local -f "$df" "$dir" >>"$INSTALL_LOG" 2>&1; then
     drop_codebox_containers
+    _write_codebox_stamp
     return 0
   fi
   if need_cmd docker && docker build -t tabbyapi-stack-code:local -f "$df" "$dir" >>"$INSTALL_LOG" 2>&1; then
     drop_codebox_containers
+    _write_codebox_stamp
     return 0
   fi
   echo "WARNING: tabbyapi-stack-code image build failed" >> "$INSTALL_LOG"

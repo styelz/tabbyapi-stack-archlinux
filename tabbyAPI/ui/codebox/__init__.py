@@ -21,11 +21,29 @@ IMAGE = "tabbyapi-stack-code:local"
 LABEL = "tabby.stack=code"
 DOCKER_SOCK = "/var/run/docker.sock"
 WORK_DIR = "/work"
-SHELL_TIMEOUT_S = 30
-SHELL_MAX_BYTES = 64 * 1024
-MEMORY = "512m"
+SHELL_TIMEOUT_S = 600
+SHELL_TIMEOUT_MAX_S = 1200
+SHELL_MAX_BYTES = 256 * 1024
+MEMORY = "2g"
 PIDS = "256"
 CPUS = "1"
+WORK_PATH = (
+    "/work/.venv/bin:/work/.local/bin:"
+    "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+)
+# Enough for sudo + apt. Do not add NET_ADMIN / SYS_ADMIN / SYS_PTRACE / MKNOD.
+KEEP_CAPS = (
+    "CHOWN",
+    "DAC_OVERRIDE",
+    "FOWNER",
+    "FSETID",
+    "SETGID",
+    "SETUID",
+    "SETPCAP",
+    "SETFCAP",
+    "KILL",
+    "SYS_CHROOT",
+)
 
 _ensure_guard = threading.Lock()
 _name_locks: dict[str, threading.Lock] = {}
@@ -71,6 +89,28 @@ def _git_env_pairs() -> list[str]:
     ]
 
 
+def _sandbox_env_pairs(username: str) -> list[str]:
+    name = unix_name(username)
+    return [
+        f"HOME={WORK_DIR}",
+        f"USER={name}",
+        f"LOGNAME={name}",
+        "TERM=xterm-256color",
+        "PS1=\\W $ ",
+        f"PATH={WORK_PATH}",
+        "PIP_DISABLE_PIP_VERSION_CHECK=1",
+        "NPM_CONFIG_UPDATE_NOTIFIER=false",
+        *_git_env_pairs(),
+    ]
+
+
+def _security_args() -> list[str]:
+    argv = ["--cap-drop", "ALL"]
+    for cap in KEEP_CAPS:
+        argv.extend(["--cap-add", cap])
+    return argv
+
+
 def write_identity(username: str, chat_id: str) -> tuple[Path, Path]:
     name = unix_name(username)
     uid, gid = _uid_gid()
@@ -81,7 +121,10 @@ def write_identity(username: str, chat_id: str) -> tuple[Path, Path]:
         f"root:x:0:0:root:/root:/bin/false\n{name}:x:{uid}:{gid}:{name}:{WORK_DIR}:/bin/bash\n",
         encoding="ascii",
     )
-    group.write_text(f"root:x:0:\n{name}:x:{gid}:\n", encoding="ascii")
+    group.write_text(
+        f"root:x:0:\nsudo:x:27:{name}\n{name}:x:{gid}:\n",
+        encoding="ascii",
+    )
     os.chmod(passwd, 0o644)
     os.chmod(group, 0o644)
     return passwd, group
@@ -96,7 +139,6 @@ def run_args(username: str, chat_id: str, workspace: Path) -> list[str]:
     from ui.git import GIT_CREDS_MOUNT, ensure_creds_file
 
     creds = ensure_creds_file(username, chat_id)
-    name = unix_name(username)
     uid, gid = _uid_gid()
     argv = [
         docker_bin(),
@@ -116,25 +158,12 @@ def run_args(username: str, chat_id: str, workspace: Path) -> list[str]:
         f"{uid}:{gid}",
         "--workdir",
         WORK_DIR,
-        "--env",
-        f"HOME={WORK_DIR}",
-        "--env",
-        f"USER={name}",
-        "--env",
-        f"LOGNAME={name}",
-        "--env",
-        "TERM=xterm-256color",
-        "--env",
-        "PS1=\\W $ ",
     ]
-    for pair in _git_env_pairs():
+    for pair in _sandbox_env_pairs(username):
         argv.extend(["--env", pair])
+    argv.extend(_security_args())
     argv.extend(
         [
-            "--cap-drop",
-            "ALL",
-            "--security-opt",
-            "no-new-privileges",
             "--memory",
             MEMORY,
             "--pids-limit",
@@ -151,8 +180,6 @@ def run_args(username: str, chat_id: str, workspace: Path) -> list[str]:
             f"{group}:/etc/group:ro",
             "-v",
             f"{creds.resolve()}:{GIT_CREDS_MOUNT}:ro",
-            "--network",
-            "none",
             "--restart",
             "no",
             IMAGE,
@@ -172,7 +199,6 @@ def oneshot_args(username: str, chat_id: str, command: str) -> list[str]:
     from ui.git import GIT_CREDS_MOUNT, ensure_creds_file
 
     creds = ensure_creds_file(username, chat_id)
-    name = unix_name(username)
     uid, gid = _uid_gid()
     argv = [
         docker_bin(),
@@ -190,25 +216,12 @@ def oneshot_args(username: str, chat_id: str, command: str) -> list[str]:
         f"{uid}:{gid}",
         "--workdir",
         WORK_DIR,
-        "--env",
-        f"HOME={WORK_DIR}",
-        "--env",
-        f"USER={name}",
-        "--env",
-        f"LOGNAME={name}",
-        "--env",
-        "TERM=xterm-256color",
-        "--env",
-        "PS1=\\W $ ",
     ]
-    for pair in _git_env_pairs():
+    for pair in _sandbox_env_pairs(username):
         argv.extend(["--env", pair])
+    argv.extend(_security_args())
     argv.extend(
         [
-            "--cap-drop",
-            "ALL",
-            "--security-opt",
-            "no-new-privileges",
             "--memory",
             MEMORY,
             "--pids-limit",
@@ -235,7 +248,6 @@ def oneshot_args(username: str, chat_id: str, command: str) -> list[str]:
 
 
 def exec_args(username: str, chat_id: str, argv: list[str]) -> list[str]:
-    name = unix_name(username)
     uid, gid = _uid_gid()
     out = [
         docker_bin(),
@@ -245,14 +257,8 @@ def exec_args(username: str, chat_id: str, argv: list[str]) -> list[str]:
         f"{uid}:{gid}",
         "-w",
         WORK_DIR,
-        "-e",
-        f"HOME={WORK_DIR}",
-        "-e",
-        f"USER={name}",
-        "-e",
-        f"LOGNAME={name}",
     ]
-    for pair in _git_env_pairs():
+    for pair in _sandbox_env_pairs(username):
         out.extend(["-e", pair])
     out.extend([container_name(username, chat_id), *argv])
     return out
@@ -296,7 +302,10 @@ def _sandbox_outdated(name: str) -> bool:
     if _stale_container(name) or _missing_git_creds_mount(name):
         return True
     mode = _inspect_field(name, "{{.HostConfig.NetworkMode}}")
-    if mode and mode != "none":
+    if mode and mode == "none":
+        return True
+    security = _inspect_field(name, "{{json .HostConfig.SecurityOpt}}")
+    if security and "no-new-privileges" in security:
         return True
     rw = _inspect_field(
         name,
@@ -429,7 +438,10 @@ def run_shell(
     else:
         ensure_container(username, chat_id)
         argv = exec_args(username, chat_id, ["bash", "-lc", text])
-    limit = SHELL_TIMEOUT_S if timeout is None else max(1.0, float(timeout))
+    if timeout is None:
+        limit = float(SHELL_TIMEOUT_S)
+    else:
+        limit = max(1.0, min(float(timeout), float(SHELL_TIMEOUT_MAX_S)))
     cap = SHELL_MAX_BYTES if max_bytes is None else max(1024, int(max_bytes))
     try:
         proc = subprocess.run(
@@ -498,7 +510,6 @@ def _docker_http(method: str, path: str, body: Any = None, timeout: float = 15) 
 
 def create_exec(username: str, chat_id: str, argv: list[str], tty: bool = True) -> str:
     ensure_container(username, chat_id)
-    name = unix_name(username)
     uid, gid = _uid_gid()
     status, raw = _docker_http(
         "POST",
@@ -510,14 +521,7 @@ def create_exec(username: str, chat_id: str, argv: list[str], tty: bool = True) 
             "Tty": bool(tty),
             "User": f"{uid}:{gid}",
             "WorkingDir": WORK_DIR,
-            "Env": [
-                f"HOME={WORK_DIR}",
-                f"USER={name}",
-                f"LOGNAME={name}",
-                "TERM=xterm-256color",
-                "PS1=\\W $ ",
-                *_git_env_pairs(),
-            ],
+            "Env": _sandbox_env_pairs(username),
             "Cmd": argv,
         },
     )
