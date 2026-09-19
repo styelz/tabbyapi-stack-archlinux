@@ -127,17 +127,17 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
         self.assertIn('err.name === "AbortError"', self.src)
         self.assertNotRegex(self.src, r"if \(inFlight\) return;")
 
-    def test_live_thought_does_not_rerender_markdown_every_token(self):
+    def test_live_thought_formats_fences_without_rebuilding_trace(self):
         self.assertIn("function paintThoughtSoon()", self.src)
         self.assertIn("function paintLiveReason(block)", self.src)
         self.assertIn('block.classList.add("is-live")', self.src)
-        self.assertIn("if (block.textContent !== reasoningText) block.textContent = reasoningText;", self.src)
+        self.assertIn("block.innerHTML = TabbyUI.renderMarkdown(raw);", self.src)
+        self.assertNotIn("if (block.textContent !== reasoningText) block.textContent = reasoningText;", self.src)
         self.assertIn("function thoughtStepsSignature()", self.src)
         self.assertIn("function ensureLiveReasonBlock()", self.src)
         self.assertIn("if (live && thought.childElementCount && sig === thoughtStepSig)", self.src)
         css = CHAT_CSS.read_text(encoding="utf-8")
         self.assertIn(".think-reason.is-live", css)
-        self.assertIn("white-space: pre-wrap", css)
         self.assertIn("contain: paint", css)
         self.assertIn(".think-body > *", css)
 

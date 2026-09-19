@@ -3466,7 +3466,7 @@ button.chip {
 .think-body .md-code { margin: 0.45em 0; }
 .think-reason { margin-bottom: 0.45em; }
 .think-reason.is-live {
-  white-space: pre-wrap;
+  white-space: normal;
 }
 .agent-step {
   margin: 0.2em 0 0.25em;

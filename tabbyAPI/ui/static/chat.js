@@ -10524,8 +10524,12 @@ function mountChat(root) {
 
     function paintLiveReason(block) {
       block.classList.add("is-live");
-      block.style.whiteSpace = "pre-wrap";
-      if (block.textContent !== reasoningText) block.textContent = reasoningText;
+      const raw = String(reasoningText || "");
+      if (block._liveReason === raw) return;
+      block._liveReason = raw;
+      // Keep this node in place (do not rebuild the whole trace). Still
+      // render markdown so live fences become .md-code instead of ``` markup.
+      block.innerHTML = TabbyUI.renderMarkdown(raw);
     }
 
     let thoughtStepSig = "";
