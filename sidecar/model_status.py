@@ -18,7 +18,8 @@ ensure_import_path()
 
 # Status + screensaver used to GET /v1/model several times a second. The card
 # only changes on load/unload; TTL plus mode/lock epoch covers switches.
-# Comfy owns the GPU with no LLM — skip the HTTP entirely (see _gpu_mode).
+# A dummy /v1/model card (cache_mode=comfy) is not an LLM. Do not skip the
+# HTTP just because gpu_mode.json still says comfy after an LLM load.
 _CACHE_TTL_S = 5.0
 _FAIL_TTL_S = 5.0
 _cache_lock = threading.Lock()
@@ -115,6 +116,16 @@ def _cached_backend_model() -> tuple[int, Any]:
     return status, payload
 
 
+def _is_comfy_placeholder(card: dict[str, Any] | None) -> bool:
+    """GET /v1/model returns a dummy card while Comfy owns the GPU."""
+    if not card:
+        return False
+    name = str(card.get("id") or "").strip().lower()
+    if name in {"comfy", "flux", "image", "comfyui"}:
+        return True
+    return str(card.get("cache_mode") or "").strip().lower() == "comfy"
+
+
 def loaded_model_id() -> str | None:
     try:
         from common.gpu_mode import llama_loaded_id
@@ -123,12 +134,10 @@ def loaded_model_id() -> str | None:
             return llama_loaded_id()
     except Exception:
         pass
-    if _gpu_mode() == "comfy":
-        return None
     card = model_card()
-    name = str(card.get("id") or "").strip()
-    if name.lower() in {"comfy", "flux", "image", "comfyui"}:
+    if _is_comfy_placeholder(card):
         return None
+    name = str(card.get("id") or "").strip()
     return name or None
 
 
@@ -209,13 +218,17 @@ def llm_is_ready() -> bool:
         mode = _gpu_mode()
         if mode == "llama":
             return llama_up()
-        if mode == "comfy":
-            return False
     except Exception:
         pass
     if _backend_configured():
         status, payload = _cached_backend_model()
         if status != 200 or not isinstance(payload, dict):
+            return False
+        params = payload.get("parameters") or {}
+        if isinstance(params, dict) and str(params.get("cache_mode") or "").lower() == "comfy":
+            return False
+        name = str(payload.get("id") or "").strip().lower()
+        if name in {"comfy", "flux", "image", "comfyui"}:
             return False
         return bool(payload.get("id") or payload.get("parameters"))
     from common import model
@@ -230,8 +243,6 @@ def model_card() -> dict[str, Any]:
         from common.llama_runtime import read_llama_runtime
 
         mode = _gpu_mode()
-        if mode == "comfy":
-            return {}
         if mode == "llama" and llama_up():
             runtime = read_llama_runtime()
             return {

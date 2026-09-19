@@ -552,7 +552,7 @@ class SidecarModelStatusTests(unittest.TestCase):
             self.assertEqual(model_status.model_card()["id"], "gemma")
         self.assertEqual(get_json.call_count, 2)
 
-    def test_comfy_mode_skips_backend_model_poll(self):
+    def test_comfy_placeholder_card_is_not_an_llm(self):
         os.environ["TABBY_BACKEND_URL"] = "http://tabby.test"
         os.environ["TABBY_BACKEND_KEY"] = "k"
         self.addCleanup(lambda: os.environ.pop("TABBY_BACKEND_URL", None))
@@ -562,12 +562,37 @@ class SidecarModelStatusTests(unittest.TestCase):
         model_status.invalidate_model_cache()
         with (
             mock.patch.object(model_status, "_gpu_mode", return_value="comfy"),
-            mock.patch.object(model_status, "_get_json") as get_json,
+            mock.patch.object(
+                model_status,
+                "_get_json",
+                return_value=(200, {"id": "qwen38s10", "parameters": {"cache_mode": "comfy"}}),
+            ),
         ):
             self.assertFalse(model_status.llm_is_ready())
-            self.assertEqual(model_status.model_card(), {})
+            card = model_status.model_card()
+            self.assertEqual(card["cache_mode"], "comfy")
             self.assertIsNone(model_status.loaded_model_id())
-        get_json.assert_not_called()
+
+    def test_stale_comfy_mode_still_reads_loaded_llm(self):
+        os.environ["TABBY_BACKEND_URL"] = "http://tabby.test"
+        os.environ["TABBY_BACKEND_KEY"] = "k"
+        self.addCleanup(lambda: os.environ.pop("TABBY_BACKEND_URL", None))
+        self.addCleanup(lambda: os.environ.pop("TABBY_BACKEND_KEY", None))
+        from sidecar import model_status
+
+        model_status.invalidate_model_cache()
+        with (
+            mock.patch.object(model_status, "_gpu_mode", return_value="comfy"),
+            mock.patch.object(
+                model_status,
+                "_get_json",
+                return_value=(200, {"id": "qwen38s10", "parameters": {"max_seq_len": 8}}),
+            ) as get_json,
+        ):
+            self.assertTrue(model_status.llm_is_ready())
+            self.assertEqual(model_status.loaded_model_id(), "qwen38s10")
+            self.assertEqual(model_status.model_card()["id"], "qwen38s10")
+        self.assertGreaterEqual(get_json.call_count, 1)
 
     def test_is_sidecar_process_respects_env(self):
         from sidecar.settings import is_sidecar_process

@@ -449,3 +449,17 @@ class UiManagerTests(unittest.TestCase):
         self.assertIn("profile_thinking_only", src)
         self.assertIn("writes_files", src)
         self.assertIn("gguf_base", src)
+        self.assertIn("if card:", src)
+        self.assertIn("return _local_model_card()", src)
+
+    def test_model_card_falls_back_when_sidecar_is_empty(self):
+        container = mock.Mock()
+        container.loaded = True
+        container.model_dir = Path("/models/qwen38s10")
+        container.model_info.side_effect = RuntimeError("no card")
+        with (
+            mock.patch("sidecar.model_status.model_card", return_value={}),
+            mock.patch("common.model.container", container),
+        ):
+            card = manager._model_card()
+        self.assertEqual(card["id"], "qwen38s10")

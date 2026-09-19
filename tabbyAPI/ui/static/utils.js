@@ -2320,7 +2320,7 @@
         window.dispatchEvent(new CustomEvent("tabby-gpu-status", { detail: data }));
         return;
       }
-      const loaded = Boolean(data.tabby_model || data.llama_up || data.comfy_up);
+      const loaded = this.gpuIsServing(data);
       const mode = loaded ? (data.gpu_mode || "gpu") : "idle";
       const pretty = ((data.profile_labels || {})[data.profile] || "").trim();
       const label = pretty || data.profile || data.tabby_model || "idle";

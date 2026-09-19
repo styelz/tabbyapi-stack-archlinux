@@ -221,6 +221,15 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
     def test_model_wait_unlocks_when_gpu_is_serving(self):
         self.assertIn("TabbyUI.gpuSwitchPaused", self.src)
         self.assertNotIn("if (data.units && data.units.comfyui) return true", self.src)
+        ready = self.src.split("function modelLooksReady")[1].split("async function waitForModelReady")[0]
+        self.assertIn("data.llama_up", ready)
+        self.assertIn("data.loaded", ready)
+        after = self.src.split("await syncModelGate();")[1].split("next = takeQueue")[0]
+        self.assertNotIn("!data.tabby_model", after)
+        self.assertIn("statusIsBusy(data)", after)
+        utils = Path(__file__).resolve().parents[1] / "ui" / "static" / "utils.js"
+        utils_src = utils.read_text(encoding="utf-8")
+        self.assertIn("const loaded = this.gpuIsServing(data);", utils_src)
 
     def test_coding_job_status_is_not_picture_planning(self):
         self.assertIn('if (phase === "writing_code" || phase === "coding") return "Writing the page"', self.src)

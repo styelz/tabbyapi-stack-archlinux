@@ -12130,9 +12130,23 @@ function mountChat(root) {
     const dest = String((activity && activity.target) || data.switch_target || "").toLowerCase();
     if (dest === "comfy" || dest === "flux") return Boolean(data.comfy_up);
     if (dest === "restart") {
-      return Boolean(data.ok) && (Boolean(data.tabby_model) || Boolean(data.comfy_up) || Boolean(data.health && data.health.healthy));
+      return Boolean(data.ok) && (
+        Boolean(data.tabby_model)
+        || Boolean(data.llama_up)
+        || Boolean(data.comfy_up)
+        || Boolean(data.loaded)
+        || Boolean(data.health && data.health.healthy)
+      );
     }
-    return Boolean(data.tabby_model) || Boolean(data.model && (data.model.id || data.model.max_seq_len));
+    // A leftover switch lock or sidecar status can omit tabby_model after
+    // the LLM is already serving. llama.cpp and the loaded flag still count.
+    // Comfy still up is not ready when we asked for an LLM.
+    const modelId = String((data.model && data.model.id) || "").toLowerCase();
+    const modelIsComfy = modelId === "comfy" || modelId === "flux" || modelId === "comfyui";
+    return Boolean(data.tabby_model)
+      || Boolean(data.llama_up)
+      || Boolean(data.loaded && !data.comfy_up)
+      || Boolean(data.model && !modelIsComfy && (data.model.id || data.model.max_seq_len));
   }
 
   async function waitForModelReady(working, activity) {
@@ -13427,10 +13441,12 @@ function mountChat(root) {
         if (chatMode(store.chats.find((item) => item.id === flightChatId)) === "code") {
           try {
             const data = await TabbyUI.api("status");
-            if (!data || data.down || !data.tabby_model) {
+            if (!data || data.down) {
+              await ensureModelWait(null, { kind: "restart", target: "restart" });
+            } else if (statusIsBusy(data)) {
               await ensureModelWait(null, {
-                kind: "switch",
-                target: (data && data.switch_target) || "llm",
+                kind: data.restarting ? "restart" : "switch",
+                target: data.switch_target || "llm",
               });
             }
           } catch {
