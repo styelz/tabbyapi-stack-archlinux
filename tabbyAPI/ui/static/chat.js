@@ -10030,6 +10030,7 @@ function mountChat(root) {
   function pinMarkdownCode(root) {
     if (!root) return;
     root.querySelectorAll(".md-code pre").forEach((pre) => {
+      if (pre.scrollHeight <= pre.clientHeight + 1) return;
       pre.scrollTop = pre.scrollHeight;
     });
   }

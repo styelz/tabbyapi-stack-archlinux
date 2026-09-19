@@ -1198,7 +1198,7 @@ button.chip {
   --chat-preview-w: 42%;
   --chat-term-h: 220px;
   --chat-focus-max: 58rem;
-  --chat-code-log-w: clamp(17rem, 28vw, 23rem);
+  --chat-code-log-w: clamp(20rem, 34vw, 30rem);
   --chat-mobile-files-h: min(62dvh, 30rem);
   --chat-files-tree-fr: 2;
   --chat-files-git-fr: 1;
@@ -2147,8 +2147,8 @@ button.chip {
 }
 .chat-shell.is-code-context .chat-stage-main > .chat-log-wrap {
   flex: 0 1 var(--chat-code-log-w);
-  min-width: 16rem;
-  max-width: 24rem;
+  min-width: 18rem;
+  max-width: 30rem;
 }
 .chat-shell.is-code-context .chat-stage-main > .chat-editor-col {
   flex: 1 1 0;
@@ -3139,12 +3139,14 @@ button.chip {
 .md-code pre {
   margin: 0;
   padding: 0.625rem 0.75rem;
-  max-height: min(28rem, 55vh);
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: visible;
   font-family: var(--mono);
   font-size: 0.6875rem;
   line-height: 1.5;
-  white-space: pre;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .md-code code {
   background: none;
@@ -3152,6 +3154,9 @@ button.chip {
   font-size: inherit;
   border-radius: 0;
   color: var(--editor-fg);
+  white-space: inherit;
+  overflow-wrap: inherit;
+  word-break: inherit;
 }
 .md-code .tok-comment { color: var(--tok-comment); font-style: italic; }
 .md-code .tok-string { color: var(--tok-string); }
@@ -3395,8 +3400,7 @@ button.chip {
   font-size: 0.8125rem;
   line-height: 1.45;
   white-space: normal;
-  max-height: 22rem;
-  overflow: auto;
+  overflow: visible;
   contain: paint;
 }
 .think-body > * {
@@ -3521,7 +3525,7 @@ button.chip {
   opacity: 0.9;
 }
 .chat-turn.is-working .think-body {
-  max-height: 280px;
+  overflow: visible;
 }
 /* Working turns must never show an empty reply pill. */
 .chat-turn.is-working:not(.has-answer) .bubble,
@@ -4936,7 +4940,7 @@ figure.shot .open { display: block; }
     flex: 0 0 auto;
     min-width: 0;
     max-width: none;
-    max-height: 14rem;
+    max-height: min(42vh, 22rem);
   }
 }
 

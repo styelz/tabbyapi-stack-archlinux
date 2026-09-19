@@ -231,6 +231,54 @@ class ImplicitCodeFenceTests(unittest.TestCase):
         self.assertEqual(out["n"], 0)
         self.assertIn("Hero — full-screen background", out["text"])
 
+    def test_keyword_prose_is_not_code(self):
+        sample = (
+            "if you want a darker theme, switch it in Settings.\n"
+            "for the navbar, add a glow on hover.\n"
+            "return to the homepage after login.\n"
+            "try a second page for the gallery.\n"
+        )
+        out = self._extract(sample)
+        self.assertEqual(out["n"], 0)
+        self.assertIn("if you want a darker theme", out["text"])
+        self.assertIn("for the navbar, add a glow", out["text"])
+        self.assertIn("return to the homepage", out["text"])
+
+    def test_colon_labels_are_not_css(self):
+        sample = (
+            "hero: full-screen background with stars\n"
+            "nav: sticky bar with links\n"
+            "footer: copyright and socials\n"
+        )
+        out = self._extract(sample)
+        self.assertEqual(out["n"], 0)
+        self.assertIn("hero: full-screen background", out["text"])
+        self.assertIn("nav: sticky bar with links", out["text"])
+
+    def test_arrow_prose_is_not_js(self):
+        sample = (
+            "Home => Cars => Crews\n"
+            "Use ${name} in the title later.\n"
+            "Then switch to the gallery view.\n"
+        )
+        out = self._extract(sample)
+        self.assertEqual(out["n"], 0)
+        self.assertIn("Home => Cars => Crews", out["text"])
+        self.assertIn("Use ${name} in the title later.", out["text"])
+
+    def test_unfenced_css_still_highlights(self):
+        sample = (
+            "Theme tokens:\n"
+            ".hero {\n"
+            "  background: #0b1020;\n"
+            "  color: #fff;\n"
+            "}\n"
+        )
+        out = self._extract(sample)
+        self.assertIn("@@CODE0@@", out["text"])
+        self.assertIn("Theme tokens:", out["text"])
+        self.assertIn("language-css", out["html"])
+
     def test_explicit_fences_still_win(self):
         out = self._extract("```bash\necho hi\n```\n")
         self.assertEqual(out["n"], 1)

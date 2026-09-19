@@ -542,19 +542,45 @@
     const t = raw.trim();
     if (/^#{1,3}\s+/.test(t)) return false;
     if (/^\s*<!DOCTYPE/i.test(raw) || /^\s*<\/?[a-zA-Z][\w:-]*\b/.test(raw)) return "html";
-    if (/^\s*(?:const|let|var|function|class|import|export|async|await)\b/.test(raw)) return "js";
-    if (/^\s*(?:if|for|while|switch|try|catch|return|document\.|window\.|console\.)\b/.test(raw)) {
+    if (/^\s*(?:const|let|var)\s+(?:[\w$]+|\[[^\]]+\]|\{[^}]+\})\s*=/.test(raw)) return "js";
+    if (/^\s*(?:async\s+)?function\s+\w+\s*\(/.test(raw)) return "js";
+    if (/^\s*class\s+\w+(?:\s+extends\s+\w+)?\s*\{/.test(raw)) return "js";
+    if (/^\s*import\s+.+\sfrom\s+['"]/.test(raw)) return "js";
+    if (/^\s*export\s+(?:default\s+)?(?:async\s+)?(?:function|class|const|let|var|\{)/.test(raw)) {
       return "js";
     }
-    if (/^\s*(?:def|async def|class|import|from)\b/.test(raw) && /:\s*$/.test(t)) return "python";
+    if (/^\s*(?:document|window|console)\./.test(raw)) return "js";
+    if (/^\s*(?:if|for|while|switch|catch)\s*\(/.test(raw)) return "js";
+    if (/^\s*try\s*\{\s*$/.test(raw)) return "js";
+    if (/^\s*\}?\s*else\s*(?:if\s*\(.*\)\s*)?\{\s*$/.test(raw)) return "js";
+    if (/^\s*\}?\s*(?:catch\s*\(.*\)|finally)\s*\{\s*$/.test(raw)) return "js";
+    if (/^\s*return\b/.test(raw) && /[;(){}=]/.test(raw)) return "js";
+    if (/\)\s*=>/.test(raw) || /\b\w+\s*=>\s*[{\(\[]/.test(raw)) return "js";
+    if (/`[^`]*\$\{/.test(raw) || (/\$\{[\w$.]+\}/.test(raw) && /=/.test(raw))) return "js";
+    if (/^\s*(?:async\s+)?def\s+\w+\s*\(.*\)\s*:\s*$/.test(t)) return "python";
+    if (/^\s*class\s+\w+[^:]*:\s*$/.test(t) && !/\{/.test(t)) return "python";
     if (/^\s*--[\w-]+\s*:/.test(raw)) return "css";
-    if (/^\s*(?:[.#@:][\w-]|:root)\b[^{]*\{\s*$/.test(raw)) return "css";
-    if (/^\s*[a-z][\w-]*\s*:\s*[^;]+;?\s*$/.test(raw) && !/\s/.test(t.split(":")[0])) return "css";
-    if (/^\s*[{}());,[\]]+\s*$/.test(raw) || /^\s*[)}\]]+[;,]?\s*$/.test(raw)) return "code";
-    if (/=>/.test(raw) || /\$\{/.test(raw)) return "js";
+    if (/^\s*(?:[.#][\w-]+|:root|@(?:media|keyframes|supports|layer)\b)[^{]*\{\s*$/.test(raw)) {
+      return "css";
+    }
+    if (/^\s*(?:html|body|div|span|nav|header|footer|main|section|article|aside|p|a|ul|ol|li|button|input|img|h[1-6]|canvas|video|audio|figure)\b[^{]*\{\s*$/.test(raw)) {
+      return "css";
+    }
+    const cssProp = /^\s*([a-z][\w-]*)\s*:\s*([^;]+);\s*$/.exec(raw);
+    if (cssProp && !/\s/.test(cssProp[1])) {
+      const name = cssProp[1];
+      const val = cssProp[2];
+      if (
+        /^(?:align|animation|aspect|backdrop|background|border|bottom|box|clip|color|column|content|cursor|display|filter|flex|float|font|gap|grid|height|inset|isolation|justify|left|letter|line|list|margin|max|min|mix|object|opacity|order|outline|overflow|padding|place|pointer|position|right|row|scroll|text|top|transform|transition|user|vertical|visibility|white|width|word|z-index)(?:-|$)/i.test(name)
+        || /(?:px|rem|em|vh|vw|%|#|rgb|hsl|var\(|url\()/i.test(val)
+      ) {
+        return "css";
+      }
+    }
+    if (/^\s*[{}());,[\]]+\s*$/.test(raw) || /^\s*[)}\]]+[;,]?\s*$/.test(raw)) return "cont";
     const punct = (raw.match(/[{}();=<>[\]]/g) || []).length;
-    if (punct >= 3 && /[{};]/.test(raw)) return "code";
-    if (/^(?: {4}|\t)/.test(raw) && /[{}();=<>]|<\/?[a-zA-Z]/.test(raw)) return "code";
+    if (punct >= 3 && /[{};]/.test(raw) && /(?:[=(){}]|=>|<\/?)/.test(raw)) return "code";
+    if (/^(?: {4}|\t)/.test(raw) && /[{};=]|<\/?[a-zA-Z]/.test(raw)) return "code";
     return false;
   }
 
@@ -564,14 +590,14 @@
     let i = 0;
     while (i < lines.length) {
       const kind = lineCodeKind(lines[i]);
-      if (!kind) {
+      if (!kind || kind === "cont") {
         out.push(lines[i]);
         i += 1;
         continue;
       }
       const start = i;
       i += 1;
-      let codeLines = 1;
+      let strongLines = 1;
       let lastCode = start;
       while (i < lines.length) {
         const next = lineCodeKind(lines[i]);
@@ -582,14 +608,14 @@
           continue;
         }
         lastCode = i;
-        codeLines += 1;
+        if (next !== "cont") strongLines += 1;
         i += 1;
       }
       while (i > lastCode + 1) i -= 1;
       const body = lines.slice(start, i);
       const joined = body.join("\n");
-      const strong = /<!DOCTYPE|<html\b|^\s*function\s+\w+/im.test(joined);
-      if (codeLines >= 3 || (strong && codeLines >= 2)) {
+      const strong = /<!DOCTYPE|<html\b|^\s*(?:async\s+)?function\s+\w+/im.test(joined);
+      if (strongLines >= 3 || (strong && strongLines >= 2)) {
         const lang = window.TabbyHighlight && window.TabbyHighlight.guessLanguage
           ? window.TabbyHighlight.guessLanguage(joined)
           : "";
