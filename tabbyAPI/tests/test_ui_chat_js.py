@@ -474,6 +474,18 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
         self.assertIn("normalizeAgent((opts && opts.agent) || codeAgent)", self.src)
         self.assertIn("activityFromPrompt(outboundText, sendAgent)", self.src)
         self.assertIn("AGENT_EMPTY_NUDGE", self.src)
+        self.assertIn("AGENT_CLAIM_NUDGE", self.src)
+        self.assertIn("AGENT_WORK_NUDGE", self.src)
+        self.assertIn("AGENT_NO_EDIT_REPLY", self.src)
+        self.assertIn("MAX_AGENT_EMPTY_NUDGES = 2", self.src)
+        self.assertIn("function looksLikeEditClaim(text)", self.src)
+        self.assertIn("function userItemWantsEdits(", self.src)
+        self.assertIn("needsClaimNudge", self.src)
+        self.assertIn("needsWorkNudge", self.src)
+        self.assertIn("mutatedPaths.delete(written)", self.src)
+        self.assertIn("roundMutateFailed", self.src)
+        self.assertIn("function lastRealUserItemFor(", self.src)
+        self.assertIn("assembled = AGENT_NO_EDIT_REPLY", self.src)
         self.assertNotIn("Do not generate images unless they asked.", self.src)
         self.assertIn("agentEmptyNudges", self.src)
         self.assertIn("AGENT_DONE_NUDGE", self.src)
@@ -718,6 +730,76 @@ class MergeToolCallDeltasTests(unittest.TestCase):
         args = merged[0]["function"]["arguments"]
         self.assertEqual(args, snapshot["function"]["arguments"])
         self.assertNotIn("}{", args)
+
+
+def looks_like_edit_claim(text: str) -> bool:
+    """Keep in sync with looksLikeEditClaim in ui/static/chat.js."""
+    raw = " ".join(str(text or "").split()).strip()
+    if not raw:
+        return False
+    return bool(
+        re.search(r"^(?:done|fixed|updated|restored|undone)\b", raw, re.I)
+        or re.search(r"\bundo complete\b", raw, re.I)
+        or re.search(r"\bno further edits are needed\b", raw, re.I)
+        or re.search(
+            r"\bi(?:['\u2019]ve| have) (?:now )?(?:fixed|restored|removed|"
+            r"updated|changed|written|edited|undone|moved|added)\b",
+            raw,
+            re.I,
+        )
+        or re.search(
+            r"\bi (?:fixed|restored|removed|updated|changed|wrote|edited|"
+            r"undid|moved|added)\b",
+            raw,
+            re.I,
+        )
+        or re.search(
+            r"\bi(?:['\u2019]ll| will) (?:now )?(?:remove|fix|restore|undo|"
+            r"change|update|edit|write|move|add|delete)\b",
+            raw,
+            re.I,
+        )
+        or re.search(
+            r"\blet me (?:now )?(?:remove|fix|restore|undo|change|update|"
+            r"edit|write)\b",
+            raw,
+            re.I,
+        )
+    )
+
+
+class EditClaimTests(unittest.TestCase):
+    def test_live_code_chat_false_completes(self):
+        self.assertTrue(
+            looks_like_edit_claim(
+                "Done. The hamburger and cart counter now sit in the "
+                "header-actions group on the far right of the header."
+            )
+        )
+        self.assertTrue(
+            looks_like_edit_claim(
+                "Undo complete. I restored the original header markup "
+                "so the hamburger works again. The CSS for header-actions "
+                "wasn't present, so no further edits are needed."
+            )
+        )
+        self.assertTrue(
+            looks_like_edit_claim(
+                'I see the issue — the brand is appearing twice '
+                '("Wavelength Wavelength") because my earlier edit '
+                "duplicated the <a> tag. I'll remove the duplicate brand."
+            )
+        )
+
+    def test_analysis_without_a_promise_is_not_a_claim(self):
+        self.assertFalse(
+            looks_like_edit_claim(
+                "I see the issue — the brand is appearing twice because "
+                "the header has two brand links."
+            )
+        )
+        self.assertFalse(looks_like_edit_claim(""))
+        self.assertFalse(looks_like_edit_claim("The nav uses #mobile-nav."))
 
 
 if __name__ == "__main__":

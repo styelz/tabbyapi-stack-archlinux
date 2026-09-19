@@ -194,6 +194,41 @@ class ClassifySkipTests(unittest.TestCase):
         self.assertIn(ask, blob)
         self.assertNotIn("Do not generate images unless they asked", blob)
 
+    def test_claim_nudge_does_not_replace_the_user_ask(self):
+        from common.phrase_switch import is_code_agent_nudge, last_user_text
+
+        ask = "here is the problem, do you see the problem with the header?"
+        nudge = (
+            "You described a file change but did not apply it. Call Write or "
+            "StrReplace now. If a replace failed, Read the file and retry with "
+            "the exact current text. Do not say you are done."
+        )
+        self.assertTrue(is_code_agent_nudge(nudge))
+        data = ChatCompletionRequest(
+            messages=[
+                ChatCompletionMessage(role="user", content=ask),
+                ChatCompletionMessage(role="user", content=nudge),
+            ]
+        )
+        self.assertEqual(last_user_text(data), ask)
+
+    def test_work_nudge_does_not_replace_the_user_ask(self):
+        from common.phrase_switch import is_code_agent_nudge, last_user_text
+
+        ask = "now the menu isnt working, undo what you did"
+        nudge = (
+            "The user asked for a change. Call Write or StrReplace now. Do not "
+            "only describe the problem, and do not say you will edit later."
+        )
+        self.assertTrue(is_code_agent_nudge(nudge))
+        data = ChatCompletionRequest(
+            messages=[
+                ChatCompletionMessage(role="user", content=ask),
+                ChatCompletionMessage(role="user", content=nudge),
+            ]
+        )
+        self.assertEqual(last_user_text(data), ask)
+
 
 class CodeReplyHintTests(unittest.TestCase):
     def test_first_code_reply_lists_dests_once(self):

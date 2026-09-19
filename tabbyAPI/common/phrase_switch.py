@@ -96,6 +96,8 @@ CODE_AGENT_NUDGE_RE = re.compile(
     r"(?is)^\s*(?:"
     r"Continue\.\s+You stopped without changing files\."
     r"|The file edits already landed\."
+    r"|You described a file change but did not apply it\."
+    r"|The user asked for a change\."
     r")"
 )
 IMAGE_COUNT_RE = re.compile(

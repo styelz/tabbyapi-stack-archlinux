@@ -155,6 +155,7 @@ class UiManagerTests(unittest.TestCase):
         self.assertEqual(payload["mode"], "code")
         self.assertIn("workspace", payload["messages"][0]["content"].lower())
         self.assertIn("emit every Write and StrReplace in one", payload["messages"][0]["content"])
+        self.assertIn("Do not say you are done, or that you will edit", payload["messages"][0]["content"])
         self.assertNotIn("per-chat project", payload["messages"][0]["content"])
 
     def test_sanitize_code_appends_workspace_file_list(self):
@@ -265,6 +266,22 @@ class UiManagerTests(unittest.TestCase):
             code_agent.readonly_mode_targets("plan", "generate an image of a harbor"),
             ("chat",),
         )
+
+    def test_prompt_wants_file_work_covers_false_complete_asks(self):
+        from ui import code_agent
+
+        self.assertTrue(
+            code_agent.prompt_wants_file_work(
+                "here is the problem, do you see the problem with the header?"
+            )
+        )
+        self.assertTrue(code_agent.prompt_wants_file_work("undo what you did"))
+        self.assertTrue(
+            code_agent.prompt_wants_file_work(
+                "when i click the menu hamburger, nothing happens"
+            )
+        )
+        self.assertFalse(code_agent.prompt_wants_file_work("what files are here?"))
 
     def test_code_tool_round_cap_drops_inspect_before_writes(self):
         def write_round(idx):

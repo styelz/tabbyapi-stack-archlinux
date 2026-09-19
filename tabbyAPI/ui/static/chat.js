@@ -672,8 +672,15 @@ function mountChat(root) {
   const BUILD_PROMPT = "Implement the approved plan above. Do not wait for more confirmation.";
   const AGENT_EMPTY_NUDGE =
     "Continue. You stopped without changing files. Apply the user's last request now with Write or StrReplace, then give a short summary.";
+  const AGENT_CLAIM_NUDGE =
+    "You described a file change but did not apply it. Call Write or StrReplace now. If a replace failed, Read the file and retry with the exact current text. Do not say you are done.";
+  const AGENT_WORK_NUDGE =
+    "The user asked for a change. Call Write or StrReplace now. Do not only describe the problem, and do not say you will edit later.";
+  const AGENT_NO_EDIT_REPLY =
+    "I didn't change any files. Send the request again if you still want the edit applied.";
   const AGENT_DONE_NUDGE =
     "The file edits already landed. Reply with a short summary only. Do not call tools.";
+  const MAX_AGENT_EMPTY_NUDGES = 2;
   const SKIP_INSPECT_RESULT =
     "Already applied in this turn. Do not inspect this file again. If the request is done, summarize with no tools.";
   let livePlanChecklist = null;
@@ -734,7 +741,33 @@ function mountChat(root) {
       || /\b(write|implement|scaffold)\b/i.test(lower)
       || /\b(create|make|build|add)\b[\s\S]{0,80}\b(files?|pages?|sites?|websites?|apps?|html|css|javascript|components?)\b/i.test(lower)
       || /\b(edit|fix|change|update|delete|rename)\b[\s\S]{0,80}\b(files?|html|css|js|code|folder)\b/i.test(lower)
+      || /\b(undo|restore)\b/i.test(lower)
+      || /\b(broken|isn'?t working|not working|nothing happens)\b/i.test(lower)
+      || /\b(?:here is|this is|see) the problem\b/i.test(lower)
+      || /\bthe problem with\b/i.test(lower)
+      || /\b(hamburger|nav-toggle)\b/i.test(lower)
+      || /\bduplicate\b/i.test(lower)
       || /\b(run|execute)\b[\s\S]{0,40}\b(command|shell|tests?|npm|pip)\b/i.test(lower)
+    );
+  }
+
+  function userItemWantsEdits(item) {
+    if (!item) return false;
+    const text = String(item.content || "");
+    if (promptLooksLikeHowto(text)) return false;
+    if (promptWantsFileWork(text)) return true;
+    if (item.imageData) return true;
+    const files = Array.isArray(item.attachedFiles) ? item.attachedFiles : [];
+    return files.some((file) => file && file.kind === "image");
+  }
+
+  function isAgentNudgeText(text) {
+    const raw = String(text || "");
+    return (
+      raw === AGENT_EMPTY_NUDGE
+      || raw === AGENT_CLAIM_NUDGE
+      || raw === AGENT_WORK_NUDGE
+      || raw === AGENT_DONE_NUDGE
     );
   }
 
@@ -9897,6 +9930,20 @@ function mountChat(root) {
     return cleaned.replace(/\s+/g, " ").trim();
   }
 
+  function looksLikeEditClaim(text) {
+    const raw = visibleAnswerText(text);
+    if (!raw) return false;
+    return (
+      /^(?:done|fixed|updated|restored|undone)\b/i.test(raw)
+      || /\bundo complete\b/i.test(raw)
+      || /\bno further edits are needed\b/i.test(raw)
+      || /\bi(?:['\u2019]ve| have) (?:now )?(?:fixed|restored|removed|updated|changed|written|edited|undone|moved|added)\b/i.test(raw)
+      || /\bi (?:fixed|restored|removed|updated|changed|wrote|edited|undid|moved|added)\b/i.test(raw)
+      || /\bi(?:['\u2019]ll| will) (?:now )?(?:remove|fix|restore|undo|change|update|edit|write|move|add|delete)\b/i.test(raw)
+      || /\blet me (?:now )?(?:remove|fix|restore|undo|change|update|edit|write)\b/i.test(raw)
+    );
+  }
+
   function displayAnswer(text) {
     const cleaned = TabbyUI.formatAssistantContent
       ? TabbyUI.formatAssistantContent(text)
@@ -12741,12 +12788,20 @@ function mountChat(root) {
     return change;
   }
 
-  function lastUserTextFor(chatId) {
+  function lastRealUserItemFor(chatId) {
     const list = liveMessages(chatId);
     for (let index = list.length - 1; index >= 0; index -= 1) {
-      if (list[index] && list[index].role === "user") return String(list[index].content || "");
+      const item = list[index];
+      if (!item || item.role !== "user") continue;
+      if (item.hidden && isAgentNudgeText(item.content)) continue;
+      return item;
     }
-    return "";
+    return null;
+  }
+
+  function lastUserTextFor(chatId) {
+    const item = lastRealUserItemFor(chatId);
+    return item ? String(item.content || "") : "";
   }
 
   async function send(text, opts) {
@@ -12845,6 +12900,7 @@ function mountChat(root) {
     let toolCalls = [];
     let agentEmptyNudges = 0;
     let agentDoneNudges = 0;
+    let mutateFailed = false;
     const mutatedPaths = new Set();
     const seenInspect = new Set();
     await persist({ flush: true });
@@ -13116,6 +13172,7 @@ function mountChat(root) {
       const workspace = workspaceId(targetChat) || activeWorkspaceId();
       let ranMutate = false;
       let ranInspect = false;
+      let roundMutateFailed = false;
       for (const call of calls) {
         const skipInspect = shouldSkipInspectTool(call, mutatedPaths, seenInspect);
         working.setActivity(skipInspect ? "Skipped" : call.name, { processing: !skipInspect });
@@ -13172,9 +13229,17 @@ function mountChat(root) {
           if (!skipInspect) ranInspect = true;
         }
         if (!skipInspect && isMutateToolCall(call)) {
-          const written = toolCallPath(call.arguments) || (ran.change && ran.change.path) || "";
-          if (written) mutatedPaths.add(written.replace(/\\/g, "/").replace(/^\/+/, ""));
-          ranMutate = true;
+          const written = (
+            (ran.change && ran.change.path) || toolCallPath(call.arguments) || ""
+          ).replace(/\\/g, "/").replace(/^\/+/, "");
+          if (ran.change) {
+            if (written) mutatedPaths.add(written);
+            ranMutate = true;
+          } else {
+            roundMutateFailed = true;
+            mutateFailed = true;
+            if (written) mutatedPaths.delete(written);
+          }
         }
         if (ran.change && chatsShareWorkspace(chatId)) {
           const written = ran.change.path;
@@ -13190,8 +13255,8 @@ function mountChat(root) {
       }
       persist();
       toolRounds += 1;
-      const allInspectSkipped = !ranMutate && !ranInspect && mutatedPaths.size;
-      if (!stopKind && !streamResume && allInspectSkipped && !visibleAnswerText(assembled) && agentDoneNudges < 1) {
+      const allInspectSkipped = !ranMutate && !ranInspect && mutatedPaths.size && !roundMutateFailed;
+      if (!stopKind && !streamResume && allInspectSkipped && !visibleAnswerText(assembled) && agentDoneNudges < 1 && !mutateFailed) {
         agentDoneNudges += 1;
         liveMessages(chatId).push({
           role: "user",
@@ -13224,23 +13289,34 @@ function mountChat(root) {
         assembled = "Stopped after 64 tool rounds. Send another message to continue.";
       }
     }
+    const answer = visibleAnswerText(assembled);
+    const claimedEdit = looksLikeEditClaim(assembled);
+    const wantsEdits = userItemWantsEdits(lastRealUserItemFor(chatId));
+    const needsEmptyNudge = !answer && !mutatedPaths.size;
+    const needsClaimNudge = claimedEdit && (!mutatedPaths.size || mutateFailed);
+    const needsWorkNudge = wantsEdits && !mutatedPaths.size;
     if (
       sendAgent === "agent"
       && !stopKind
       && !streamResume
-      && !visibleAnswerText(assembled)
-      && agentEmptyNudges < 1
-      && !mutatedPaths.size
+      && agentEmptyNudges < MAX_AGENT_EMPTY_NUDGES
+      && (needsEmptyNudge || needsClaimNudge || needsWorkNudge)
     ) {
       agentEmptyNudges += 1;
+      mutatedPaths.clear();
+      seenInspect.clear();
+      mutateFailed = false;
       liveMessages(chatId).push({
         role: "user",
-        content: AGENT_EMPTY_NUDGE,
+        content: needsClaimNudge
+          ? AGENT_CLAIM_NUDGE
+          : (needsWorkNudge ? AGENT_WORK_NUDGE : AGENT_EMPTY_NUDGE),
         hidden: true,
         createdAt: Date.now(),
       });
       persist();
       streamResume = false;
+      if (answer) working.addStep({ type: "demote" });
       assembled = "";
       reasoning = "";
       toolCalls = [];
@@ -13273,6 +13349,14 @@ function mountChat(root) {
       const recovered = await pollImageHoldReply(chatId, working);
       if (recovered) assembled = recovered;
       poll.stop();
+    }
+    if (
+      sendAgent === "agent"
+      && !userStopped
+      && !mutatedPaths.size
+      && looksLikeEditClaim(assembled)
+    ) {
+      assembled = AGENT_NO_EDIT_REPLY;
     }
     let savedSteps = [];
     const emptyReply = !String(assembled || "").trim() && !reasoning;
