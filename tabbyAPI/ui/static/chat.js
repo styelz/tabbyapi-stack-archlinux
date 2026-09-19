@@ -1621,6 +1621,73 @@ function mountChat(root) {
 
   let persistTail = Promise.resolve();
   let persistGen = 0;
+  const COMPOSE_STORE_KEY = "tabby-chat-compose";
+  const composeDrafts = Object.create(null);
+  let composeDraftLast = "";
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(COMPOSE_STORE_KEY) || "{}");
+    if (saved && typeof saved === "object") {
+      const rows = saved.drafts && typeof saved.drafts === "object" ? saved.drafts : saved;
+      Object.keys(rows).forEach((id) => {
+        const text = String(rows[id] || "");
+        if (id && text) composeDrafts[id] = text;
+      });
+      composeDraftLast = String(saved.lastId || "");
+    }
+  } catch {
+    /* ignore */
+  }
+
+  function persistComposeDrafts() {
+    try {
+      sessionStorage.setItem(COMPOSE_STORE_KEY, JSON.stringify({
+        lastId: composeDraftLast,
+        drafts: composeDrafts,
+      }));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function rememberCompose(chatId) {
+    const id = chatId || store.activeId;
+    if (!id) return;
+    if (recallIndex >= 0) return;
+    const text = String((input && input.value) || "");
+    composeDraftLast = id;
+    if (text) composeDrafts[id] = text;
+    else delete composeDrafts[id];
+    persistComposeDrafts();
+  }
+
+  function restoreCompose(chatId) {
+    if (!input) return;
+    const id = chatId || store.activeId;
+    const text = id ? String(composeDrafts[id] || "") : "";
+    if (input.value !== text) {
+      input.value = text;
+      const n = text.length;
+      try {
+        input.setSelectionRange(n, n);
+      } catch {
+        /* ignore */
+      }
+    }
+    resizeInput();
+  }
+
+  function forgetComposeDrafts(ids) {
+    let changed = false;
+    (ids || []).forEach((id) => {
+      if (!id) return;
+      if (Object.prototype.hasOwnProperty.call(composeDrafts, id)) {
+        delete composeDrafts[id];
+        changed = true;
+      }
+      if (composeDraftLast === id) composeDraftLast = "";
+    });
+    if (changed) persistComposeDrafts();
+  }
 
   function persist(opts) {
     rememberActiveMode();
@@ -1673,6 +1740,7 @@ function mountChat(root) {
       if (kept.has(item.id)) return;
       forgetTabs(item.id);
     });
+    forgetComposeDrafts(Object.keys(composeDrafts).filter((id) => !kept.has(id)));
     const flush = Boolean(opts && opts.flush);
     const snapshot = flush ? JSON.parse(JSON.stringify(store)) : null;
     const gen = (persistGen += 1);
@@ -1838,6 +1906,7 @@ function mountChat(root) {
     const next = mode === "code" ? "code" : "chat";
     if (activeMode() === next) return;
     persist();
+    rememberCompose(store.activeId);
     const existing = chatForMode(next);
     if (existing) {
       loadChat(existing.id);
@@ -1851,6 +1920,7 @@ function mountChat(root) {
     messages = cloneMessages(chat.messages);
     persist();
     resetRecall();
+    restoreCompose(chat.id);
     renderLog();
     filesSelected = "";
     refreshFiles();
@@ -2277,6 +2347,7 @@ function mountChat(root) {
 
   function warnDirtyUnload(event) {
     persist();
+    rememberCompose();
     flushDrafts(true);
     if (!anyDirtyTabs()) return;
     event.preventDefault();
@@ -8448,6 +8519,7 @@ function mountChat(root) {
     messages = cloneMessages(chat.messages);
     persist();
     resetRecall();
+    restoreCompose(chat.id);
     renderLog();
     refreshFiles();
     hideHistoryMenu();
@@ -9955,6 +10027,13 @@ function mountChat(root) {
     return TabbyUI.renderMarkdown(cleaned, { inlineImages: activeMode() !== "code" });
   }
 
+  function pinMarkdownCode(root) {
+    if (!root) return;
+    root.querySelectorAll(".md-code pre").forEach((pre) => {
+      pre.scrollTop = pre.scrollHeight;
+    });
+  }
+
   function looksLikeImageReply(text) {
     const cleaned = TabbyUI.formatAssistantContent
       ? TabbyUI.formatAssistantContent(text)
@@ -10221,6 +10300,7 @@ function mountChat(root) {
       bubble.classList.remove("is-stopped");
       ensureBubble();
       bubble.innerHTML = markup;
+      if (!finished) pinMarkdownCode(bubble);
       bubble.hidden = false;
       turn.classList.add("has-answer");
       attachSwitchLlm(bubble, raw);
@@ -10530,6 +10610,7 @@ function mountChat(root) {
       // Keep this node in place (do not rebuild the whole trace). Still
       // render markdown so live fences become .md-code instead of ``` markup.
       block.innerHTML = TabbyUI.renderMarkdown(raw);
+      pinMarkdownCode(block);
     }
 
     let thoughtStepSig = "";
@@ -11070,6 +11151,7 @@ function mountChat(root) {
       return;
     }
     persist();
+    rememberCompose(store.activeId);
     const chat = store.chats.find((item) => item.id === id);
     if (!chat) return;
     store.activeId = id;
@@ -11081,6 +11163,7 @@ function mountChat(root) {
     clearPendingImage();
     persist();
     resetRecall();
+    restoreCompose(id);
     renderLog(stickToEnd !== false);
     switchWorkspaceTabs(activeWorkspaceId());
     refreshFiles();
@@ -11128,6 +11211,7 @@ function mountChat(root) {
       if (spec.since) dropLaterMessagesSince(spec.since, "", workspaceId(chat));
     }
     const ids = new Set(doomed.map((item) => item.id));
+    rememberCompose(store.activeId);
     if (ids.has(store.activeId) || ids.has(flightChatId)) abortSession("stop");
     if (ids.has(store.activeId)) cancelEdit();
     if (root) await dropWorkspace(id);
@@ -11148,8 +11232,10 @@ function mountChat(root) {
       messages = cloneMessages(next.messages);
       if (!messages.some((item) => item.role === "system")) messages.unshift({ ...SYSTEM });
     }
+    forgetComposeDrafts([...ids]);
     persist();
     resetRecall();
+    restoreCompose(store.activeId);
     renderLog();
     hideHistoryMenu();
     hideMoreMenu();
@@ -11165,6 +11251,7 @@ function mountChat(root) {
     if (!root || !isWorkspaceRoot(root)) return;
     if (flightIsHere()) abortSession("stop");
     persist();
+    rememberCompose(store.activeId);
     cancelEdit();
     clearPendingImage();
     const chat = emptyChat("code", rootId);
@@ -11174,6 +11261,7 @@ function mountChat(root) {
     expandWorkspace(rootId);
     persist();
     resetRecall();
+    restoreCompose(chat.id);
     renderLog();
     refreshFiles();
     hideHistoryMenu();
@@ -11185,6 +11273,7 @@ function mountChat(root) {
   function startNewChat() {
     if (flightIsHere()) abortSession("stop");
     persist();
+    rememberCompose(store.activeId);
     cancelEdit();
     clearPendingImage();
     if (activeMode() === "code") {
@@ -11194,6 +11283,7 @@ function mountChat(root) {
       if (livePlanChecklist && livePlanChecklist.chatId !== chat.id) livePlanChecklist = null;
       persist();
       resetRecall();
+      restoreCompose(chat.id);
       renderLog();
       filesSelected = "";
       switchWorkspaceTabs(activeWorkspaceId());
@@ -11214,6 +11304,7 @@ function mountChat(root) {
     messages = cloneMessages(chat.messages);
     persist();
     resetRecall();
+    restoreCompose(chat.id);
     renderLog();
     filesSelected = "";
     refreshFiles();
@@ -11258,6 +11349,8 @@ function mountChat(root) {
     messages = cloneMessages(chat.messages);
     persist();
     resetRecall();
+    forgetComposeDrafts(doomed.map((item) => item.id));
+    restoreCompose(chat.id);
     renderLog();
     hideHistoryMenu();
     refreshFiles();
@@ -11643,6 +11736,7 @@ function mountChat(root) {
     input.value = String(text || "");
     const n = input.value.length;
     input.setSelectionRange(n, n);
+    rememberCompose();
   }
 
   function caretOnFirstLine() {
@@ -11750,10 +11844,12 @@ function mountChat(root) {
       hideMenu();
       input.focus();
       input.setSelectionRange(item.send.length, item.send.length);
+      rememberCompose();
       return false;
     }
     input.value = item.send;
     hideMenu();
+    rememberCompose();
     if (submitAfter) form.requestSubmit();
     return true;
   }
@@ -13575,6 +13671,7 @@ function mountChat(root) {
         if (chatMode(flightChat) === "code" && await blockThinkingOnlyWrite(next, writeAgent)) {
           if (!isBuildPromptText(next) && store.activeId === flightChatId && !input.value.trim()) {
             input.value = next;
+            rememberCompose();
           }
           stopKind = "stop";
           break;
@@ -13585,7 +13682,10 @@ function mountChat(root) {
             loadAfter: false,
           });
           if (!result || !result.ok) {
-            if (store.activeId === flightChatId && !input.value.trim()) input.value = next;
+            if (store.activeId === flightChatId && !input.value.trim()) {
+              input.value = next;
+              rememberCompose();
+            }
             break;
           }
         }
@@ -13606,6 +13706,7 @@ function mountChat(root) {
           }
           if (queuedTextFor(flightChatId) && store.activeId === flightChatId && !input.value.trim()) {
             input.value = takeQueue(flightChatId);
+            rememberCompose();
           } else if (store.activeId === flightChatId) {
             clearQueue(flightChatId);
           }
@@ -13708,6 +13809,7 @@ function mountChat(root) {
       const queued = input.value.trim();
       if (queued) {
         input.value = "";
+        rememberCompose();
         queueFollowup(queued);
       }
       return;
@@ -13724,6 +13826,7 @@ function mountChat(root) {
         resetRecall();
         input.value = "";
         hideMenu();
+        rememberCompose();
         queueFollowup(text);
       }
       return;
@@ -13736,6 +13839,7 @@ function mountChat(root) {
       input.value = "";
       resizeInput();
       hideMenu();
+      rememberCompose();
       // The reply lands in the log, so bring it back into view.
       activateTab("");
       runLoop(text).catch((err) => {
@@ -13781,6 +13885,8 @@ function mountChat(root) {
     });
   }
   input.addEventListener("input", () => {
+    if (recallIndex >= 0) resetRecall();
+    rememberCompose();
     if (input.value.startsWith("/")) {
       hideHistoryMenu();
       renderMenu();
@@ -15195,6 +15301,7 @@ function mountChat(root) {
     const btn = event.target.closest("[data-suggest]");
     if (!btn || modelLoading) return;
     input.value = btn.dataset.suggest || "";
+    rememberCompose();
     resizeInput();
     form.requestSubmit();
   });
@@ -15422,6 +15529,7 @@ function mountChat(root) {
         }
         if (!spoken) return;
         input.value = prefix ? `${prefix} ${spoken}` : spoken;
+        rememberCompose();
         resizeInput();
         paintCompose();
       };
@@ -15523,6 +15631,7 @@ function mountChat(root) {
         store.chats.unshift(chat);
         store.activeId = chatId;
         messages = cloneMessages(chat.messages);
+        restoreCompose(chatId);
       }
     }
     runLoop("", {
@@ -15568,6 +15677,7 @@ function mountChat(root) {
     messages = cloneMessages(store.chats.find((chat) => chat.id === store.activeId).messages);
     persistReady = fetched;
     wipeClientUiStorage();
+    restoreCompose(store.activeId);
     renderLog();
     paintToolbar();
     renderSidebar();
@@ -15590,6 +15700,7 @@ function mountChat(root) {
   };
   return {
     pause() {
+      rememberCompose();
       stopMic();
       stopGatePoll();
       hideHistoryMenu();
@@ -15612,6 +15723,7 @@ function mountChat(root) {
       if (pinLogRaf) cancelAnimationFrame(pinLogRaf);
       if (logSizeObs) logSizeObs.disconnect();
       persist();
+      rememberCompose();
       hideHistoryMenu();
       hideMoreMenu();
       document.removeEventListener("pointerdown", onPointerDownAway);

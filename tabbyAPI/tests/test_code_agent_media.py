@@ -35,6 +35,8 @@ class CodeToolSpecTests(unittest.TestCase):
         self.assertIn("audio/track.wav", code_agent.PLAN_SYSTEM)
         self.assertIn("sudo apt-get install", code_agent.CODE_SYSTEM)
         self.assertIn("/work/.venv", code_agent.CODE_SYSTEM)
+        self.assertIn("markdown fence", code_agent.CODE_SYSTEM)
+        self.assertIn("dump whole files in chat", code_agent.CODE_SYSTEM)
 
     def test_generate_video_exposes_source_image(self):
         specs = {

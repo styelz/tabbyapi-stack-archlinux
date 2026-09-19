@@ -132,6 +132,9 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
         self.assertIn("function paintLiveReason(block)", self.src)
         self.assertIn('block.classList.add("is-live")', self.src)
         self.assertIn("block.innerHTML = TabbyUI.renderMarkdown(raw);", self.src)
+        self.assertIn("function pinMarkdownCode(root)", self.src)
+        self.assertIn("pinMarkdownCode(block);", self.src)
+        self.assertIn("max-height: min(28rem, 55vh)", CHAT_CSS.read_text(encoding="utf-8"))
         self.assertNotIn("if (block.textContent !== reasoningText) block.textContent = reasoningText;", self.src)
         self.assertIn("function thoughtStepsSignature()", self.src)
         self.assertIn("function ensureLiveReasonBlock()", self.src)
@@ -176,6 +179,21 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
         self.assertIn("queueFollowup(text)", self.src)
         self.assertIn('label: "Queue"', self.src)
         self.assertIn("id=\"chat-queue\"", self.src)
+
+    def test_compose_draft_survives_reload(self):
+        self.assertIn("tabby-chat-compose", self.src)
+        self.assertIn("function rememberCompose(", self.src)
+        self.assertIn("function restoreCompose(", self.src)
+        self.assertIn("rememberCompose()", self.src.split('input.addEventListener("input"')[1].split("input.addEventListener")[0])
+        self.assertIn("rememberCompose(store.activeId)", self.src.split("function loadChat")[1].split("async function deleteChat")[0])
+        self.assertIn("restoreCompose(id)", self.src.split("function loadChat")[1].split("async function deleteChat")[0])
+        load_store = self.src.split("async function loadStore()")[1].split(
+            'window.addEventListener("tabby-gpu-status"'
+        )[0]
+        self.assertIn("restoreCompose(store.activeId)", load_store)
+        self.assertIn("sessionStorage.setItem(COMPOSE_STORE_KEY", self.src)
+        wipe_at = self.src.index("function wipeClientUiStorage(")
+        self.assertGreater(self.src.index("tabby-chat-compose"), wipe_at)
 
     def test_finished_media_abort_flushes_queued_followup(self):
         self.assertIn("function tabbyChatAbortKeepsGoing(", self.src)

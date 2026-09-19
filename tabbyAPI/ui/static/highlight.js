@@ -974,6 +974,34 @@
     return dot > 0 ? normalizeLang(name.slice(dot + 1)) : "";
   }
 
+  function guessLanguage(code) {
+    const sample = String(code || "").slice(0, 6000);
+    if (/^\s*<!DOCTYPE/i.test(sample) || /^\s*<html\b/i.test(sample)) return "html";
+    const html = (sample.match(/<\/?[a-zA-Z][\w:-]*\b/g) || []).length;
+    const js = (sample.match(/\b(?:const|let|var|function|document\.|addEventListener|=>)\b/g) || []).length;
+    const css = (sample.match(/(?:^|\n)\s*(?:--|[\w-]+)\s*:[^;\n]+;|(?:^|\n)\s*[.#@][\w-].*\{/g) || []).length;
+    const py = (sample.match(/\b(?:def |elif |import |from .+ import|None|self\.)\b/g) || []).length;
+    const sh = (sample.match(/^(?:#!\/bin\/|echo |npm |git |sudo )/m) || []).length;
+    const scores = [
+      ["html", html],
+      ["javascript", js],
+      ["css", css],
+      ["python", py],
+      ["shell", sh],
+    ];
+    let best = "";
+    let n = 0;
+    scores.forEach(([name, count]) => {
+      if (count > n) {
+        n = count;
+        best = name;
+      }
+    });
+    if (n >= 2) return best;
+    if (html >= 1 && sample.includes("</")) return "html";
+    return "";
+  }
+
   function highlight(lang, code) {
     const src = String(code ?? "");
     const kind = normalizeLang(lang);
@@ -996,5 +1024,5 @@
     return escapeHtml(src);
   }
 
-  window.TabbyHighlight = { highlight, language: normalizeLang, pathLanguage };
+  window.TabbyHighlight = { highlight, language: normalizeLang, pathLanguage, guessLanguage };
 })();

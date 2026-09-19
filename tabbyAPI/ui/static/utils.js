@@ -450,12 +450,25 @@
     );
   }
 
+  const CHAT_HIGHLIGHT_LIMIT = 80_000;
+
   function codeBlockHtml(lang, code) {
-    const label = String(lang || "").trim() || "code";
-    const kind = window.TabbyHighlight ? window.TabbyHighlight.language(lang) : "";
-    const body = window.TabbyHighlight
-      ? window.TabbyHighlight.highlight(lang, code)
-      : escapeHtml(code);
+    const guessed =
+      !String(lang || "").trim()
+      && window.TabbyHighlight
+      && window.TabbyHighlight.guessLanguage
+        ? window.TabbyHighlight.guessLanguage(code)
+        : "";
+    const label = String(lang || guessed || "").trim() || "code";
+    const highlightLang = String(lang || guessed || "").trim();
+    const kind = window.TabbyHighlight ? window.TabbyHighlight.language(highlightLang) : "";
+    const src = String(code ?? "");
+    let body;
+    if (window.TabbyHighlight && src.length <= CHAT_HIGHLIGHT_LIMIT) {
+      body = window.TabbyHighlight.highlight(highlightLang, src);
+    } else {
+      body = escapeHtml(src);
+    }
     const langClass = kind ? ` class="language-${kind}"` : "";
     return (
       `<div class="md-code">` +
@@ -519,7 +532,75 @@
       fences.push(codeBlockHtml(lang, body.join("\n")));
       out.push(`${indent}${token}`);
     }
-    return { text: out.join("\n"), fences };
+    return { text: extractImplicitCode(out.join("\n"), fences), fences };
+  }
+
+  function lineCodeKind(line) {
+    const raw = String(line || "");
+    if (!raw.trim()) return "";
+    if (/^@@(?:CODE|IMG)\d+@@$/.test(raw.trim())) return false;
+    const t = raw.trim();
+    if (/^#{1,3}\s+/.test(t)) return false;
+    if (/^\s*<!DOCTYPE/i.test(raw) || /^\s*<\/?[a-zA-Z][\w:-]*\b/.test(raw)) return "html";
+    if (/^\s*(?:const|let|var|function|class|import|export|async|await)\b/.test(raw)) return "js";
+    if (/^\s*(?:if|for|while|switch|try|catch|return|document\.|window\.|console\.)\b/.test(raw)) {
+      return "js";
+    }
+    if (/^\s*(?:def|async def|class|import|from)\b/.test(raw) && /:\s*$/.test(t)) return "python";
+    if (/^\s*--[\w-]+\s*:/.test(raw)) return "css";
+    if (/^\s*(?:[.#@:][\w-]|:root)\b[^{]*\{\s*$/.test(raw)) return "css";
+    if (/^\s*[a-z][\w-]*\s*:\s*[^;]+;?\s*$/.test(raw) && !/\s/.test(t.split(":")[0])) return "css";
+    if (/^\s*[{}());,[\]]+\s*$/.test(raw) || /^\s*[)}\]]+[;,]?\s*$/.test(raw)) return "code";
+    if (/=>/.test(raw) || /\$\{/.test(raw)) return "js";
+    const punct = (raw.match(/[{}();=<>[\]]/g) || []).length;
+    if (punct >= 3 && /[{};]/.test(raw)) return "code";
+    if (/^(?: {4}|\t)/.test(raw) && /[{}();=<>]|<\/?[a-zA-Z]/.test(raw)) return "code";
+    return false;
+  }
+
+  function extractImplicitCode(src, fences) {
+    const lines = String(src || "").split("\n");
+    const out = [];
+    let i = 0;
+    while (i < lines.length) {
+      const kind = lineCodeKind(lines[i]);
+      if (!kind) {
+        out.push(lines[i]);
+        i += 1;
+        continue;
+      }
+      const start = i;
+      i += 1;
+      let codeLines = 1;
+      let lastCode = start;
+      while (i < lines.length) {
+        const next = lineCodeKind(lines[i]);
+        if (next === false) break;
+        if (!next) {
+          if (i - lastCode > 1) break;
+          i += 1;
+          continue;
+        }
+        lastCode = i;
+        codeLines += 1;
+        i += 1;
+      }
+      while (i > lastCode + 1) i -= 1;
+      const body = lines.slice(start, i);
+      const joined = body.join("\n");
+      const strong = /<!DOCTYPE|<html\b|^\s*function\s+\w+/im.test(joined);
+      if (codeLines >= 3 || (strong && codeLines >= 2)) {
+        const lang = window.TabbyHighlight && window.TabbyHighlight.guessLanguage
+          ? window.TabbyHighlight.guessLanguage(joined)
+          : "";
+        const token = `@@CODE${fences.length}@@`;
+        fences.push(codeBlockHtml(lang, joined));
+        out.push(token);
+      } else {
+        out.push(...body);
+      }
+    }
+    return out.join("\n");
   }
 
   function autolink(html, used, inlineImages) {

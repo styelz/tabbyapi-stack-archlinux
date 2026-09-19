@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import re
+import shutil
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -102,6 +105,9 @@ class UiMarkdownFenceTests(unittest.TestCase):
         self.assertIn(r"^(\s*)(`{3,}|~{3,})[ \t]*([\w+-]*)(.*)$", src)
         self.assertIn("stripFenceIndent", src)
         self.assertIn("isFenceToken(raw)", src)
+        self.assertIn("extractImplicitCode", src)
+        self.assertIn("lineCodeKind", src)
+        self.assertIn("CHAT_HIGHLIGHT_LIMIT", src)
         self.assertNotIn(r"^```([\w+-]*)[ \t]*$", src)
 
     def test_column_zero_fence_still_extracts(self):
@@ -129,6 +135,108 @@ class UiMarkdownFenceTests(unittest.TestCase):
     def test_crlf_openers(self):
         _, fences = extract_fences("```python\r\nprint(1)\r\n```\r\n")
         self.assertEqual(fences, [("python", "print(1)")])
+
+
+HIGHLIGHT_JS = Path(__file__).resolve().parents[1] / "ui" / "static" / "highlight.js"
+
+
+@unittest.skipUnless(shutil.which("node"), "node not installed")
+class ImplicitCodeFenceTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        utils = UTILS_JS.read_text(encoding="utf-8")
+        highlight = HIGHLIGHT_JS.read_text(encoding="utf-8")
+        start = utils.index("const CHAT_HIGHLIGHT_LIMIT")
+        end = utils.index("\n  function autolink(")
+        cls.prelude = "\n".join(
+            [
+                "globalThis.window = { TabbyHighlight: null };",
+                highlight,
+                "function escapeHtml(value) {",
+                "  return String(value ?? '')",
+                "    .replaceAll('&', '&amp;')",
+                "    .replaceAll('<', '&lt;')",
+                "    .replaceAll('>', '&gt;')",
+                "    .replaceAll('\"', '&quot;');",
+                "}",
+                utils[start:end],
+            ]
+        )
+
+    def _extract(self, text: str) -> dict:
+        script = (
+            self.prelude
+            + "\nconst extracted = extractFences("
+            + json.dumps(text)
+            + ");\n"
+            + "console.log(JSON.stringify({ text: extracted.text, n: extracted.fences.length, html: extracted.fences.join('\\n') }));\n"
+        )
+        proc = subprocess.run(
+            ["node", "-e", script],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        if proc.returncode != 0:
+            self.fail(proc.stderr or proc.stdout or "node failed")
+        return json.loads(proc.stdout)
+
+    def test_unfenced_html_becomes_highlighted_block(self):
+        sample = (
+            "Okay — here is the page.\n"
+            "\n"
+            "<!DOCTYPE html>\n"
+            "<html lang=\"en\">\n"
+            "<head>\n"
+            "<meta charset=\"utf-8\">\n"
+            "<title>Chrome & Thunder</title>\n"
+            "</head>\n"
+            "<body>\n"
+            "<nav id=\"navbar\"></nav>\n"
+            "</body>\n"
+            "</html>\n"
+            "\n"
+            "Wrote index.html\n"
+        )
+        out = self._extract(sample)
+        self.assertIn("@@CODE0@@", out["text"])
+        self.assertNotIn("<!DOCTYPE html>", out["text"])
+        self.assertIn("Wrote index.html", out["text"])
+        self.assertIn("class=\"md-code\"", out["html"])
+        self.assertIn("language-html", out["html"])
+        self.assertIn("tok-tag", out["html"])
+
+    def test_unfenced_js_becomes_highlighted_block(self):
+        sample = (
+            "Render the grid at runtime:\n"
+            "function renderCars(filter = 'All') {\n"
+            "  const list = filter === 'All' ? cars : cars.filter(c => c.genre === filter);\n"
+            "  grid.innerHTML = list.map(c => c.title).join('');\n"
+            "}\n"
+        )
+        out = self._extract(sample)
+        self.assertIn("@@CODE0@@", out["text"])
+        self.assertIn("Render the grid at runtime:", out["text"])
+        self.assertIn("tok-keyword", out["html"])
+
+    def test_prose_is_not_swallowed(self):
+        sample = (
+            "Hero — full-screen background, sparkle stars, flowing clouds.\n"
+            "Cars — grid of car cards with year and genre badge.\n"
+            "Crews — grid of crew cards with emoji faces.\n"
+            "Timeline — four items alternating left and right.\n"
+        )
+        out = self._extract(sample)
+        self.assertEqual(out["n"], 0)
+        self.assertIn("Hero — full-screen background", out["text"])
+
+    def test_explicit_fences_still_win(self):
+        out = self._extract("```bash\necho hi\n```\n")
+        self.assertEqual(out["n"], 1)
+        self.assertIn("language-shell", out["html"])
+        self.assertIn("tok-fn", out["html"])
+        self.assertIn(">echo</span> hi", out["html"])
 
 
 if __name__ == "__main__":
