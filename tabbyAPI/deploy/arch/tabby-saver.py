@@ -2426,7 +2426,7 @@ def draw_cycle_fx(pygame_mod: Any, screen: Any, scene: dict[str, Any]) -> None:
 
 
 # Idle-only: a few glass cores among the resting constellation.
-# Three homes; up to three visible. Long fade so they do not pop.
+# Three homes; two or three stay up. Long fade so they do not pop.
 _SLEEP_KINDS = (
     "sphere",
     "box",
@@ -2442,27 +2442,27 @@ _SLEEP_KINDS = (
     "cross",
 )
 _SLEEP_HOMES = (
-    (0.18, 0.28),
-    (0.82, 0.32),
+    (0.16, 0.24),
+    (0.84, 0.30),
     (0.50, 0.78),
 )
 _SLEEP_SLOTS = (
-    (38.0, 0.00),
-    (33.0, 0.34),
-    (44.0, 0.62),
+    (42.0, 0.00),
+    (42.0, 0.33),
+    (42.0, 0.67),
 )
-_SLEEP_MIN_SEP = 0.28
-_SLEEP_LIFE = 0.70
-_SLEEP_FADE = 0.26
-_SLEEP_SPAN_FRAC = 0.30
-_SLEEP_SPAN_MIN = 72
-_SLEEP_SPAN_MAX = 520
+_SLEEP_MIN_SEP = 0.16
+_SLEEP_LIFE = 0.92
+_SLEEP_FADE = 0.24
+_SLEEP_SPAN_FRAC = 0.34
+_SLEEP_SPAN_MIN = 96
+_SLEEP_SPAN_MAX = 560
 _SLEEP_MAX_ITEMS = 3
 # Large / small / medium homes so two on screen never match.
-_SLEEP_SIZE_BIAS = (1.28, 0.46, 0.84)
-# March at most this many px on a side, then smoothscale up. Idle has CPU
-# to spare; 256 keeps the solids from looking like scaled blobs.
-_SLEEP_RT_MAX = 256
+_SLEEP_SIZE_BIAS = (1.48, 0.40, 0.82)
+# March at most this many px on a side, then smoothscale up. Keep it cheap
+# enough that a pose step still fits in one idle frame.
+_SLEEP_RT_MAX = 160
 # Same family as the idle navy wash (ACCENT is the value-boosted peak).
 # _sleep_tint_for rides the same idle_hue so solids stay with the field.
 _SLEEP_TINT = ACCENT
@@ -2500,9 +2500,9 @@ def _sleep_spin_rates(slot: int, cycle: int) -> tuple[float, float, float]:
         return mag * _sleep_sign(slot, cycle, salt_sign)
 
     return (
-        rate(41, 43, 0.022, 0.090),
-        rate(47, 53, 0.014, 0.072),
-        rate(59, 67, 0.018, 0.086),
+        rate(41, 43, 0.016, 0.042),
+        rate(47, 53, 0.012, 0.036),
+        rate(59, 67, 0.014, 0.040),
     )
 
 
@@ -2990,9 +2990,7 @@ def _draw_sleeping_solid(pygame_mod: Any, screen: Any, item: dict[str, Any]) -> 
         surf = pygame_mod.image.frombuffer(rgb, (rt, rt), "RGB").convert()
         if span != rt:
             surf = pygame_mod.transform.smoothscale(surf, (span, span))
-        if len(_SLEEP_SURF_CACHE) >= _SLEEP_SURF_CACHE_MAX:
-            _SLEEP_SURF_CACHE.clear()
-        _SLEEP_SURF_CACHE[key] = surf
+        _cache_put(_SLEEP_SURF_CACHE, key, surf, _SLEEP_SURF_CACHE_MAX)
     shown = surf
     if amt < 0.995:
         mult = getattr(pygame_mod, "BLEND_RGB_MULT", 0)
@@ -3010,16 +3008,23 @@ def _draw_sleeping_solid(pygame_mod: Any, screen: Any, item: dict[str, Any]) -> 
     _blit_sleep_add(pygame_mod, screen, shown, float(item["x"]), float(item["y"]))
 
 
-# Idle paints at ~24 fps and tumble is ~0.05 rad/s, so a 1° cache step
-# (the old 0.016) only remarchs about three times a second and the solid
-# stair-steps. Quantise just under one frame of typical spin (~0.23°) so
-# the pose tracks the clock; RGB cache still skips a true duplicate frame.
-# Full-strength Surfaces die with pygame.quit(); fade is a per-frame multiply.
-_SLEEP_ANGLE_Q = 0.004
+# Idle paints at ~24 fps and tumble is ~0.03 rad/s. Quantise under one
+# frame of spin so the pose tracks the clock; evict one cache entry at a
+# time so a miss does not remarch every solid on the next frames.
+_SLEEP_ANGLE_Q = 0.0025
 _SLEEP_CACHE: dict[tuple[Any, ...], Any] = {}
-_SLEEP_CACHE_MAX = 16
+_SLEEP_CACHE_MAX = 48
 _SLEEP_SURF_CACHE: dict[tuple[Any, ...], Any] = {}
-_SLEEP_SURF_CACHE_MAX = 32
+_SLEEP_SURF_CACHE_MAX = 96
+
+
+def _cache_put(cache: dict[Any, Any], key: Any, value: Any, max_n: int) -> None:
+    if key in cache:
+        cache[key] = value
+        return
+    while len(cache) >= max_n and cache:
+        cache.pop(next(iter(cache)))
+    cache[key] = value
 
 
 def sleep_cache_key(item: dict[str, Any]) -> tuple[Any, ...]:
@@ -3051,9 +3056,7 @@ def _sleep_solid_rgb(key: tuple[Any, ...], rt: int) -> Any:
         base: Any = raw
     else:
         base = np.frombuffer(raw, dtype=np.uint8).reshape(rt, rt, 3)
-    if len(_SLEEP_CACHE) >= _SLEEP_CACHE_MAX:
-        _SLEEP_CACHE.clear()
-    _SLEEP_CACHE[key] = base
+    _cache_put(_SLEEP_CACHE, key, base, _SLEEP_CACHE_MAX)
     return base
 
 

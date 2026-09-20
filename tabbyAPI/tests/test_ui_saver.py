@@ -622,11 +622,11 @@ class SaverKioskSceneTests(unittest.TestCase):
         self.assertTrue(held)
         env = self.kiosk.idle_sleeper_envelope
         self.assertEqual(env(-0.01), 0.0)
-        self.assertEqual(env(0.90), 0.0)
+        self.assertEqual(env(0.97), 0.0)
         self.assertLess(env(0.02), 0.08)
-        self.assertGreater(env(0.26), 0.85)
-        self.assertGreater(env(0.28), env(0.04))
-        self.assertGreater(env(0.28), env(0.50))
+        self.assertGreater(env(0.24), 0.85)
+        self.assertGreater(env(0.40), env(0.04))
+        self.assertGreater(env(0.40), env(0.80))
         fading = None
         for step in range(200):
             idle["st"] = step * 0.2
@@ -657,8 +657,8 @@ class SaverKioskSceneTests(unittest.TestCase):
             sizes.extend(int(item["size"]) for item in items)
             if len(items) >= 2 and pair is None:
                 pair = items
-        self.assertIn(1, counts)
-        self.assertTrue(any(n >= 2 for n in counts))
+        self.assertTrue(any(n >= 3 for n in counts))
+        self.assertGreaterEqual(sum(1 for n in counts if n >= 2) / max(1, len(counts)), 0.7)
         self.assertNotIn(4, counts)
         self.assertTrue(sizes)
         self.assertGreater(max(sizes), min(sizes) * 1.35)
