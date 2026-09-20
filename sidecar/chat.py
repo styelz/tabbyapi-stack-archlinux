@@ -22,6 +22,7 @@ from common.phrase_switch import (
     handle_if_requested,
     inject_clipboard_save_hint,
     is_restart_request,
+    last_role,
     last_user_text,
     requested_profile,
     restart_reply_text,
@@ -101,13 +102,16 @@ async def handle_chat_completion(
         if image_response is not None:
             return image_response
         if not llm_is_ready():
+            tool_followup = last_role(data) in ("tool", "function")
             if not gpu_is_comfy():
-                from common.phrase_switch import llm_not_ready_response
+                if not tool_followup:
+                    from common.phrase_switch import llm_not_ready_response
 
-                return await llm_not_ready_response(data)
-            if should_yield_comfy_to_llm(data):
+                    return await llm_not_ready_response(data)
+            elif should_yield_comfy_to_llm(data):
                 return await yield_comfy_to_llm_response(data)
-            return await comfy_idle_response(data, api_base=api_base)
+            else:
+                return await comfy_idle_response(data, api_base=api_base)
         refused = tools_without_format_response(data)
         if refused is not None:
             return refused

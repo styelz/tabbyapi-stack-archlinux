@@ -15,6 +15,7 @@ from common.networking import get_sse_ping_interval, handle_request_error
 from common.phrase_switch import (
     comfy_idle_response,
     gpu_is_comfy,
+    last_role,
     llm_not_ready_response,
     should_yield_comfy_to_llm,
     tools_without_format_response,
@@ -82,11 +83,19 @@ async def run_chat_completion_turn(
     if image_response is not None:
         return image_response
     if not llm_ready:
+        tool_followup = last_role(data) in ("tool", "function")
         if not gpu_is_comfy():
-            return await llm_not_ready_response(data, console=console)
-        if should_yield_comfy_to_llm(data):
+            # Code/editor agent loops POST tool results immediately after a
+            # generate. A sidecar /v1/model poll timeout must not abort that
+            # turn with the idle-unloaded copy while the LLM is still in VRAM.
+            if sidecar and tool_followup:
+                llm_ready = True
+            else:
+                return await llm_not_ready_response(data, console=console)
+        elif should_yield_comfy_to_llm(data):
             return await yield_comfy_to_llm_response(data, console=console)
-        return await comfy_idle_response(data, api_base=api_base)
+        else:
+            return await comfy_idle_response(data, api_base=api_base)
 
     if sidecar:
         from sidecar.proxy import forward_llm_chat

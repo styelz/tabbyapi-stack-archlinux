@@ -473,6 +473,102 @@ class SidecarInterceptTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(seen["payload"]["messages"][0]["content"], "hello?")
         self.assertIs(seen["request"], request)
 
+    async def test_console_tool_followup_forwards_when_poll_says_unloaded(self):
+        from endpoints.OAI.types.chat_completion import ChatCompletionRequest
+        from endpoints.OAI.utils.pipeline import run_chat_completion_turn
+
+        seen = {}
+
+        async def fake_forward(payload, request=None, forward_fn=None):
+            seen["payload"] = payload
+            return {"ok": True, "via": "followup"}
+
+        handler = mock.Mock()
+        handler.poll = mock.AsyncMock()
+        request = self._request()
+        data = ChatCompletionRequest(
+            messages=[
+                {"role": "user", "content": "fix the layout"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "Read",
+                                "arguments": "{\"path\":\"css/style.css\"}",
+                            },
+                        }
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "content": ":root { --bg: #fff; }",
+                    "tool_call_id": "call_1",
+                    "name": "Read",
+                },
+            ],
+            stream=False,
+        )
+        with (
+            mock.patch("sidecar.settings.is_sidecar_process", return_value=True),
+            mock.patch("sidecar.model_status.llm_is_ready", return_value=False),
+            mock.patch(
+                "endpoints.OAI.utils.pipeline.handle_image_chat",
+                new=mock.AsyncMock(return_value=None),
+            ),
+            mock.patch("endpoints.OAI.utils.pipeline.gpu_is_comfy", return_value=False),
+            mock.patch("sidecar.proxy.forward_llm_chat", new=fake_forward),
+        ):
+            result = await run_chat_completion_turn(
+                request,
+                data,
+                handler,
+                api_base="http://x/v1",
+                console=True,
+            )
+        self.assertEqual(result, {"ok": True, "via": "followup"})
+        self.assertEqual(seen["payload"]["messages"][-1]["role"], "tool")
+
+    async def test_console_user_turn_still_blocks_when_unloaded(self):
+        from endpoints.OAI.types.chat_completion import ChatCompletionRequest
+        from endpoints.OAI.utils.pipeline import run_chat_completion_turn
+
+        async def fake_forward(*_a, **_k):
+            raise AssertionError("idle unloaded user turn must not forward")
+
+        handler = mock.Mock()
+        handler.poll = mock.AsyncMock()
+        request = self._request()
+        data = ChatCompletionRequest(
+            messages=[{"role": "user", "content": "fix the layout"}],
+            stream=False,
+        )
+        with (
+            mock.patch("sidecar.settings.is_sidecar_process", return_value=True),
+            mock.patch("sidecar.model_status.llm_is_ready", return_value=False),
+            mock.patch(
+                "endpoints.OAI.utils.pipeline.handle_image_chat",
+                new=mock.AsyncMock(return_value=None),
+            ),
+            mock.patch("endpoints.OAI.utils.pipeline.gpu_is_comfy", return_value=False),
+            mock.patch("sidecar.proxy.forward_llm_chat", new=fake_forward),
+            mock.patch("common.phrase_switch.switch_in_progress", return_value=False),
+            mock.patch("images.jobs.active_mcp_image_job", return_value=None),
+        ):
+            result = await run_chat_completion_turn(
+                request,
+                data,
+                handler,
+                api_base="http://x/v1",
+                console=True,
+            )
+        text = result.choices[0].message.content.lower()
+        self.assertIn("not loaded", text)
+        self.assertNotIn("still loading", text)
+
     async def test_generate_chat_sends_generate_only_header(self):
         seen = {}
 
@@ -551,6 +647,61 @@ class SidecarModelStatusTests(unittest.TestCase):
             clock["t"] = 5.1
             self.assertEqual(model_status.model_card()["id"], "gemma")
         self.assertEqual(get_json.call_count, 2)
+
+    def test_poll_timeout_keeps_last_good_llm_card(self):
+        os.environ["TABBY_BACKEND_URL"] = "http://tabby.test"
+        os.environ["TABBY_BACKEND_KEY"] = "k"
+        self.addCleanup(lambda: os.environ.pop("TABBY_BACKEND_URL", None))
+        self.addCleanup(lambda: os.environ.pop("TABBY_BACKEND_KEY", None))
+        from sidecar import model_status
+
+        model_status.invalidate_model_cache()
+        clock = {"t": 0.0}
+        with (
+            mock.patch.object(model_status, "_gpu_mode", return_value="llm"),
+            mock.patch.object(model_status, "_model_epoch", return_value=(0.0, 0.0)),
+            mock.patch.object(model_status.time, "monotonic", side_effect=lambda: clock["t"]),
+            mock.patch.object(
+                model_status,
+                "_get_json",
+                side_effect=[
+                    (200, {"id": "qwen38s10", "parameters": {"max_seq_len": 8}}),
+                    (0, None),
+                ],
+            ) as get_json,
+        ):
+            self.assertTrue(model_status.llm_is_ready())
+            clock["t"] = 5.1
+            self.assertTrue(model_status.llm_is_ready())
+            self.assertEqual(model_status.loaded_model_id(), "qwen38s10")
+        self.assertEqual(get_json.call_count, 2)
+
+    def test_real_unload_503_clears_ready(self):
+        os.environ["TABBY_BACKEND_URL"] = "http://tabby.test"
+        os.environ["TABBY_BACKEND_KEY"] = "k"
+        self.addCleanup(lambda: os.environ.pop("TABBY_BACKEND_URL", None))
+        self.addCleanup(lambda: os.environ.pop("TABBY_BACKEND_KEY", None))
+        from sidecar import model_status
+
+        model_status.invalidate_model_cache()
+        clock = {"t": 0.0}
+        with (
+            mock.patch.object(model_status, "_gpu_mode", return_value="llm"),
+            mock.patch.object(model_status, "_model_epoch", return_value=(0.0, 0.0)),
+            mock.patch.object(model_status.time, "monotonic", side_effect=lambda: clock["t"]),
+            mock.patch.object(
+                model_status,
+                "_get_json",
+                side_effect=[
+                    (200, {"id": "qwen38s10", "parameters": {"max_seq_len": 8}}),
+                    (503, None),
+                ],
+            ),
+        ):
+            self.assertTrue(model_status.llm_is_ready())
+            clock["t"] = 5.1
+            self.assertFalse(model_status.llm_is_ready())
+            self.assertIsNone(model_status.loaded_model_id())
 
     def test_comfy_placeholder_card_is_not_an_llm(self):
         os.environ["TABBY_BACKEND_URL"] = "http://tabby.test"

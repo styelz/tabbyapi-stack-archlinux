@@ -20,6 +20,9 @@ ensure_import_path()
 # only changes on load/unload; TTL plus mode/lock epoch covers switches.
 # A dummy /v1/model card (cache_mode=comfy) is not an LLM. Do not skip the
 # HTTP just because gpu_mode.json still says comfy after an LLM load.
+# Poll timeouts (status 0) must not wipe a good card: Code tool follow-ups
+# hit this during a generate, and a 5s fail cache then aborts the loop with
+# the idle-unloaded copy while the LLM is still in VRAM.
 _CACHE_TTL_S = 5.0
 _FAIL_TTL_S = 5.0
 _cache_lock = threading.Lock()
@@ -104,7 +107,22 @@ def _cached_backend_model() -> tuple[int, Any]:
         cached = _model_cache
         if cached and cached.get("epoch") == epoch and now < float(cached.get("until") or 0):
             return int(cached["status"]), cached.get("payload")
+        last_good = cached
     status, payload = _get_json("/v1/model")
+    if (
+        status != 200
+        and last_good
+        and last_good.get("epoch") == epoch
+        and int(last_good.get("status") or 0) == 200
+        and isinstance(last_good.get("payload"), dict)
+    ):
+        # Timeout / connection blip while the backend is generating. Keep the
+        # last real card until gpu_mode or the switch lock actually changes.
+        if status == 0:
+            with _cache_lock:
+                last_good["until"] = now + _CACHE_TTL_S
+                _model_cache = last_good
+            return 200, last_good.get("payload")
     ttl = _CACHE_TTL_S if status == 200 else _FAIL_TTL_S
     with _cache_lock:
         _model_cache = {
