@@ -29,6 +29,22 @@ class CodeToolSpecTests(unittest.TestCase):
         names = [spec.function.name for spec in code_agent.code_tool_specs("ask")]
         self.assertEqual(set(names), {"Read", "List", "Grep", "Glob", "InspectMedia"})
 
+    def test_screenshot_preview_only_when_vision(self):
+        off = [spec.function.name for spec in code_agent.code_tool_specs("agent")]
+        self.assertNotIn("ScreenshotPreview", off)
+        on = [spec.function.name for spec in code_agent.code_tool_specs("agent", vision=True)]
+        self.assertIn("ScreenshotPreview", on)
+        ask = [spec.function.name for spec in code_agent.code_tool_specs("ask", vision=True)]
+        self.assertIn("ScreenshotPreview", ask)
+        self.assertNotIn("Write", ask)
+
+    def test_vision_hint_only_when_enabled(self):
+        blank = code_agent.code_system_for("alice", "c1", "agent")
+        self.assertNotIn("ScreenshotPreview", blank)
+        hinted = code_agent.code_system_for("alice", "c1", "agent", vision=True)
+        self.assertIn("ScreenshotPreview", hinted)
+        self.assertIn("in-UI preview browser", hinted)
+
     def test_prompts_mention_audio_video_and_installs(self):
         self.assertIn("GenerateAudio", code_agent.CODE_SYSTEM)
         self.assertIn("videos/clip.mp4", code_agent.PLAN_SYSTEM)
@@ -66,6 +82,18 @@ class GenerateToolTests(unittest.TestCase):
         )
         self.assertEqual(label, "Tool error")
         self.assertIn("read-only", result)
+        self.assertEqual(change, {})
+
+    def test_screenshot_preview_is_readonly_client_capture(self):
+        label, result, change = code_agent.execute_tool(
+            "alice",
+            "c1",
+            "ScreenshotPreview",
+            {"path": "index.html"},
+            agent="ask",
+        )
+        self.assertEqual(label, "Screenshot preview")
+        self.assertIn("preview browser", result)
         self.assertEqual(change, {})
 
     def test_generate_image_binds_this_chat(self):

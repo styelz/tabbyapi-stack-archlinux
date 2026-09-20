@@ -217,7 +217,7 @@ _MUTATE_KINDS = frozenset(
         "generate_video",
     )
 )
-_READONLY_TOOLS = frozenset(("read", "list", "grep", "glob", "inspect"))
+_READONLY_TOOLS = frozenset(("read", "list", "grep", "glob", "inspect", "screenshot"))
 _READONLY_REFUSE = (
     "This prompt mode is read-only. Use Grep, Glob, Read, List, or InspectMedia, "
     "or switch to Agent to change files."
@@ -652,9 +652,39 @@ def workspace_file_brief(username: str, chat_id: str) -> str:
     return line
 
 
-def code_system_for(username: str, chat_id: str, agent: str = "agent") -> str:
+VISION_CODE_HINT = (
+    "The loaded model can see pictures. After Write or StrReplace on HTML or CSS, "
+    "use ScreenshotPreview to look at the in-UI preview browser and fix layout "
+    "from what you see. Do not claim the page looks right without a screenshot "
+    "when a page is open. That tool captures the preview pane; it is not GenerateImage."
+)
+VISION_ASK_HINT = (
+    "The loaded model can see pictures. Use ScreenshotPreview to look at the "
+    "in-UI preview browser when you need to see how the page actually renders."
+)
+VISION_PLAN_HINT = (
+    "The loaded model can see pictures. Use ScreenshotPreview if you need to "
+    "see the current preview before planning a layout change."
+)
+
+
+def code_system_for(
+    username: str,
+    chat_id: str,
+    agent: str = "agent",
+    *,
+    vision: bool = False,
+) -> str:
     base = _system_for_agent(agent)
     parts = [base]
+    if vision:
+        kind = normalize_agent(agent)
+        if kind == "ask":
+            parts.append(VISION_ASK_HINT)
+        elif kind == "plan":
+            parts.append(VISION_PLAN_HINT)
+        else:
+            parts.append(VISION_CODE_HINT)
     try:
         notes = workspace.workspace_instructions(username, chat_id)
     except Exception:
@@ -688,6 +718,12 @@ _LIST_NAMES = ("list", "list_dir", "listdir", "list_files")
 _OPTIMIZE_NAMES = ("optimizeimage", "optimize_image", "compress_image", "resize_image")
 _SHELL_NAMES = ("shell", "bash", "run_command", "run_terminal_cmd")
 _INSPECT_NAMES = ("inspectmedia", "inspect_media", "ffprobe", "media_info")
+_SCREENSHOT_NAMES = (
+    "screenshotpreview",
+    "screenshot_preview",
+    "screenshotbrowser",
+    "screenshot_browser",
+)
 _GENERATE_IMAGE_NAMES = ("generateimage", "generate_image", "gen_image")
 _GENERATE_AUDIO_NAMES = ("generateaudio", "generate_audio", "gen_audio")
 _GENERATE_VIDEO_NAMES = ("generatevideo", "generate_video", "gen_video")
@@ -695,7 +731,7 @@ _STILL_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif"})
 _MEDIA_SUFFIXES = _STILL_SUFFIXES | {".wav", ".mp3", ".flac", ".mp4", ".webm"}
 
 
-def code_tool_specs(agent: str = "agent") -> list[ToolSpec]:
+def code_tool_specs(agent: str = "agent", *, vision: bool = False) -> list[ToolSpec]:
     specs = [
         ToolSpec(
             type="function",
@@ -1088,6 +1124,40 @@ def code_tool_specs(agent: str = "agent") -> list[ToolSpec]:
             ),
         ),
     ]
+    if vision:
+        specs.append(
+            ToolSpec(
+                type="function",
+                function=Function(
+                    name="ScreenshotPreview",
+                    description=(
+                        "Capture a screenshot of the in-UI preview browser so you "
+                        "can see the rendered page. Use this after HTML or CSS "
+                        "edits to check layout, overlap, and color. The image is "
+                        "attached to the tool result. This is not GenerateImage."
+                    ),
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "path": {
+                                "type": "string",
+                                "description": (
+                                    "Optional page path to open first, e.g. index.html. "
+                                    "Omit to capture the active preview tab."
+                                ),
+                            },
+                            "full_page": {
+                                "type": "boolean",
+                                "description": (
+                                    "If true, capture the full scrollable page "
+                                    "(capped). Default is the visible viewport."
+                                ),
+                            },
+                        },
+                    },
+                ),
+            )
+        )
     if normalize_agent(agent) == "agent":
         return specs
     return [spec for spec in specs if _kind(spec.function.name) in _READONLY_TOOLS]
@@ -1172,6 +1242,8 @@ def _kind(name: str) -> str:
         return "shell"
     if match_tool_name([key], _INSPECT_NAMES):
         return "inspect"
+    if match_tool_name([key], _SCREENSHOT_NAMES):
+        return "screenshot"
     if match_tool_name([key], _GENERATE_IMAGE_NAMES):
         return "generate_image"
     if match_tool_name([key], _GENERATE_AUDIO_NAMES):
@@ -1838,6 +1910,12 @@ def _execute_tool(
         return (f"Reading {rel}", text)
     if kind == "inspect":
         return _inspect_media(username, chat_id, rel)
+    if kind == "screenshot":
+        return (
+            "Screenshot preview",
+            "ScreenshotPreview runs in the Code preview browser. The console "
+            "captures the page and attaches the image.",
+        )
     if kind == "delete":
         root = workspace.workspace_root(username, chat_id, create=False)
         dest = workspace.resolve_rel(root, rel)
@@ -1883,8 +1961,8 @@ def _execute_tool(
     return (
         "Tool error",
         f"Unknown tool {name!r}. Use Grep, Glob, Write, StrReplace, Read, Rename, "
-        "Delete, List, OptimizeImage, InspectMedia, GenerateImage, GenerateAudio, "
-        "GenerateVideo, or Shell.",
+        "Delete, List, OptimizeImage, InspectMedia, ScreenshotPreview, "
+        "GenerateImage, GenerateAudio, GenerateVideo, or Shell.",
     )
 
 

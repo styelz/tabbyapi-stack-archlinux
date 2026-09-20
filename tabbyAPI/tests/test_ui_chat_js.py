@@ -245,6 +245,21 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
         self.assertIn("function applyListing(data, chatId)", self.src)
         self.assertIn("store.activeId = viewing", self.src)
 
+    def test_screenshot_preview_tool_runs_in_the_console(self):
+        self.assertIn("function isScreenshotToolCall(call)", self.src)
+        self.assertIn("async function executeScreenshotPreview(args)", self.src)
+        self.assertIn("function capturePreviewScreenshot(", self.src)
+        self.assertIn("kind: \"screenshot\"", self.src)
+        self.assertIn("isScreenshotToolCall(call)", self.src)
+        self.assertIn("agent-step-shot", self.src)
+        css = CHAT_CSS.read_text(encoding="utf-8")
+        self.assertIn(".agent-step-shot", css)
+        outbound = self.src.split("function outboundTool(item)")[1].split(
+            "function outboundMessages()"
+        )[0]
+        self.assertIn("image_url", outbound)
+        self.assertIn("item.imageData", outbound)
+
     def test_finished_reply_keeps_elapsed_time(self):
         self.assertIn("item.elapsed_s = elapsedSec", self.src)
         self.assertIn("item.status_label = statusLabel", self.src)

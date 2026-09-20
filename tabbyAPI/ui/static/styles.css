@@ -3521,6 +3521,15 @@ button.chip {
   border-radius: 0.35rem;
   background: var(--bg-elev-2);
 }
+.agent-step-shot {
+  display: block;
+  max-width: min(100%, 22rem);
+  max-height: 12rem;
+  margin-top: 0.4em;
+  border-radius: 0.4rem;
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.12));
+  background: #0b0d12;
+}
 .agent-step-said {
   opacity: 0.9;
 }

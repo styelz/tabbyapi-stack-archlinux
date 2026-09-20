@@ -647,6 +647,7 @@ function mountChat(root) {
   let editorFindHits = [];
   let editorFindIndex = 0;
   let previewOpen = false;
+  let previewReloadAt = 0;
   let previewUrl = "";
   let previewRoot = "";
   let browserTabs = [];
@@ -6341,6 +6342,7 @@ function mountChat(root) {
     if (spec.title) tab.title = spec.title;
     else if (tab.path) tab.title = fileBase(tab.path);
     const frame = ensureBrowserFrame(tab);
+    tab.readyAt = 0;
     frame.src = tab.url || "about:blank";
     if (tab.id === activeBrowserTab) previewUrl = tab.url;
     paintBrowserChrome();
@@ -6407,6 +6409,148 @@ function mountChat(root) {
     const tab = activeBrowserTabRow();
     if (!tab || !tab.frame || !tab.frame.contentWindow) return;
     tab.frame.contentWindow.postMessage({ source: "tabby-preview-host", kind }, "*");
+  }
+
+  function nextScreenshotId() {
+    return `shot-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  function waitPreviewMessage(tab, kinds, timeoutMs) {
+    return new Promise((resolve, reject) => {
+      const frame = tab && tab.frame;
+      if (!frame || !frame.contentWindow) {
+        reject(new Error("Preview browser is not open."));
+        return;
+      }
+      const want = new Set(Array.isArray(kinds) ? kinds : [kinds]);
+      const timer = setTimeout(() => {
+        window.removeEventListener("message", onMsg);
+        reject(new Error("The preview page did not reply in time."));
+      }, timeoutMs);
+      function onMsg(event) {
+        if (event.source !== frame.contentWindow) return;
+        const data = event.data;
+        if (!data || data.source !== "tabby-preview") return;
+        if (!want.has(data.kind)) return;
+        clearTimeout(timer);
+        window.removeEventListener("message", onMsg);
+        resolve(data);
+      }
+      window.addEventListener("message", onMsg);
+    });
+  }
+
+  async function waitPreviewReady(tab, timeoutMs) {
+    const src = tab && tab.frame ? (tab.frame.getAttribute("src") || "") : "";
+    if (!src || src === "about:blank") {
+      throw new Error("No page is open in the preview browser.");
+    }
+    if (tab.readyAt && !previewReloadAt) return { kind: "ready" };
+    return waitPreviewMessage(tab, ["ready", "nav"], timeoutMs);
+  }
+
+  async function ensurePreviewForScreenshot(path) {
+    if (previewPane && previewPane.classList.contains("is-md")) {
+      throw new Error("ScreenshotPreview is for the site preview, not Markdown.");
+    }
+    const wanted = String(path || "").replace(/^\/+/, "").trim();
+    if (!previewOpen || !browserTabs.length) {
+      const page = previewPagePath(wanted);
+      if (!filesEntry && !page && !wanted) {
+        throw new Error("No page is open in the preview browser. Write an HTML file first.");
+      }
+      await showPreview({ path: wanted || page });
+    } else if (wanted) {
+      const tab = activeBrowserTabRow();
+      if (!tab || tab.path !== wanted) {
+        await goPreviewAddress(wanted);
+      }
+    }
+    const tab = activeBrowserTabRow();
+    if (!tab || !tab.frame) {
+      throw new Error("No page is open in the preview browser.");
+    }
+    if (browserTabNeedsLoad(tab)) await ensurePreviewLoaded();
+    if (!tab.readyAt || previewReloadAt) {
+      await waitPreviewReady(tab, 8000);
+      previewReloadAt = 0;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    return tab;
+  }
+
+  function requestPreviewScreenshot(tab, { full = false } = {}) {
+    return new Promise((resolve, reject) => {
+      const frame = tab && tab.frame;
+      if (!frame || !frame.contentWindow) {
+        reject(new Error("Preview browser is not open."));
+        return;
+      }
+      const id = nextScreenshotId();
+      const timer = setTimeout(() => {
+        window.removeEventListener("message", onMsg);
+        reject(new Error("The preview page did not return a screenshot."));
+      }, 12000);
+      function onMsg(event) {
+        if (event.source !== frame.contentWindow) return;
+        const data = event.data;
+        if (!data || data.source !== "tabby-preview" || data.kind !== "screenshot") return;
+        if (data.id && data.id !== id) return;
+        clearTimeout(timer);
+        window.removeEventListener("message", onMsg);
+        resolve(data);
+      }
+      window.addEventListener("message", onMsg);
+      frame.contentWindow.postMessage({
+        source: "tabby-preview-host",
+        kind: "screenshot",
+        id,
+        full: Boolean(full),
+      }, "*");
+    });
+  }
+
+  async function capturePreviewScreenshot({ path = "", full = false } = {}) {
+    const tab = await ensurePreviewForScreenshot(path);
+    const shot = await requestPreviewScreenshot(tab, { full });
+    if (!shot || shot.ok === false || !String(shot.dataUrl || "").startsWith("data:image")) {
+      throw new Error(String((shot && shot.error) || "Could not capture the preview."));
+    }
+    return {
+      dataUrl: String(shot.dataUrl),
+      width: Number(shot.width) || 0,
+      height: Number(shot.height) || 0,
+      path: tab.path || pathFromPreviewHref(tab.url) || path || "",
+    };
+  }
+
+  async function executeScreenshotPreview(args) {
+    args = args && typeof args === "object" ? args : {};
+    const path = String(args.path || "").replace(/\\/g, "/").replace(/^\/+/, "").trim();
+    const full = args.full_page === true || args.full === true;
+    try {
+      const shot = await capturePreviewScreenshot({ path, full });
+      const preview = await resizeDataUrl(shot.dataUrl, 320, 0.72);
+      const compact = shot.dataUrl.length > 1_200_000
+        ? await resizeDataUrl(shot.dataUrl, 1280, 0.82)
+        : shot.dataUrl;
+      const where = shot.path || "the preview";
+      const size = shot.width && shot.height ? ` at ${shot.width}×${shot.height}` : "";
+      return {
+        label: shot.path ? `Screenshot of ${shot.path}` : "Screenshot preview",
+        result: `Captured the in-UI preview of ${where}${size}. Look at the attached screenshot for layout, overlap, and color.`,
+        change: null,
+        imageData: compact,
+        imagePreview: preview,
+      };
+    } catch (err) {
+      if (err && err.name === "AbortError") throw err;
+      return {
+        label: "Tool error",
+        result: err && err.message ? String(err.message) : "Could not screenshot the preview browser.",
+        change: null,
+      };
+    }
   }
 
   function safePreviewHref(href) {
@@ -6615,6 +6759,8 @@ function mountChat(root) {
     if (!tab || !tab.frame) return;
     const url = tab.url || tab.frame.getAttribute("src") || "";
     if (!url || url === "about:blank") return;
+    tab.readyAt = 0;
+    previewReloadAt = Date.now();
     tab.frame.src = "about:blank";
     setTimeout(() => {
       if (previewOpen && tab.frame) tab.frame.src = url;
@@ -6636,9 +6782,14 @@ function mountChat(root) {
     if (!data || data.source !== "tabby-preview") return;
     const tab = browserTabs.find((item) => item.frame && item.frame.contentWindow === event.source);
     if (!tab) return;
+    if (data.kind === "screenshot") return;
     if (data.kind === "open") {
       openPreviewHref(data.href, { newTab: true });
       return;
+    }
+    if (data.kind === "ready" || data.kind === "nav") {
+      tab.readyAt = Date.now();
+      if (previewReloadAt) previewReloadAt = 0;
     }
     if (data.href) {
       tab.url = data.href;
@@ -9729,9 +9880,16 @@ function mountChat(root) {
   }
 
   function outboundTool(item) {
-    const out = { role: "tool", content: String(item.content || "") };
+    const text = String(item.content || "");
+    const out = { role: "tool", content: text };
     if (item.tool_call_id) out.tool_call_id = item.tool_call_id;
     if (item.name) out.name = item.name;
+    if (item.imageData && String(item.imageData).startsWith("data:image")) {
+      const parts = [];
+      if (text) parts.push({ type: "text", text });
+      parts.push({ type: "image_url", image_url: { url: item.imageData } });
+      out.content = parts;
+    }
     return out;
   }
 
@@ -10144,6 +10302,9 @@ function mountChat(root) {
     const result = String((step && step.result) || "").trim();
     const label = String((step && step.label) || "");
     const write = CODE_WRITE_TOOLS.test(name) || CODE_WRITE_TOOLS.test(label);
+    if (/screenshotpreview|screenshot_preview|screenshotbrowser/i.test(name + label)) {
+      return path ? `Screenshot of ${path}` : "Screenshot preview";
+    }
     if (write && path) {
       if (/^updated\b/i.test(result) || /^editing\b/i.test(label)) return `Updated ${path}`;
       if (result || /^wrote\b/i.test(label)) return `Wrote ${path}`;
@@ -10205,6 +10366,7 @@ function mountChat(root) {
   function persistableStep(step) {
     const out = Object.assign({}, step);
     delete out._stream;
+    if (out.imageData && out.imagePreview) delete out.imageData;
     return out;
   }
 
@@ -10501,8 +10663,10 @@ function mountChat(root) {
         ? ""
         : [args.path, args.to, args.pattern, args.glob, args.command].filter(Boolean).join(" → ");
       const result = String((step && step.result) || "").trim();
+      const shot = String((step && (step.imagePreview || step.imageData)) || "");
+      const showShot = shot.startsWith("data:image");
       const showResult = Boolean(result) && !(write && writeResultIsEcho(step, path));
-      const hasBody = Boolean(detail || showResult);
+      const hasBody = Boolean(detail || showResult || showShot);
       const row = document.createElement(finished && hasBody ? "details" : "div");
       row.className = "agent-step";
       const title = document.createElement(finished && hasBody ? "summary" : "div");
@@ -10520,6 +10684,13 @@ function mountChat(root) {
         pre.className = "agent-step-result";
         pre.textContent = result;
         row.appendChild(pre);
+      }
+      if (showShot) {
+        const img = document.createElement("img");
+        img.className = "agent-step-shot";
+        img.src = shot;
+        img.alt = path ? `Preview of ${path}` : "Preview screenshot";
+        row.appendChild(img);
       }
       return row;
     }
@@ -12753,6 +12924,10 @@ function mountChat(root) {
     return INSPECT_TOOL_NAMES.has(toolNameKey(call.name));
   }
 
+  function isScreenshotToolCall(call) {
+    return /^(screenshotpreview|screenshot_preview|screenshotbrowser|screenshot_browser)$/.test(toolNameKey(call.name));
+  }
+
   function shouldSkipInspectTool(call, mutatedPaths, seenInspect) {
     if (!isInspectToolCall(call)) return false;
     const sig = inspectToolSignature(call);
@@ -13364,6 +13539,9 @@ function mountChat(root) {
         let ran;
         if (skipInspect) {
           ran = { label: "Skipped", result: SKIP_INSPECT_RESULT, change: null };
+        } else if (isScreenshotToolCall(call)) {
+          working.setActivity("Screenshot preview", { processing: true });
+          ran = await executeScreenshotPreview(call.arguments);
         } else {
           try {
             ran = await executeWorkspaceTool(
@@ -13397,6 +13575,8 @@ function mountChat(root) {
           result: ran.result,
           change: ran.change,
         };
+        if (ran.imagePreview) toolStep.imagePreview = ran.imagePreview;
+        else if (ran.imageData) toolStep.imagePreview = ran.imageData;
         working.addStep(toolStep);
         advanceChecklistFromTool(toolStep, chatId);
         const toolItem = {
@@ -13406,11 +13586,16 @@ function mountChat(root) {
           name: call.name,
           createdAt: Date.now(),
         };
+        if (ran.imageData) toolItem.imageData = ran.imageData;
+        if (ran.imagePreview) toolItem.imagePreview = ran.imagePreview;
         if (historyRun) toolItem.historyRun = historyRun;
         list.push(toolItem);
         if (isInspectToolCall(call)) {
           seenInspect.add(inspectToolSignature(call));
           if (!skipInspect) ranInspect = true;
+        }
+        if (isScreenshotToolCall(call) && ran.label !== "Tool error") {
+          ranInspect = true;
         }
         if (!skipInspect && isMutateToolCall(call)) {
           const written = (

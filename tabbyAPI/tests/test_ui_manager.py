@@ -225,6 +225,17 @@ class UiManagerTests(unittest.TestCase):
         self.assertNotIn(code_agent.BUILD_CONTRACT_MARK, payload["messages"][-1]["content"])
         self.assertEqual(payload["messages"][-1]["content"], "what files are here?")
 
+    def test_sanitize_code_adds_screenshot_tool_when_vision(self):
+        from ui import code_agent
+
+        with mock.patch.object(manager, "_model_card", return_value={"use_vision": True}):
+            payload = manager.sanitize_code_payload(
+                {"messages": [{"role": "user", "content": "hi"}], "chat_id": "w1"}
+            )
+        names = [spec.function.name for spec in payload["tools"]]
+        self.assertIn("ScreenshotPreview", names)
+        self.assertIn(code_agent.VISION_CODE_HINT, payload["messages"][0]["content"])
+
     def test_sanitize_code_ask_images_injects_mode_hint(self):
         from ui import code_agent
 

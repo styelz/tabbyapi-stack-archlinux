@@ -806,7 +806,9 @@ def start_stack_update(*, full: bool = False) -> dict[str, Any]:
 
 
 MAX_CODE_TOOL_ROUNDS = 32
-_INSPECT_TOOLS = frozenset({"read", "grep", "glob", "list", "list_files"})
+_INSPECT_TOOLS = frozenset(
+    {"read", "grep", "glob", "list", "list_files", "screenshotpreview", "screenshot_preview"}
+)
 
 
 def _tool_call_names(item: dict[str, Any]) -> list[str]:
@@ -960,7 +962,8 @@ def sanitize_code_payload(body: dict[str, Any], username: str = "") -> dict[str,
     agent = normalize_agent(body.get("agent"))
     messages = [item for item in payload["messages"] if item.get("role") != "system"]
     messages = _cap_tool_rounds(messages)
-    messages.insert(0, {"role": "system", "content": code_system_for(username, chat_id, agent)})
+    vision = _model_card().get("use_vision") is True
+    messages.insert(0, {"role": "system", "content": code_system_for(username, chat_id, agent, vision=vision)})
     if agent == "plan":
         attach_plan_user_contract(messages)
     elif agent != "ask":
@@ -972,7 +975,7 @@ def sanitize_code_payload(body: dict[str, Any], username: str = "") -> dict[str,
     payload["chat_id"] = chat_id
     payload["mode"] = "code"
     payload["agent"] = agent
-    payload["tools"] = code_tool_specs(agent)
+    payload["tools"] = code_tool_specs(agent, vision=vision)
     if agent == "plan" and "empty project" in workspace_file_brief(username, chat_id):
         payload["tool_choice"] = "none"
     return payload
