@@ -987,6 +987,46 @@ def _page_blocking_comfy(job, data=None) -> bool:
 
 
 STALE_CODING_LAUNCH_S = 20.0
+_STALE_BLOCKING_SUFFIXES = {".css", ".html", ".htm", ".js", ".mjs"}
+
+
+def _workspace_has_live_flight(owner: str, chat_id: str) -> bool:
+    """True when Code/Chat is still streaming for this workspace (nested ids too)."""
+    user = str(owner or "").strip()
+    wanted = str(chat_id or "").strip()
+    if not user:
+        return False
+    try:
+        from ui.flight import get_flight, iter_live_flights
+    except Exception:
+        return False
+    if wanted and get_flight(user, wanted):
+        return True
+    ids = {wanted} if wanted else set()
+    try:
+        from ui.chats import workspace_root_chat_id, workspace_thread_ids
+
+        root = str(workspace_root_chat_id(user, wanted) or wanted) if wanted else ""
+        if root:
+            ids.add(root)
+            ids.update(str(item) for item in (workspace_thread_ids(user, root) or []))
+        if wanted:
+            ids.update(str(item) for item in (workspace_thread_ids(user, wanted) or []))
+    except Exception:
+        pass
+    ids.discard("")
+    for fid in ids:
+        if get_flight(user, fid):
+            return True
+    try:
+        for flight in iter_live_flights():
+            if str(getattr(flight, "username", "") or "") != user:
+                continue
+            if str(getattr(flight, "chat_id", "") or "") in ids:
+                return True
+    except Exception:
+        pass
+    return False
 
 
 def _ask_from_workspace_chats(owner: str, chat_id: str) -> str:
@@ -1076,17 +1116,12 @@ def schedule_stale_coding_launch() -> None:
     owner, chat_id = _job_workspace_ids(job)
     if not owner or not chat_id:
         return
-    try:
-        from ui.flight import get_flight
-
-        if get_flight(owner, chat_id):
-            return
-    except Exception:
-        pass
+    if _workspace_has_live_flight(owner, chat_id):
+        return
     blocking = [
         path
         for path in _missing_linked_page_files(job)
-        if Path(path).suffix.lower() in {".css", ".html", ".htm"}
+        if Path(path).suffix.lower() in _STALE_BLOCKING_SUFFIXES
     ]
     if blocking:
         return

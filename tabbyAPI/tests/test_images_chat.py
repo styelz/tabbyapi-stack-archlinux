@@ -2298,7 +2298,7 @@ class LiveCodeStreamTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(launch)
         self.assertIsNotNone(response)
 
-    async def test_stale_coding_launch_starts_when_dests_are_on_the_page(self):
+    async def test_stale_coding_launch_waits_for_linked_js(self):
         from images.chat import schedule_stale_coding_launch
 
         job = _job(
@@ -2319,8 +2319,40 @@ class LiveCodeStreamTests(unittest.IsolatedAsyncioTestCase):
         launched = mock.AsyncMock(return_value=job)
         with (
             mock.patch("images.chat.active_mcp_image_job", return_value=job),
-            mock.patch("ui.flight.get_flight", return_value=None),
+            mock.patch("images.chat._workspace_has_live_flight", return_value=False),
             mock.patch("images.chat._missing_linked_page_files", return_value=["app.js"]),
+            mock.patch("images.chat._workspace_page_ready", return_value=True),
+            mock.patch("images.chat._ask_from_workspace_chats", return_value=""),
+            mock.patch("images.chat.launch_mcp_image_job", launched),
+        ):
+            schedule_stale_coding_launch()
+            await asyncio.sleep(0)
+        launched.assert_not_awaited()
+        self.assertFalse(getattr(job, "_stale_launch", False))
+
+    async def test_stale_coding_launch_starts_when_page_files_exist(self):
+        from images.chat import schedule_stale_coding_launch
+
+        job = _job(
+            id="stale-1",
+            status="coding",
+            owner="pbp",
+            chat_id="ws-page",
+            items=[
+                SimpleNamespace(
+                    prompt="logo",
+                    output_path="images/logo.png",
+                    urls=[],
+                    status="queued",
+                )
+            ],
+        )
+        job.started_at = 0
+        launched = mock.AsyncMock(return_value=job)
+        with (
+            mock.patch("images.chat.active_mcp_image_job", return_value=job),
+            mock.patch("images.chat._workspace_has_live_flight", return_value=False),
+            mock.patch("images.chat._missing_linked_page_files", return_value=[]),
             mock.patch("images.chat._workspace_page_ready", return_value=True),
             mock.patch("images.chat._ask_from_workspace_chats", return_value=""),
             mock.patch("images.chat.launch_mcp_image_job", launched),
@@ -2329,6 +2361,55 @@ class LiveCodeStreamTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0)
         launched.assert_awaited()
         self.assertTrue(getattr(job, "_stale_launch", False))
+
+    async def test_stale_coding_launch_skips_live_nested_flight(self):
+        from images.chat import schedule_stale_coding_launch
+
+        job = _job(
+            id="stale-nested",
+            status="coding",
+            owner="pbp",
+            chat_id="ws-page",
+            items=[
+                SimpleNamespace(
+                    prompt="logo",
+                    output_path="images/logo.png",
+                    urls=[],
+                    status="queued",
+                )
+            ],
+        )
+        job.started_at = 0
+        launched = mock.AsyncMock(return_value=job)
+        with (
+            mock.patch("images.chat.active_mcp_image_job", return_value=job),
+            mock.patch("images.chat._workspace_has_live_flight", return_value=True),
+            mock.patch("images.chat._missing_linked_page_files", return_value=[]),
+            mock.patch("images.chat._workspace_page_ready", return_value=True),
+            mock.patch("images.chat.launch_mcp_image_job", launched),
+        ):
+            schedule_stale_coding_launch()
+            await asyncio.sleep(0)
+        launched.assert_not_awaited()
+
+    def test_workspace_live_flight_sees_nested_chat_id(self):
+        from images.chat import _workspace_has_live_flight
+        from ui.flight import ConsoleFlight, register_flight, reset_for_tests
+
+        reset_for_tests()
+        flight = ConsoleFlight("pbp", "nested-build", "code", "build the page")
+        register_flight(flight)
+        with mock.patch(
+            "ui.chats.workspace_root_chat_id",
+            side_effect=lambda _user, cid: "ws-page" if cid in ("nested-build", "ws-page") else cid,
+        ), mock.patch(
+            "ui.chats.workspace_thread_ids",
+            side_effect=lambda _user, root: ["nested-build"] if root == "ws-page" else [],
+        ):
+            self.assertTrue(_workspace_has_live_flight("pbp", "ws-page"))
+            self.assertTrue(_workspace_has_live_flight("pbp", "nested-build"))
+            self.assertFalse(_workspace_has_live_flight("pbp", "other-ws"))
+        reset_for_tests()
 
     async def test_write_site_code_does_not_publish_abort(self):
         from images.chat import _write_site_code

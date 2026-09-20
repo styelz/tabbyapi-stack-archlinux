@@ -174,6 +174,119 @@ class GenerateToolTests(unittest.TestCase):
         self.assertEqual(len(job.items), 2)
         self.assertEqual(job.items[1].output_path, "images/logo.png")
 
+    def test_generate_appends_to_same_chat_running_job(self):
+        from images import jobs
+
+        existing = jobs.McpImageJob(
+            id="same",
+            items=[jobs.McpImageItem(prompt="hero", output_path="images/hero.png")],
+            restore=True,
+            api_base="",
+            wait_text="",
+            wait_s=0,
+            status="running",
+            phase="generating",
+            owner="alice",
+            chat_id="this-chat",
+        )
+        with mock.patch.object(jobs, "active_mcp_image_job", return_value=existing):
+            with mock.patch.object(jobs, "abandon_foreign_coding_job", return_value=False):
+                with mock.patch.object(jobs, "refresh_job_wait"):
+                    with mock.patch.object(jobs, "_signal"):
+                        job, status = jobs.queue_code_media_job(
+                            owner="alice",
+                            chat_id="this-chat",
+                            items=[{"prompt": "a logo", "output_path": "images/logo.png"}],
+                        )
+        self.assertEqual(status, "appended")
+        self.assertEqual(len(job.items), 2)
+
+    def test_generate_appends_to_nested_workspace_job(self):
+        from images import jobs
+
+        existing = jobs.McpImageJob(
+            id="ws",
+            items=[jobs.McpImageItem(prompt="hero", output_path="images/hero.png")],
+            restore=True,
+            api_base="",
+            wait_text="",
+            wait_s=0,
+            status="coding",
+            phase="writing_code",
+            owner="alice",
+            chat_id="workspace-root",
+        )
+        with mock.patch.object(jobs, "active_mcp_image_job", return_value=existing):
+            with mock.patch.object(jobs, "abandon_foreign_coding_job", return_value=False):
+                with mock.patch.object(jobs, "_same_code_workspace", return_value=True):
+                    with mock.patch.object(jobs, "refresh_job_wait"):
+                        with mock.patch.object(jobs, "_signal"):
+                            job, status = jobs.queue_code_media_job(
+                                owner="alice",
+                                chat_id="nested-build",
+                                items=[
+                                    {"prompt": "a logo", "output_path": "images/logo.png"}
+                                ],
+                            )
+        self.assertEqual(status, "appended")
+        self.assertEqual(job.id, "ws")
+
+    def test_generate_skips_dest_already_on_job(self):
+        from images import jobs
+
+        existing = jobs.McpImageJob(
+            id="same",
+            items=[jobs.McpImageItem(prompt="hero", output_path="images/hero.png")],
+            restore=True,
+            api_base="",
+            wait_text="",
+            wait_s=0,
+            status="running",
+            phase="generating",
+            owner="alice",
+            chat_id="this-chat",
+        )
+        with mock.patch.object(jobs, "active_mcp_image_job", return_value=existing):
+            with mock.patch.object(jobs, "abandon_foreign_coding_job", return_value=False):
+                job, status = jobs.queue_code_media_job(
+                    owner="alice",
+                    chat_id="this-chat",
+                    items=[{"prompt": "hero again", "output_path": "images/hero.png"}],
+                )
+        self.assertEqual(status, "appended")
+        self.assertEqual(len(job.items), 1)
+
+    def test_code_batch_cap_allows_more_than_twelve(self):
+        from images import jobs
+
+        items = [
+            jobs.McpImageItem(prompt=f"p{i}", output_path=f"images/i{i}.png")
+            for i in range(12)
+        ]
+        existing = jobs.McpImageJob(
+            id="same",
+            items=items,
+            restore=True,
+            api_base="",
+            wait_text="",
+            wait_s=0,
+            status="coding",
+            phase="writing_code",
+            owner="alice",
+            chat_id="this-chat",
+        )
+        with mock.patch.object(jobs, "active_mcp_image_job", return_value=existing):
+            with mock.patch.object(jobs, "abandon_foreign_coding_job", return_value=False):
+                with mock.patch.object(jobs, "refresh_job_wait"):
+                    with mock.patch.object(jobs, "_signal"):
+                        job, status = jobs.queue_code_media_job(
+                            owner="alice",
+                            chat_id="this-chat",
+                            items=[{"prompt": "more", "output_path": "images/extra.png"}],
+                        )
+        self.assertEqual(status, "appended")
+        self.assertEqual(len(job.items), 13)
+
     def test_generate_busy_does_not_note_foreign_dests(self):
         job = mock.Mock()
         job.items = [mock.Mock(output_path="images/other.png")]

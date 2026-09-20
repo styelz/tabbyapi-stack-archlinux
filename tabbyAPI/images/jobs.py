@@ -51,6 +51,9 @@ from select_model import apply_profile, available_profiles, last_profile, profil
 # Chat holds the HTTP request, so Comfy can start immediately.
 MCP_HANDOFF_DELAY_S = 0.0
 MCP_MAX_BATCH = 12
+# Code site builds queue one dest per GenerateImage call. 12 cut a
+# landing page in half and the leftover tools returned "GPU is busy".
+MCP_MAX_CODE_BATCH = 32
 MCP_POLL_WAIT_S = 20
 MCP_POLL_WAIT_MAX_S = 45
 _MCP_JOBS: dict[str, "McpImageJob"] = {}
@@ -157,6 +160,31 @@ class McpImageJob:
             "done",
             "error",
         )
+
+
+def _batch_cap(*, owner: str = "", chat_id: str = "") -> int:
+    """Code/console jobs keep one Comfy session for the whole page."""
+    if str(owner or "").strip() and str(chat_id or "").strip():
+        return MCP_MAX_CODE_BATCH
+    return MCP_MAX_BATCH
+
+
+def _same_code_workspace(owner: str, left: str, right: str) -> bool:
+    """True when two Code chat ids share a project folder (nested Build)."""
+    a = str(left or "").strip()
+    b = str(right or "").strip()
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    try:
+        from ui.chats import workspace_root_chat_id
+
+        root_a = str(workspace_root_chat_id(owner, a) or a)
+        root_b = str(workspace_root_chat_id(owner, b) or b)
+    except Exception:
+        return False
+    return bool(root_a) and root_a == root_b
 
 
 def loaded_tabby_name() -> Optional[str]:
@@ -875,6 +903,13 @@ def _persist_job_reply(job: McpImageJob) -> None:
     chat_id = str(getattr(job, "chat_id", "") or "").strip()
     if not owner or not chat_id:
         return
+    try:
+        from images.chat import _workspace_has_live_flight
+
+        if _workspace_has_live_flight(owner, chat_id):
+            return
+    except Exception:
+        pass
     urls = [str(url) for url in (job.urls or []) if url]
     mark = f"tabby-image-job: {job.id}"
     if job.status == "done" and urls:
@@ -1374,16 +1409,18 @@ async def start_mcp_image_job(
         if not busy_owner or not owner_name or busy_owner != owner_name:
             return busy, "busy"
         if busy_chat and chat_name and busy_chat != chat_name:
-            return busy, "busy"
+            if not _same_code_workspace(owner_name, busy_chat, chat_name):
+                return busy, "busy"
         if chat_name and not busy_chat:
             busy.chat_id = chat_name
         new_mod = new_items[0].modality if new_items else "image"
         if new_mod != busy.modality:
             return busy, "busy"
+        cap = _batch_cap(owner=owner_name, chat_id=chat_name or busy_chat)
         async with busy.lock:
             if busy.accepting and busy.count + sum(
                 max(1, item.count) for item in new_items
-            ) <= MCP_MAX_BATCH:
+            ) <= cap:
                 from images.paths import resolve_output_paths
 
                 resolve_output_paths(
@@ -1454,25 +1491,37 @@ def queue_code_media_job(
         if busy_owner != owner_name:
             return busy, "busy"
         if busy_chat and busy_chat != chat_name:
-            return busy, "busy"
+            if not _same_code_workspace(owner_name, busy_chat, chat_name):
+                return busy, "busy"
         if chat_name and not busy_chat:
             busy.chat_id = chat_name
         new_mod = new_items[0].modality if new_items else "image"
         if new_mod != busy.modality:
             return busy, "busy"
-        can_append = busy.status == "coding" or (
-            busy.status == "queued" and busy.accepting
-        )
+        have = {
+            str(item.output_path or "")
+            for item in busy.items
+            if str(item.output_path or "")
+        }
+        fresh = [
+            item
+            for item in new_items
+            if str(item.output_path or "") not in have
+        ]
+        if not fresh:
+            return busy, "appended"
+        can_append = busy.status == "coding" or busy.accepting
+        cap = _batch_cap(owner=owner_name, chat_id=chat_name or busy_chat)
         if can_append and busy.count + sum(
-            max(1, item.count) for item in new_items
-        ) <= MCP_MAX_BATCH:
+            max(1, item.count) for item in fresh
+        ) <= cap:
             from images.paths import resolve_output_paths
 
             resolve_output_paths(
-                new_items,
+                fresh,
                 reserved=[item.output_path for item in busy.items],
             )
-            busy.items.extend(new_items)
+            busy.items.extend(fresh)
             refresh_job_wait(busy)
             _signal(busy)
             return busy, "appended"

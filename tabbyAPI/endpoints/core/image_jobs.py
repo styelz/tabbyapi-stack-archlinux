@@ -4,6 +4,7 @@ from images.jobs import *  # noqa: F403
 from images.jobs import (  # noqa: F401
     MCP_HANDOFF_DELAY_S,
     MCP_MAX_BATCH,
+    MCP_MAX_CODE_BATCH,
     MCP_POLL_WAIT_MAX_S,
     MCP_POLL_WAIT_S,
     JOBS_PERSIST_NAME,
