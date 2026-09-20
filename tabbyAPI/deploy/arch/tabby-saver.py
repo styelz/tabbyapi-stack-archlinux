@@ -2425,8 +2425,8 @@ def draw_cycle_fx(pygame_mod: Any, screen: Any, scene: dict[str, Any]) -> None:
             pygame_mod.draw.circle(screen, _mix(BG, color, 0.18), (cx, cy), inner, 1)
 
 
-# Idle-only: one small glass core among the resting constellation.
-# Three homes; at most one visible. Fade in/out with no rest gap.
+# Idle-only: a few glass cores among the resting constellation.
+# Three homes; up to three visible. Long fade so they do not pop.
 _SLEEP_KINDS = (
     "sphere",
     "box",
@@ -2447,16 +2447,19 @@ _SLEEP_HOMES = (
     (0.50, 0.78),
 )
 _SLEEP_SLOTS = (
-    (36.0, 0.00),
-    (36.0, 0.38),
-    (36.0, 0.72),
+    (38.0, 0.00),
+    (33.0, 0.34),
+    (44.0, 0.62),
 )
-_SLEEP_MIN_SEP = 0.34
-_SLEEP_LIFE = 0.56
-_SLEEP_FADE = 0.18
-_SLEEP_SPAN_FRAC = 0.24
-_SLEEP_SPAN_MIN = 88
-_SLEEP_SPAN_MAX = 300
+_SLEEP_MIN_SEP = 0.28
+_SLEEP_LIFE = 0.70
+_SLEEP_FADE = 0.26
+_SLEEP_SPAN_FRAC = 0.30
+_SLEEP_SPAN_MIN = 72
+_SLEEP_SPAN_MAX = 520
+_SLEEP_MAX_ITEMS = 3
+# Large / small / medium homes so two on screen never match.
+_SLEEP_SIZE_BIAS = (1.28, 0.46, 0.84)
 # March at most this many px on a side, then smoothscale up. Idle has CPU
 # to spare; 256 keeps the solids from looking like scaled blobs.
 _SLEEP_RT_MAX = 256
@@ -2469,14 +2472,20 @@ def _sleep_unit(slot: int, cycle: int, salt: int) -> float:
     return _u01(slot + 3, int(cycle) * 10007 + salt)
 
 
+def _smootherstep(t: float) -> float:
+    """Gentler ease than smoothstep so the first and last frames stay dim."""
+    t = _clamp01(t)
+    return t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
+
+
 def idle_sleeper_envelope(
     u: float, life: float = _SLEEP_LIFE, fade: float = _SLEEP_FADE
 ) -> float:
-    """Fade in, hold, fade out. Zero outside the life window (no pop, no rest)."""
+    """Long fade in, a short hold, long fade out. Zero outside the life window."""
     if u < 0.0 or u > life:
         return 0.0
     fade = max(1e-6, min(float(life) * 0.49, float(fade)))
-    return _smoothstep(u / fade) * _smoothstep((life - u) / fade)
+    return _smootherstep(u / fade) * _smootherstep((life - u) / fade)
 
 
 def _sleep_sign(slot: int, cycle: int, salt: int) -> float:
@@ -2526,7 +2535,7 @@ def _sleep_tint_for(slot: int, cycle: int, idle_hue: float = 0.0) -> tuple[int, 
 
 
 def idle_sleeper_items(scene: dict[str, Any], width: int, height: int) -> list[dict[str, Any]]:
-    """One small glass core while the field is fully idle. Empty otherwise."""
+    """A few glass cores while the field is fully idle. Empty otherwise."""
     if not idle_rest_scene(scene):
         return []
     st = float(scene.get("st") or 0.0)
@@ -2541,14 +2550,19 @@ def idle_sleeper_items(scene: dict[str, Any], width: int, height: int) -> list[d
         clock = st / period + phase
         u = clock % 1.0
         amt = idle_sleeper_envelope(u)
-        if amt <= 0.02:
+        if amt <= 0.008:
             continue
         cycle = int(math.floor(clock - u + 1e-9))
         kind = _SLEEP_KINDS[(slot + cycle) % n_kinds]
         x, y = _sleep_xy(slot, st, cycle)
-        scale = 0.92 + 0.12 * _sleep_unit(slot, cycle, 29)
+        bias = _SLEEP_SIZE_BIAS[slot % len(_SLEEP_SIZE_BIAS)]
+        jitter = 0.82 + 0.36 * _sleep_unit(slot, cycle, 29)
+        scale = bias * jitter
         yaw, pitch, roll = _sleep_pose(slot, cycle, st)
-        span = max(_SLEEP_SPAN_MIN, min(_SLEEP_SPAN_MAX, int(round(short * _SLEEP_SPAN_FRAC * scale))))
+        span = max(
+            _SLEEP_SPAN_MIN,
+            min(_SLEEP_SPAN_MAX, int(round(short * _SLEEP_SPAN_FRAC * scale))),
+        )
         candidates.append(
             {
                 "kind": kind,
@@ -2566,7 +2580,18 @@ def idle_sleeper_items(scene: dict[str, Any], width: int, height: int) -> list[d
             }
         )
     candidates.sort(key=lambda item: float(item["amt"]), reverse=True)
-    return candidates[:1]
+    kept: list[dict[str, Any]] = []
+    sep2 = _SLEEP_MIN_SEP * _SLEEP_MIN_SEP
+    for item in candidates:
+        if any(
+            (item["fx"] - other["fx"]) ** 2 + (item["fy"] - other["fy"]) ** 2 < sep2
+            for other in kept
+        ):
+            continue
+        kept.append(item)
+        if len(kept) >= _SLEEP_MAX_ITEMS:
+            break
+    return kept
 
 
 def _sleep_add_color(lift: float, tint: tuple[int, int, int] | None = None) -> tuple[int, int, int]:
@@ -2953,32 +2978,44 @@ def _sleep_rt_rgb_numpy(
 
 
 def _draw_sleeping_solid(pygame_mod: Any, screen: Any, item: dict[str, Any]) -> None:
-    amt = float(item.get("amt") or 0.0)
-    if amt <= 0.02:
+    amt = _clamp01(float(item.get("amt") or 0.0))
+    if amt <= 0.008:
         return
     key = sleep_cache_key(item)
-    q_amt = max(1, int(round(_clamp01(amt) * _SLEEP_FADE_STEPS)))
-    surf = _SLEEP_SURF_CACHE.get((key, q_amt))
+    surf = _SLEEP_SURF_CACHE.get(key)
     if surf is None:
-        kind, _qyaw, _qpitch, _qroll, _tint, span = key
+        _kind, _qyaw, _qpitch, _qroll, _tint, span = key
         rt = max(48, min(_SLEEP_RT_MAX, span))
-        rgb = _sleep_fade_rgb(_sleep_solid_rgb(key, rt), q_amt / _SLEEP_FADE_STEPS)
+        rgb = _sleep_solid_rgb(key, rt)
         surf = pygame_mod.image.frombuffer(rgb, (rt, rt), "RGB").convert()
         if span != rt:
             surf = pygame_mod.transform.smoothscale(surf, (span, span))
         if len(_SLEEP_SURF_CACHE) >= _SLEEP_SURF_CACHE_MAX:
             _SLEEP_SURF_CACHE.clear()
-        _SLEEP_SURF_CACHE[(key, q_amt)] = surf
-    _blit_sleep_add(pygame_mod, screen, surf, float(item["x"]), float(item["y"]))
+        _SLEEP_SURF_CACHE[key] = surf
+    shown = surf
+    if amt < 0.995:
+        mult = getattr(pygame_mod, "BLEND_RGB_MULT", 0)
+        if mult:
+            shown = surf.copy()
+            k = max(1, min(255, int(round(255.0 * amt))))
+            shown.fill((k, k, k), special_flags=mult)
+        else:
+            kind, _qyaw, _qpitch, _qroll, _tint, span = key
+            rt = max(48, min(_SLEEP_RT_MAX, span))
+            rgb = _sleep_fade_rgb(_sleep_solid_rgb(key, rt), amt)
+            shown = pygame_mod.image.frombuffer(rgb, (rt, rt), "RGB").convert()
+            if span != rt:
+                shown = pygame_mod.transform.smoothscale(shown, (span, span))
+    _blit_sleep_add(pygame_mod, screen, shown, float(item["x"]), float(item["y"]))
 
 
 # Idle paints at ~24 fps and tumble is ~0.05 rad/s, so a 1° cache step
 # (the old 0.016) only remarchs about three times a second and the solid
 # stair-steps. Quantise just under one frame of typical spin (~0.23°) so
 # the pose tracks the clock; RGB cache still skips a true duplicate frame.
-# The scaled Surface per fade step dies with pygame.quit().
+# Full-strength Surfaces die with pygame.quit(); fade is a per-frame multiply.
 _SLEEP_ANGLE_Q = 0.004
-_SLEEP_FADE_STEPS = 32
 _SLEEP_CACHE: dict[tuple[Any, ...], Any] = {}
 _SLEEP_CACHE_MAX = 16
 _SLEEP_SURF_CACHE: dict[tuple[Any, ...], Any] = {}
@@ -2986,7 +3023,7 @@ _SLEEP_SURF_CACHE_MAX = 32
 
 
 def sleep_cache_key(item: dict[str, Any]) -> tuple[Any, ...]:
-    span = max(80, min(_SLEEP_SPAN_MAX, int(item.get("size") or 160)))
+    span = max(_SLEEP_SPAN_MIN, min(_SLEEP_SPAN_MAX, int(item.get("size") or 160)))
     q = _SLEEP_ANGLE_Q
     return (
         str(item.get("kind") or "sphere"),
@@ -3831,22 +3868,58 @@ def login_from_ps(text: str) -> bool:
     return False
 
 
-def console_logged_in(tty: str) -> bool:
-    name = (tty or "tty1").strip().removeprefix("/dev/")
-    try:
-        out = subprocess.check_output(
-            ["loginctl", "list-sessions", "--no-legend"],
-            text=True,
-            timeout=1.0,
-            stderr=subprocess.DEVNULL,
-        )
-    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
-        out = ""
-    if out:
-        for line in out.splitlines():
-            parts = line.split()
-            if len(parts) >= 5 and parts[4].removeprefix("/dev/") == name:
-                return True
+def _tty_basename(name: str) -> str:
+    return (name or "").strip().removeprefix("/dev/")
+
+
+def is_virtual_console(name: str) -> bool:
+    """Local VC such as tty1. Not pts/SSH and not a bare 'tty' token."""
+    text = _tty_basename(name)
+    return text.startswith("tty") and text[3:].isdigit()
+
+
+def loginctl_session_ttys(text: str) -> list[str]:
+    """TTY names from `loginctl list-sessions --no-legend`.
+
+    Older systemd: SESSION UID USER SEAT TTY
+    Current:       SESSION UID USER SEAT LEADER CLASS TTY IDLE SINCE
+    Column 5 is no longer the TTY, so scan tokens for ttyN.
+    """
+    found: list[str] = []
+    for line in text.splitlines():
+        for part in line.split():
+            if is_virtual_console(part):
+                found.append(_tty_basename(part))
+    return found
+
+
+def who_session_ttys(text: str) -> list[str]:
+    """Local VCs from `who` (second column). Ignores pts and sshd lines."""
+    found: list[str] = []
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        name = _tty_basename(parts[1])
+        if is_virtual_console(name):
+            found.append(name)
+    return found
+
+
+def _console_ttys_to_check(user_tty: str, saver_tty: str = "") -> list[str]:
+    skip = _tty_basename(saver_tty)
+    names: list[str] = []
+    seen: set[str] = set()
+    for raw in (user_tty, *[f"tty{n}" for n in range(1, 7)]):
+        name = _tty_basename(raw) or "tty1"
+        if not name or name in seen or name == skip:
+            continue
+        seen.add(name)
+        names.append(name)
+    return names
+
+
+def _ps_tty_logged_in(name: str) -> bool:
     try:
         ps_out = subprocess.check_output(
             ["ps", "-t", name, "-o", "comm="],
@@ -3857,6 +3930,43 @@ def console_logged_in(tty: str) -> bool:
     except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return False
     return login_from_ps(ps_out)
+
+
+def console_logged_in(tty: str, *, saver_tty: str = "") -> bool:
+    """True when a person is on a local VT, not only the configured user TTY.
+
+    The kiosk always chvt back to --user-tty (usually tty1), but a login on
+    tty2–tty6 is still a console session. The saver VT itself does not count.
+    """
+    skip = _tty_basename(saver_tty)
+
+    def counts(name: str) -> bool:
+        text = _tty_basename(name)
+        return bool(text) and text != skip and is_virtual_console(text)
+
+    try:
+        out = subprocess.check_output(
+            ["loginctl", "list-sessions", "--no-legend"],
+            text=True,
+            timeout=1.0,
+            stderr=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        out = ""
+    if any(counts(name) for name in loginctl_session_ttys(out)):
+        return True
+    try:
+        who_out = subprocess.check_output(
+            ["who"],
+            text=True,
+            timeout=1.0,
+            stderr=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        who_out = ""
+    if any(counts(name) for name in who_session_ttys(who_out)):
+        return True
+    return any(_ps_tty_logged_in(name) for name in _console_ttys_to_check(tty, saver_tty))
 
 
 def vt_control_paths(own_tty: str = "") -> list[str]:
@@ -4332,7 +4442,7 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as exc:
             print(f"tabby-saver: {exc}", file=sys.stderr)
             return 1
-        logged_in = console_logged_in(user_tty)
+        logged_in = console_logged_in(user_tty, saver_tty=args.saver_tty)
         # Reboot / first start: take the console now. Idle and logout-idle
         # start after the first key/mouse dismiss, not at process start.
         boot = True
@@ -4351,17 +4461,17 @@ def main(argv: list[str] | None = None) -> int:
                     return 0
                 watch.bump()
                 boot = False
-                logged_in = console_logged_in(user_tty)
+                logged_in = console_logged_in(user_tty, saver_tty=args.saver_tty)
                 activate_vt(user_nr, args.saver_tty)
                 show = False
                 continue
             login_checked = time.monotonic()
             while not show:
                 now = time.monotonic()
-                # loginctl + ps are two forks; every 0.25 s is wasted while the
-                # user is at the console. 2 s is well inside the logout wait.
+                # loginctl + who + ps are forks; every 0.25 s is wasted while
+                # the user is at the console. 2 s is well inside the logout wait.
                 if (now - login_checked) >= 2.0:
-                    logged_in = console_logged_in(user_tty)
+                    logged_in = console_logged_in(user_tty, saver_tty=args.saver_tty)
                     login_checked = now
                 if should_resume_saver(
                     now=now,
