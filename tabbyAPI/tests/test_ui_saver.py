@@ -554,14 +554,14 @@ class SaverKioskSceneTests(unittest.TestCase):
     def test_idle_sleeper_glow_is_visible(self):
         color = self.kiosk._sleep_add_color(1.0)
         self.assertGreater(sum(color), 300)
-        self.assertGreater(color[0], color[2])
+        self.assertGreater(color[2], color[0])
 
-    def test_idle_sleeper_tint_contrasts_navy_field(self):
+    def test_idle_sleeper_tint_matches_navy_field(self):
         peak = self.kiosk.PALETTES["idle"][-1]
         tint = self.kiosk._sleep_tint_for(0, 0, 0.0)
-        self.assertGreater(tint[0], peak[0])
-        self.assertGreater(tint[0], tint[2])
+        self.assertGreater(tint[2], tint[0])
         self.assertGreater(peak[2], peak[0])
+        self.assertGreater(tint[2], peak[2])
         shifted = self.kiosk._sleep_tint_for(0, 0, 0.5)
         self.assertGreater(abs(shifted[0] - tint[0]), 30)
 

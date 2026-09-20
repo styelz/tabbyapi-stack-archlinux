@@ -2347,9 +2347,9 @@ _SLEEP_SPAN_MAX = 520
 # March at most this many px on a side, then smoothscale up. Idle has CPU
 # to spare; 256 keeps the solids from looking like scaled blobs.
 _SLEEP_RT_MAX = 256
-# Copper / amber: complementary to the idle navy wash. _sleep_tint_for
-# rides the same idle_hue so the pair stay opposite as the field cycles.
-_SLEEP_TINT = (255, 152, 48)
+# Same family as the idle navy wash (ACCENT is the value-boosted peak).
+# _sleep_tint_for rides the same idle_hue so solids stay with the field.
+_SLEEP_TINT = ACCENT
 
 
 def _sleep_unit(slot: int, cycle: int, salt: int) -> float:
@@ -2407,7 +2407,7 @@ def _sleep_xy(slot: int, st: float, cycle: int = 0) -> tuple[float, float]:
 
 
 def _sleep_tint_for(slot: int, cycle: int, idle_hue: float = 0.0) -> tuple[int, int, int]:
-    """Amber family, opposite the idle wash. Small per-solid spread only."""
+    """Same family as the idle wash. Small per-solid spread only."""
     spread = (_sleep_unit(slot, cycle, 61) - 0.5) * 0.12
     return _shift_color(_SLEEP_TINT, idle_hue + spread)
 
@@ -2652,8 +2652,7 @@ def _sleep_rt_rgb(
             spec = max(0.0, nx * hx / hn + ny * hy / hn + nz * hz / hn) ** 14
             fog = math.exp(-t * 0.18)
             lift = (0.10 + 0.40 * diff + 0.16 * rim) * fog * amt
-            # Keep highlights in the solid's family so additive navy does not
-            # pull the shape back to the same cool wash.
+            # Keep highlights in the solid's family so they stay with the wash.
             out[i] = min(255, int(tr * lift + (tr * 0.70 + 80) * spec * amt * fog))
             out[i + 1] = min(255, int(tg * lift + (tg * 0.70 + 80) * spec * amt * fog))
             out[i + 2] = min(255, int(tb * lift + (tb * 0.70 + 80) * spec * amt * fog))
