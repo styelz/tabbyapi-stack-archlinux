@@ -2039,6 +2039,19 @@ def overlay_amount(scene: dict[str, Any]) -> float:
         return 0.0
 
 
+def idle_rest_scene(scene: dict[str, Any]) -> bool:
+    """True when the kiosk should show the resting mind, not a live job."""
+    if overlay_amount(scene) > 0.04:
+        return False
+    if str(scene.get("cycle") or "idle") != "idle":
+        return False
+    if scene.get("live"):
+        return False
+    if str(scene.get("palette") or "") == "down" or not scene.get("connected", True):
+        return False
+    return True
+
+
 def scene_is_live(scene: dict[str, Any] | None) -> bool:
     """True while a job (or its fade) is on screen — spend less CPU then."""
     if not scene:
@@ -2178,6 +2191,53 @@ def neuron_overlay_state(scene: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def idle_mind_state(scene: dict[str, Any]) -> dict[str, Any] | None:
+    """Quiet constellation while the GPU is free — same tissue as a live job."""
+    if not idle_rest_scene(scene):
+        return None
+    st = float(scene.get("st") or 0.0)
+    overlay = 0.52
+    nodes: list[tuple[float, float]] = []
+    fires: list[float] = []
+    for i, (nx, ny) in enumerate(NEURON_REST):
+        nodes.append(
+            (
+                _clamp01(nx + 0.012 * lsin(st * 0.19 + i * 0.37)),
+                _clamp01(ny + 0.010 * lsin(st * 0.16 + i * 0.51)),
+            )
+        )
+        breath = 0.5 + 0.5 * lsin(st * 0.48 + i * 0.73)
+        fires.append(0.16 + 0.14 * breath)
+    thought = int(math.floor(st * 0.08))
+    hub = int(_u01(thought, 91) * len(nodes)) % max(1, len(nodes))
+    fires[hub] = max(fires[hub], 0.70)
+    neighbor = int(_u01(thought, 107) * len(nodes)) % max(1, len(nodes))
+    if neighbor != hub:
+        fires[neighbor] = max(fires[neighbor], 0.42)
+    pulses: list[tuple[int, float, float]] = []
+    rate = 0.10
+    for ei, (a, b) in enumerate(NEURON_EDGES):
+        if _u01(ei, 41) < 0.72:
+            continue
+        phase = (st * rate * (0.42 + 0.70 * _u01(ei, 3)) + _u01(ei, 17)) % 1.0
+        bright = 0.28 + 0.18 * (0.5 + 0.5 * lsin(st * 0.33 + ei))
+        pulses.append((ei, phase, bright))
+        width = 0.14
+        if phase < width:
+            fires[a] = max(fires[a], (1.0 - phase / width) * 0.55)
+        if phase > 1.0 - width:
+            fires[b] = max(fires[b], ((phase - (1.0 - width)) / width) * 0.55)
+    return {
+        "nodes": nodes,
+        "edges": NEURON_EDGES,
+        "fires": fires,
+        "pulses": pulses,
+        "overlay": overlay,
+        "reverse": False,
+        "rest": True,
+    }
+
+
 def _draw_glow(
     pygame_mod: Any,
     screen: Any,
@@ -2205,7 +2265,7 @@ def neuron_draw_sizes(
 
 
 def draw_neurons(pygame_mod: Any, screen: Any, scene: dict[str, Any]) -> None:
-    state = neuron_overlay_state(scene)
+    state = neuron_overlay_state(scene) or idle_mind_state(scene)
     if state is None:
         return
     w, h = screen.get_size()
@@ -2216,9 +2276,14 @@ def draw_neurons(pygame_mod: Any, screen: Any, scene: dict[str, Any]) -> None:
         hue = float(scene.get("hue") or 0.0)
         axon = _shift_color(axon, hue)
         spark = _shift_color(spark, hue)
+    elif name == "idle":
+        idle_hue = float(scene.get("idle_hue") or 0.0)
+        axon = _shift_color(axon, idle_hue)
+        spark = _shift_color(spark, idle_hue)
     hotness = _temp_hotness(float(scene.get("temp") or 0.0)) if scene.get("has_gpu") else 0.0
     hot = _ramp_color(HOT_GLOW, hotness)
-    dim_axon = _mix(BG, axon, 0.42 * overlay)
+    rest = bool(state.get("rest"))
+    dim_axon = _mix(BG, axon, 0.62 if rest else 0.42 * overlay)
     last_x = max(1, w - 1)
     last_y = max(1, h - 1)
     nodes = [(int(round(x * last_x)), int(round(y * last_y))) for x, y in state["nodes"]]
@@ -2234,9 +2299,11 @@ def draw_neurons(pygame_mod: Any, screen: Any, scene: dict[str, Any]) -> None:
         px = int(x0 + (x1 - x0) * u)
         py = int(y0 + (y1 - y0) * u)
         _ring, head = neuron_draw_sizes(0.0, bright, h, overlay)
+        if rest:
+            head = max(2, head + 1)
         if head < 1:
             continue
-        color = _mix(BG, _mix(axon, spark, bright), overlay)
+        color = _mix(BG, _mix(axon, spark, bright), 0.85 if rest else overlay)
         pygame_mod.draw.circle(screen, color, (px, py), head)
         if overlay > 0.45 and head > 1:
             pygame_mod.draw.circle(screen, _mix(BG, (255, 255, 255), overlay), (px, py), max(1, head // 2))
@@ -2244,6 +2311,8 @@ def draw_neurons(pygame_mod: Any, screen: Any, scene: dict[str, Any]) -> None:
     for i, (x, y) in enumerate(nodes):
         fire = fires[i]
         ring, _head = neuron_draw_sizes(fire, 0.0, h, overlay)
+        if rest:
+            ring = max(2, int(round(ring * 1.45)) + 1)
         if hotness > 0.05 and overlay > 0.08:
             halo = overlay * hotness * (0.30 + 0.70 * max(fire, 0.22))
             soma_r = max(ring, int(round((h / 380.0) * 1.5 * overlay)))
@@ -2268,7 +2337,7 @@ def draw_neurons(pygame_mod: Any, screen: Any, scene: dict[str, Any]) -> None:
         if ring < 1:
             continue
         body = _mix(axon, spark, fire)
-        amt = overlay * (0.40 + 0.60 * fire)
+        amt = (0.58 + 0.38 * fire) if rest else overlay * (0.40 + 0.60 * fire)
         if amt <= 0.03:
             continue
         pygame_mod.draw.circle(screen, _mix(BG, body, amt * 0.55), (x, y), ring + 1)
@@ -2277,6 +2346,49 @@ def draw_neurons(pygame_mod: Any, screen: Any, scene: dict[str, Any]) -> None:
             pygame_mod.draw.circle(
                 screen, _mix(BG, (255, 255, 255), overlay), (x, y), max(1, ring // 3)
             )
+
+
+def _orbit_points(
+    cx: float, cy: float, rx: float, ry: float, rot: float, n: int = 72
+) -> list[tuple[int, int]]:
+    c, s = math.cos(rot), math.sin(rot)
+    pts: list[tuple[int, int]] = []
+    for i in range(n):
+        a = TWO_PI * i / n
+        x, y = rx * math.cos(a), ry * math.sin(a)
+        pts.append((int(round(cx + x * c - y * s)), int(round(cy + x * s + y * c))))
+    return pts
+
+
+def draw_idle_orbits(pygame_mod: Any, screen: Any, scene: dict[str, Any]) -> None:
+    """Faint context rings behind the resting mind."""
+    if not idle_rest_scene(scene):
+        return
+    w, h = screen.get_size()
+    if w < 80 or h < 80:
+        return
+    st = float(scene.get("st") or 0.0)
+    idle_hue = float(scene.get("idle_hue") or 0.0)
+    ink = _shift_color(ACCENT, idle_hue)
+    cx = (w - 1) * 0.5
+    cy = (h - 1) * 0.52
+    short = min(w, h)
+    rings = (
+        (0.34, 0.20, st * 0.035, 0.50),
+        (0.48, 0.28, -st * 0.022 + 0.7, 0.38),
+        (0.22, 0.22, st * 0.018, 0.30),
+    )
+    spark = _mix(BG, ink, 0.88)
+    for i, (rx_f, ry_f, rot, amt) in enumerate(rings):
+        color = _mix(BG, ink, amt)
+        pts = _orbit_points(cx, cy, short * rx_f, short * ry_f, rot)
+        if len(pts) >= 3:
+            pygame_mod.draw.lines(screen, color, True, pts, 1)
+        if i == 1 and pts:
+            u = (st * 0.065) % 1.0
+            px, py = pts[int(u * len(pts)) % len(pts)]
+            pygame_mod.draw.circle(screen, spark, (px, py), 3)
+            pygame_mod.draw.circle(screen, _mix(BG, (230, 238, 255), 0.70), (px, py), 1)
 
 
 def draw_cycle_fx(pygame_mod: Any, screen: Any, scene: dict[str, Any]) -> None:
@@ -2313,8 +2425,8 @@ def draw_cycle_fx(pygame_mod: Any, screen: Any, scene: dict[str, Any]) -> None:
             pygame_mod.draw.circle(screen, _mix(BG, color, 0.18), (cx, cy), inner, 1)
 
 
-# Idle-only: faint ray-marched solids on the full framebuffer.
-# Three homes; at most two visible. Fade in/out with no rest gap.
+# Idle-only: one small glass core among the resting constellation.
+# Three homes; at most one visible. Fade in/out with no rest gap.
 _SLEEP_KINDS = (
     "sphere",
     "box",
@@ -2342,8 +2454,9 @@ _SLEEP_SLOTS = (
 _SLEEP_MIN_SEP = 0.34
 _SLEEP_LIFE = 0.56
 _SLEEP_FADE = 0.18
-_SLEEP_SPAN_FRAC = 0.48
-_SLEEP_SPAN_MAX = 520
+_SLEEP_SPAN_FRAC = 0.24
+_SLEEP_SPAN_MIN = 88
+_SLEEP_SPAN_MAX = 300
 # March at most this many px on a side, then smoothscale up. Idle has CPU
 # to spare; 256 keeps the solids from looking like scaled blobs.
 _SLEEP_RT_MAX = 256
@@ -2413,14 +2526,8 @@ def _sleep_tint_for(slot: int, cycle: int, idle_hue: float = 0.0) -> tuple[int, 
 
 
 def idle_sleeper_items(scene: dict[str, Any], width: int, height: int) -> list[dict[str, Any]]:
-    """Soft solids while the field is fully idle. Empty otherwise."""
-    if overlay_amount(scene) > 0.04:
-        return []
-    if str(scene.get("cycle") or "idle") != "idle":
-        return []
-    if scene.get("live"):
-        return []
-    if str(scene.get("palette") or "") == "down" or not scene.get("connected", True):
+    """One small glass core while the field is fully idle. Empty otherwise."""
+    if not idle_rest_scene(scene):
         return []
     st = float(scene.get("st") or 0.0)
     idle_hue = float(scene.get("idle_hue") or 0.0)
@@ -2441,7 +2548,7 @@ def idle_sleeper_items(scene: dict[str, Any], width: int, height: int) -> list[d
         x, y = _sleep_xy(slot, st, cycle)
         scale = 0.92 + 0.12 * _sleep_unit(slot, cycle, 29)
         yaw, pitch, roll = _sleep_pose(slot, cycle, st)
-        span = max(160, min(_SLEEP_SPAN_MAX, int(round(short * _SLEEP_SPAN_FRAC * scale))))
+        span = max(_SLEEP_SPAN_MIN, min(_SLEEP_SPAN_MAX, int(round(short * _SLEEP_SPAN_FRAC * scale))))
         candidates.append(
             {
                 "kind": kind,
@@ -2459,7 +2566,7 @@ def idle_sleeper_items(scene: dict[str, Any], width: int, height: int) -> list[d
             }
         )
     candidates.sort(key=lambda item: float(item["amt"]), reverse=True)
-    return candidates[:2]
+    return candidates[:1]
 
 
 def _sleep_add_color(lift: float, tint: tuple[int, int, int] | None = None) -> tuple[int, int, int]:
@@ -2651,8 +2758,8 @@ def _sleep_rt_rgb(
             hn = math.sqrt(hx * hx + hy * hy + hz * hz) or 1.0
             spec = max(0.0, nx * hx / hn + ny * hy / hn + nz * hz / hn) ** 14
             fog = math.exp(-t * 0.18)
-            lift = (0.10 + 0.40 * diff + 0.16 * rim) * fog * amt
-            # Keep highlights in the solid's family so they stay with the wash.
+            lift = (0.10 + 0.30 * diff + 0.34 * rim) * fog * amt
+            # Glass rim + family spec so the core sits in the wash, not on it.
             out[i] = min(255, int(tr * lift + (tr * 0.70 + 80) * spec * amt * fog))
             out[i + 1] = min(255, int(tg * lift + (tg * 0.70 + 80) * spec * amt * fog))
             out[i + 2] = min(255, int(tb * lift + (tb * 0.70 + 80) * spec * amt * fog))
@@ -2831,7 +2938,7 @@ def _sleep_rt_rgb_numpy(
     hn = np.maximum(np.sqrt(hx * hx + hy * hy + hz * hz), 1e-5)
     spec = np.maximum(nx * hx / hn + ny * hy / hn + nz * hz / hn, 0.0) ** 14
     fog = np.exp(-t * np.float32(0.18))
-    lift = (0.10 + 0.40 * diff + 0.16 * rim) * fog * np.float32(amt)
+    lift = (0.10 + 0.30 * diff + 0.34 * rim) * fog * np.float32(amt)
     tr, tg, tb = tint
     rgb = np.zeros((h, w, 3), dtype=np.float32)
     rgb[..., 0] = tr * lift + (tr * 0.70 + 80.0) * spec * amt * fog
@@ -4176,6 +4283,7 @@ def run_visible_field(
                 screen.blit(field, (0, 0))
             else:
                 pygame.transform.scale(field, size, screen)
+            draw_idle_orbits(pygame, screen, scene)
             draw_sleepers(pygame, screen, scene)
             draw_neurons(pygame, screen, scene)
             draw_cycle_fx(pygame, screen, scene)

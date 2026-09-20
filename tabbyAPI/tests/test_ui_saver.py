@@ -606,7 +606,7 @@ class SaverKioskSceneTests(unittest.TestCase):
                 second = self.kiosk.idle_sleeper_items(idle, 480, 270)
                 break
         self.assertTrue(first)
-        self.assertLessEqual(len(first), 2)
+        self.assertLessEqual(len(first), 1)
         kinds = {item["kind"] for item in first}
         self.assertTrue(kinds <= set(self.kiosk._SLEEP_KINDS))
         by_seed = {item["seed"]: item for item in second}
@@ -618,7 +618,7 @@ class SaverKioskSceneTests(unittest.TestCase):
             held = True
             self.assertLess(abs(item["fx"] - other["fx"]), 0.01)
             self.assertLess(abs(item["fy"] - other["fy"]), 0.01)
-            self.assertGreater(item["size"], 120)
+            self.assertGreater(item["size"], 70)
         self.assertTrue(held)
         env = self.kiosk.idle_sleeper_envelope
         self.assertEqual(env(-0.01), 0.0)
@@ -626,7 +626,7 @@ class SaverKioskSceneTests(unittest.TestCase):
         self.assertGreater(env(0.28), env(0.04))
         self.assertGreater(env(0.28), env(0.50))
 
-    def test_idle_sleepers_stay_spread_apart(self):
+    def test_idle_sleepers_stay_one_small_core(self):
         idle = self.kiosk.scene_from_state(
             {"gpu_mode": "llm", "profile": "qwen", "busy": False},
             True,
@@ -635,22 +635,19 @@ class SaverKioskSceneTests(unittest.TestCase):
         idle["overlay"] = 0.0
         idle["live"] = False
         counts = []
-        pair = None
+        seen = None
         for step in range(80):
             idle["st"] = step * 0.7
             items = self.kiosk.idle_sleeper_items(idle, 1920, 1080)
-            self.assertLessEqual(len(items), 2)
+            self.assertLessEqual(len(items), 1)
             counts.append(len(items))
-            if len(items) == 2 and pair is None:
-                pair = items
+            if items and seen is None:
+                seen = items[0]
         self.assertIn(1, counts)
-        self.assertIn(2, counts)
-        self.assertNotIn(3, counts)
-        self.assertTrue(pair)
-        dx = pair[0]["fx"] - pair[1]["fx"]
-        dy = pair[0]["fy"] - pair[1]["fy"]
-        self.assertGreater(dx * dx + dy * dy, self.kiosk._SLEEP_MIN_SEP ** 2)
-        self.assertGreater(min(item["size"] for item in pair), 400)
+        self.assertNotIn(2, counts)
+        self.assertTrue(seen)
+        self.assertGreater(seen["size"], 160)
+        self.assertLess(seen["size"], 320)
 
     def test_idle_sleepers_spin_on_random_axes(self):
         rates = [self.kiosk._sleep_spin_rates(0, cycle) for cycle in range(24)]
@@ -999,6 +996,8 @@ class SaverKioskSceneTests(unittest.TestCase):
             True,
         )
         self.assertIsNone(self.kiosk.neuron_overlay_state(idle))
+        rest = self.kiosk.idle_mind_state(idle)
+        self.assertIsNotNone(rest)
         overlay = self.kiosk.neuron_overlay_state(hot)
         assert overlay is not None
         self.assertGreater(len(overlay["nodes"]), 20)
@@ -1035,6 +1034,36 @@ class SaverKioskSceneTests(unittest.TestCase):
         halt["cycle_t"] = 0.2
         halt["overlay"] = 0.7
         self.assertIsNotNone(self.kiosk.neuron_overlay_state(halt))
+
+    def test_idle_mind_rests_when_quiet(self):
+        idle = self.kiosk.scene_from_state(
+            {"gpu_mode": "llm", "profile": "qwen", "busy": False},
+            True,
+        )
+        idle["st"] = 8.0
+        rest = self.kiosk.idle_mind_state(idle)
+        assert rest is not None
+        self.assertTrue(rest["rest"])
+        self.assertGreater(len(rest["nodes"]), 20)
+        self.assertGreater(len(rest["edges"]), 20)
+        self.assertGreater(len(rest["pulses"]), 4)
+        self.assertLess(len(rest["pulses"]), len(self.kiosk.NEURON_EDGES))
+        self.assertGreater(sum(rest["fires"]), 0.5)
+        self.assertLess(max(rest["fires"]), 0.85)
+        idle["st"] = 8.4
+        later = self.kiosk.idle_mind_state(idle)
+        assert later is not None
+        self.assertNotEqual(later["pulses"][0][1], rest["pulses"][0][1])
+        hot = self.kiosk.scene_from_state(
+            {"gpu_mode": "llm", "kind": "chat", "busy": True, "profile": "qwen"},
+            True,
+        )
+        self.assertIsNone(self.kiosk.idle_mind_state(hot))
+        self.assertTrue(self.kiosk.idle_rest_scene(idle))
+        self.assertFalse(self.kiosk.idle_rest_scene(hot))
+        pts = self.kiosk._orbit_points(100.0, 80.0, 40.0, 20.0, 0.3, 16)
+        self.assertEqual(len(pts), 16)
+        self.assertEqual(len({pts[0], pts[4]}), 2)
 
     def test_neuron_pulses_travel_one_way(self):
         hot = self.kiosk.scene_from_state(
@@ -1822,7 +1851,7 @@ class SaverKioskSceneTests(unittest.TestCase):
         self.assertNotEqual(key(base), key(dict(base, yaw=base["yaw"] + q * 1.4)))
         self.assertNotEqual(key(base), key(dict(base, roll=base["roll"] + q * 1.4)))
         self.assertNotEqual(key(base), key(dict(base, kind="box")))
-        self.assertNotEqual(key(base), key(dict(base, size=400)))
+        self.assertNotEqual(key(base), key(dict(base, size=220)))
         self.assertLess(q, 0.008)
 
     def test_close_display_drops_cached_solids(self):
