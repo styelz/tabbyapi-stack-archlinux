@@ -9,6 +9,8 @@ Wants=systemd-user-sessions.service
 # getty in the background; a key/mouse drops the field and chvt back; idle
 # (logged in) or logout-idle (login prompt) brings it back after that.
 # Do not enable if Omarchy or a graphical session already owns this GPU.
+# Starting LightDM (or another DM) later pauses the kiosk: it will not chvt
+# onto tty1 and steal DRM from the graphical TTY.
 ConditionPathExistsGlob=/dev/dri/card*
 
 [Service]

@@ -1,5 +1,6 @@
 import importlib.util
 import os
+import tempfile
 import time
 import unittest
 from pathlib import Path
@@ -1691,6 +1692,126 @@ class SaverKioskSceneTests(unittest.TestCase):
 
         with mock.patch.object(self.kiosk.subprocess, "check_output", side_effect=output):
             self.assertTrue(self.kiosk.console_logged_in("tty1", saver_tty="tty8"))
+
+    def test_console_ttys_include_display_manager_vt(self):
+        names = self.kiosk._console_ttys_to_check("tty1", "tty8")
+        self.assertIn("tty1", names)
+        self.assertIn("tty7", names)
+        self.assertNotIn("tty8", names)
+
+    def test_graphic_comm_detects_lightdm_and_xorg(self):
+        is_g = self.kiosk.is_graphic_comm
+        self.assertTrue(is_g("lightdm"))
+        self.assertTrue(is_g("Xorg"))
+        self.assertTrue(is_g("gdm-x-session"))
+        self.assertTrue(is_g("sddm-greeter"))
+        self.assertFalse(is_g("agetty"))
+        self.assertFalse(is_g("python"))
+        self.assertFalse(is_g(""))
+
+    def test_graphical_console_present_lightdm_proc(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proc = root / "proc"
+            (proc / "1").mkdir(parents=True)
+            (proc / "1" / "comm").write_text("systemd\n", encoding="utf-8")
+            (proc / "80").mkdir()
+            (proc / "80" / "comm").write_text("lightdm\n", encoding="utf-8")
+            missing = str(root / "missing")
+            self.assertTrue(
+                self.kiosk.graphical_console_present(
+                    proc_dir=str(proc),
+                    x11_dir=missing,
+                    run_dirs=(missing,),
+                )
+            )
+            (proc / "80" / "comm").write_text("bash\n", encoding="utf-8")
+            self.assertFalse(
+                self.kiosk.graphical_console_present(
+                    proc_dir=str(proc),
+                    x11_dir=missing,
+                    run_dirs=(missing,),
+                )
+            )
+
+    def test_graphical_console_present_x11_socket_and_run_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            x11 = root / "X11"
+            x11.mkdir()
+            (x11 / "X0").touch()
+            run = root / "lightdm"
+            missing_proc = str(root / "proc")
+            self.assertTrue(
+                self.kiosk.graphical_console_present(
+                    proc_dir=missing_proc,
+                    x11_dir=str(x11),
+                    run_dirs=(str(root / "nope"),),
+                )
+            )
+            (x11 / "X0").unlink()
+            run.mkdir()
+            self.assertTrue(
+                self.kiosk.graphical_console_present(
+                    proc_dir=missing_proc,
+                    x11_dir=str(x11),
+                    run_dirs=(str(run),),
+                )
+            )
+            run.rmdir()
+            self.assertFalse(
+                self.kiosk.graphical_console_present(
+                    proc_dir=missing_proc,
+                    x11_dir=str(x11),
+                    run_dirs=(str(run),),
+                )
+            )
+
+    def test_restore_vt_leaves_lightdm_alone(self):
+        restore = self.kiosk.restore_vt_after_field
+        self.assertIsNone(
+            restore(graphical=True, previous_nr=7, user_nr=1, saver_nr=8)
+        )
+        self.assertEqual(
+            restore(graphical=False, previous_nr=7, user_nr=1, saver_nr=8),
+            7,
+        )
+        self.assertEqual(
+            restore(graphical=False, previous_nr=8, user_nr=1, saver_nr=8),
+            1,
+        )
+        self.assertEqual(
+            restore(graphical=False, previous_nr=1, user_nr=1, saver_nr=8),
+            1,
+        )
+
+    def test_unpack_vt_active(self):
+        self.assertEqual(self.kiosk.unpack_vt_active(b"\x07\x00\x00\x00\x00\x00"), 7)
+        self.assertEqual(self.kiosk.unpack_vt_active(b"\x01\x00\x00\x00\x00\x00"), 1)
+
+    def test_resume_blocked_while_graphical(self):
+        resume = self.kiosk.should_resume_saver
+        self.assertFalse(
+            resume(
+                now=10.0,
+                last_input=10.0,
+                idle_s=120.0,
+                logout_idle_s=5.0,
+                logged_in=False,
+                boot=True,
+                graphical=True,
+            )
+        )
+        self.assertFalse(
+            resume(
+                now=140.0,
+                last_input=10.0,
+                idle_s=120.0,
+                logout_idle_s=5.0,
+                logged_in=True,
+                graphical=True,
+            )
+        )
 
     def test_tty_nr_and_evdev(self):
         self.assertEqual(self.kiosk.tty_nr("tty8"), 8)

@@ -95,7 +95,7 @@ SAVER_FIELDS = (
         "name": "enabled",
         "env": "TABBY_SAVER_ENABLED",
         "label": "Enable screensaver",
-        "description": "KMS kiosk on a spare TTY. Do not enable if a desktop already owns the GPU.",
+        "description": "KMS kiosk on a spare TTY. Pauses while LightDM or another desktop owns the GPU; it will not steal the console.",
         "kind": "bool",
         "optional": False,
         "default": True,

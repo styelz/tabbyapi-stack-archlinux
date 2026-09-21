@@ -3212,7 +3212,8 @@ as the machine boots. tty1 stays a login prompt. A key or mouse
 hides it. While logged in it then waits ${TABBY_SAVER_IDLE_S}s with
 no input; after logout it waits ${TABBY_SAVER_LOGOUT_IDLE_S}s.
 
-Do not enable if Omarchy or another desktop already owns the GPU." \
+Do not enable if Omarchy or another desktop already owns the GPU.
+Starting LightDM later pauses the kiosk until you stop it." \
     "$yn" || rc=$?
   case "$rc" in
     2) return 0 ;;
@@ -4429,7 +4430,8 @@ Start / stop
   If you used a USB cache you can unmount it.
 
 TTY screensaver (spare VT, default tty8; on unless a desktop owns the GPU)
-  Do not leave it enabled beside Omarchy. Settings / tsctl can disable it.
+  Do not leave it enabled beside Omarchy. Starting LightDM later pauses it.
+  Settings / tsctl can disable it.
   tsctl screensaver enable
   tsctl screensaver timeout=120
   tsctl screensaver logout-timeout=5

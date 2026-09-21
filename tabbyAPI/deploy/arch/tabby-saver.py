@@ -13,6 +13,7 @@ does not run shaders and it retargets the console framebuffer already in VRAM.
 from __future__ import annotations
 
 import argparse
+import array
 import colorsys
 import ctypes
 import fcntl
@@ -44,6 +45,7 @@ OK = (61, 214, 140)
 DOWN = (48, 10, 14)
 DOWN_TEXT = (232, 96, 90)
 
+VT_GETSTATE = 0x5603
 VT_ACTIVATE = 0x5606
 VT_WAITACTIVE = 0x5607
 FBIOGET_VSCREENINFO = 0x4600
@@ -60,6 +62,38 @@ EV_KEY = 0x01
 EV_REL = 0x02
 EV_ABS = 0x03
 _GETTY_COMMS = frozenset({"agetty", "getty", "mingetty", "login", "(sd-pam)", "systemd"})
+# Display managers and graphical servers. comm is 15 chars; gdm-/sddm- catch helpers.
+_GRAPHIC_COMMS = frozenset(
+    {
+        "lightdm",
+        "gdm",
+        "gdm3",
+        "lxdm",
+        "lxdm-binary",
+        "xdm",
+        "sddm",
+        "Xorg",
+        "X",
+        "Xwayland",
+        "gnome-shell",
+        "plasmashell",
+        "kwin_wayland",
+        "kwin_x11",
+        "Hyprland",
+        "sway",
+        "weston",
+        "wayfire",
+        "labwc",
+        "cosmic-comp",
+    }
+)
+_GRAPHIC_RUN_DIRS = (
+    "/run/lightdm",
+    "/run/gdm",
+    "/run/sddm",
+    "/run/lxdm",
+)
+_GRAPHIC_POLL_S = 0.5
 # Click or key drops the field. Motion only peeks the HUD — a wireless
 # mouse or HOTAS axis twitch must not tear down the 4K present path.
 _DISMISS_EVENT_NAMES = (
@@ -3846,14 +3880,19 @@ def should_resume_saver(
     logged_in: bool,
     was_logged_in: bool | None = None,
     boot: bool = False,
+    graphical: bool = False,
 ) -> bool:
     """Show the field after idle while logged in, or after logout-idle when not.
 
     boot=True (service just started after install or reboot) skips those waits
     so the kiosk takes the console immediately. After the first dismiss, idle
-    and logout-idle apply as configured.
+    and logout-idle apply as configured. A display manager or desktop that
+    owns a VT (LightDM on tty7, …) blocks resume even on boot: chvt would
+    steal DRM and leave X as a black screen with a cursor.
     """
     del was_logged_in
+    if graphical:
+        return False
     wait = idle_wait_s(
         idle_s=idle_s,
         logout_idle_s=logout_idle_s,
@@ -3913,7 +3952,7 @@ def _console_ttys_to_check(user_tty: str, saver_tty: str = "") -> list[str]:
     skip = _tty_basename(saver_tty)
     names: list[str] = []
     seen: set[str] = set()
-    for raw in (user_tty, *[f"tty{n}" for n in range(1, 7)]):
+    for raw in (user_tty, *[f"tty{n}" for n in range(1, 13)]):
         name = _tty_basename(raw) or "tty1"
         if not name or name in seen or name == skip:
             continue
@@ -3938,8 +3977,9 @@ def _ps_tty_logged_in(name: str) -> bool:
 def console_logged_in(tty: str, *, saver_tty: str = "") -> bool:
     """True when a person is on a local VT, not only the configured user TTY.
 
-    The kiosk always chvt back to --user-tty (usually tty1), but a login on
-    tty2–tty6 is still a console session. The saver VT itself does not count.
+    The kiosk restores the VT that was foreground when the field came up
+    (usually --user-tty / tty1). A login on tty2–tty12 still counts as a
+    console session. The saver VT itself does not.
     """
     skip = _tty_basename(saver_tty)
 
@@ -3970,6 +4010,88 @@ def console_logged_in(tty: str, *, saver_tty: str = "") -> bool:
     if any(counts(name) for name in who_session_ttys(who_out)):
         return True
     return any(_ps_tty_logged_in(name) for name in _console_ttys_to_check(tty, saver_tty))
+
+
+def is_graphic_comm(comm: str) -> bool:
+    text = (comm or "").strip()
+    if not text:
+        return False
+    if text in _GRAPHIC_COMMS:
+        return True
+    return text.startswith("gdm-") or text.startswith("sddm-")
+
+
+def graphic_proc_present(proc_dir: str = "/proc") -> bool:
+    try:
+        entries = os.listdir(proc_dir)
+    except OSError:
+        return False
+    for entry in entries:
+        if not entry.isdigit():
+            continue
+        try:
+            with open(
+                os.path.join(proc_dir, entry, "comm"),
+                encoding="utf-8",
+                errors="replace",
+            ) as fh:
+                if is_graphic_comm(fh.readline()):
+                    return True
+        except OSError:
+            continue
+    return False
+
+
+def x11_socket_present(path: str = "/tmp/.X11-unix") -> bool:
+    try:
+        return any(name.startswith("X") for name in os.listdir(path))
+    except OSError:
+        return False
+
+
+def graphic_marker_dirs_present(
+    paths: tuple[str, ...] | list[str] = _GRAPHIC_RUN_DIRS,
+) -> bool:
+    return any(os.path.isdir(path) for path in paths)
+
+
+def graphical_console_present(
+    *,
+    proc_dir: str = "/proc",
+    x11_dir: str = "/tmp/.X11-unix",
+    run_dirs: tuple[str, ...] = _GRAPHIC_RUN_DIRS,
+) -> bool:
+    """True when LightDM/GDM/X/Wayland owns a seat. Do not chvt then."""
+    return (
+        graphic_marker_dirs_present(run_dirs)
+        or x11_socket_present(x11_dir)
+        or graphic_proc_present(proc_dir)
+    )
+
+
+def unpack_vt_active(buf: bytes | bytearray) -> int:
+    v_active, _sig, _state = struct.unpack_from("HHH", buf)
+    return int(v_active)
+
+
+def restore_vt_after_field(
+    *,
+    graphical: bool,
+    previous_nr: int,
+    user_nr: int,
+    saver_nr: int,
+) -> int | None:
+    """VT to show after the field drops. None means leave the console alone.
+
+    chvt away from a live X/Wayland session blanks it; NVIDIA DRM often cannot
+    recover (cursor on a black screen). Prefer the VT that was foreground
+    before the kiosk, not always tty1.
+    """
+    if graphical:
+        return None
+    if previous_nr <= 0 or previous_nr == saver_nr:
+        return user_nr
+    return previous_nr
 
 
 def vt_control_paths(own_tty: str = "") -> list[str]:
@@ -4020,6 +4142,35 @@ def activate_vt(nr: int, own_tty: str = "") -> None:
             os.close(fd)
     if last_exc is not None:
         print(f"tabby-saver: chvt {nr} failed: {last_exc}", file=sys.stderr)
+
+
+def foreground_vt(own_tty: str = "") -> int | None:
+    """Active virtual console number, or None if VT_GETSTATE is unavailable."""
+    buf = array.array("H", [0, 0, 0])
+    fd = _stdin_console_fd()
+    if fd is not None:
+        try:
+            fcntl.ioctl(fd, VT_GETSTATE, buf)
+            nr = unpack_vt_active(buf.tobytes())
+            if nr:
+                return nr
+        except OSError:
+            pass
+    for path in vt_control_paths(own_tty):
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NOCTTY)
+        except OSError:
+            continue
+        try:
+            fcntl.ioctl(fd, VT_GETSTATE, buf)
+            nr = unpack_vt_active(buf.tobytes())
+            if nr:
+                return nr
+        except OSError:
+            pass
+        finally:
+            os.close(fd)
+    return None
 
 
 def is_dismiss_event(event: Any, pygame_mod: Any, windowed: bool) -> str | None:
@@ -4230,7 +4381,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--user-tty",
         default=os.environ.get("TABBY_SAVER_USER_TTY", "tty1"),
-        help="Login/getty TTY to show when the saver dismisses",
+        help="Fallback login TTY after dismiss; the foreground VT is preferred",
     )
     parser.add_argument(
         "--saver-tty",
@@ -4316,7 +4467,7 @@ def run_visible_field(
     follow: SceneFollow,
     watch: InputWatch | None = None,
 ) -> str:
-    """Paint until input (kiosk) or ESC/Q (window). Returns dismiss or quit."""
+    """Paint until input (kiosk) or ESC/Q (window). Returns dismiss, yield, or quit."""
     pygame, screen, fb = _init_display(args.window)
     try:
         if args.window:
@@ -4329,6 +4480,7 @@ def run_visible_field(
     clock = pygame.time.Clock()
     prev = time.monotonic()
     grace_until = prev if args.window else prev + 0.6
+    graphics_checked = prev
     scene: dict[str, Any] | None = None
     paint_live: bool | None = None
     try:
@@ -4377,6 +4529,17 @@ def run_visible_field(
                 elif action == "dismiss":
                     print("tabby-saver: field dismissed (evdev key)", file=sys.stderr)
                     return "dismiss"
+            if (
+                not args.window
+                and (now - graphics_checked) >= _GRAPHIC_POLL_S
+            ):
+                graphics_checked = now
+                if graphical_console_present():
+                    print(
+                        "tabby-saver: yielding console to display manager",
+                        file=sys.stderr,
+                    )
+                    return "yield"
             dt = now - prev
             prev = now
             data, ok = bus.snapshot()
@@ -4448,33 +4611,60 @@ def main(argv: list[str] | None = None) -> int:
         logged_in = console_logged_in(user_tty, saver_tty=args.saver_tty)
         # Reboot / first start: take the console now. Idle and logout-idle
         # start after the first key/mouse dismiss, not at process start.
+        # A display manager (LightDM on tty7, …) keeps that wait forever
+        # until it exits; chvt would steal DRM and blank X.
         boot = True
         show = True
+        restore_nr = user_nr
         while True:
             if show:
+                if graphical_console_present():
+                    print(
+                        "tabby-saver: display manager owns the console; waiting",
+                        file=sys.stderr,
+                    )
+                    watch.bump()
+                    boot = False
+                    show = False
+                    continue
+                restore_nr = foreground_vt(args.saver_tty) or user_nr
                 activate_vt(saver_nr, args.saver_tty)
                 print("tabby-saver: showing field on", args.saver_tty, file=sys.stderr)
                 try:
                     action = run_visible_field(args, bus, follow, watch=watch)
                 except Exception as exc:
                     print(f"tabby-saver: display failed: {exc}", file=sys.stderr)
+                    if graphical_console_present():
+                        watch.bump()
+                        boot = False
+                        show = False
+                        continue
                     time.sleep(2.0)
                     continue
                 if action == "quit":
                     return 0
                 watch.bump()
                 boot = False
-                logged_in = console_logged_in(user_tty, saver_tty=args.saver_tty)
-                activate_vt(user_nr, args.saver_tty)
+                graphical = action == "yield" or graphical_console_present()
+                target = restore_vt_after_field(
+                    graphical=graphical,
+                    previous_nr=restore_nr,
+                    user_nr=user_nr,
+                    saver_nr=saver_nr,
+                )
+                if target is not None:
+                    activate_vt(target, args.saver_tty)
                 show = False
                 continue
             login_checked = time.monotonic()
+            graphical = graphical_console_present()
             while not show:
                 now = time.monotonic()
                 # loginctl + who + ps are forks; every 0.25 s is wasted while
                 # the user is at the console. 2 s is well inside the logout wait.
                 if (now - login_checked) >= 2.0:
                     logged_in = console_logged_in(user_tty, saver_tty=args.saver_tty)
+                    graphical = graphical_console_present()
                     login_checked = now
                 if should_resume_saver(
                     now=now,
@@ -4483,6 +4673,7 @@ def main(argv: list[str] | None = None) -> int:
                     logout_idle_s=max(0.0, float(args.logout_idle)),
                     logged_in=logged_in,
                     boot=boot,
+                    graphical=graphical,
                 ):
                     show = True
                     break
