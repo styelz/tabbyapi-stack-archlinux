@@ -1722,7 +1722,6 @@ class SaverKioskSceneTests(unittest.TestCase):
                 self.kiosk.graphical_console_present(
                     proc_dir=str(proc),
                     x11_dir=missing,
-                    run_dirs=(missing,),
                 )
             )
             (proc / "80" / "comm").write_text("bash\n", encoding="utf-8")
@@ -1730,40 +1729,28 @@ class SaverKioskSceneTests(unittest.TestCase):
                 self.kiosk.graphical_console_present(
                     proc_dir=str(proc),
                     x11_dir=missing,
-                    run_dirs=(missing,),
                 )
             )
 
-    def test_graphical_console_present_x11_socket_and_run_dir(self):
+    def test_graphical_console_present_x11_socket_not_idle_run_dir(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             x11 = root / "X11"
             x11.mkdir()
             (x11 / "X0").touch()
-            run = root / "lightdm"
             missing_proc = str(root / "proc")
             self.assertTrue(
                 self.kiosk.graphical_console_present(
                     proc_dir=missing_proc,
                     x11_dir=str(x11),
-                    run_dirs=(str(root / "nope"),),
                 )
             )
             (x11 / "X0").unlink()
-            run.mkdir()
-            self.assertTrue(
-                self.kiosk.graphical_console_present(
-                    proc_dir=missing_proc,
-                    x11_dir=str(x11),
-                    run_dirs=(str(run),),
-                )
-            )
-            run.rmdir()
+            (root / "lightdm").mkdir()
             self.assertFalse(
                 self.kiosk.graphical_console_present(
                     proc_dir=missing_proc,
                     x11_dir=str(x11),
-                    run_dirs=(str(run),),
                 )
             )
 

@@ -87,12 +87,6 @@ _GRAPHIC_COMMS = frozenset(
         "cosmic-comp",
     }
 )
-_GRAPHIC_RUN_DIRS = (
-    "/run/lightdm",
-    "/run/gdm",
-    "/run/sddm",
-    "/run/lxdm",
-)
 _GRAPHIC_POLL_S = 0.5
 # Click or key drops the field. Motion only peeks the HUD — a wireless
 # mouse or HOTAS axis twitch must not tear down the 4K present path.
@@ -4049,24 +4043,18 @@ def x11_socket_present(path: str = "/tmp/.X11-unix") -> bool:
         return False
 
 
-def graphic_marker_dirs_present(
-    paths: tuple[str, ...] | list[str] = _GRAPHIC_RUN_DIRS,
-) -> bool:
-    return any(os.path.isdir(path) for path in paths)
-
-
 def graphical_console_present(
     *,
     proc_dir: str = "/proc",
     x11_dir: str = "/tmp/.X11-unix",
-    run_dirs: tuple[str, ...] = _GRAPHIC_RUN_DIRS,
 ) -> bool:
-    """True when LightDM/GDM/X/Wayland owns a seat. Do not chvt then."""
-    return (
-        graphic_marker_dirs_present(run_dirs)
-        or x11_socket_present(x11_dir)
-        or graphic_proc_present(proc_dir)
-    )
+    """True when LightDM/GDM/X/Wayland is actually running. Do not chvt then.
+
+    /run/lightdm (and gdm/sddm) exist whenever those packages are installed:
+    systemd-tmpfiles creates them on boot even if the unit is disabled. A
+    live X11 socket or a compositor/DM process is the real signal.
+    """
+    return x11_socket_present(x11_dir) or graphic_proc_present(proc_dir)
 
 
 def unpack_vt_active(buf: bytes | bytearray) -> int:
