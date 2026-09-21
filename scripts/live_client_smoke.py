@@ -1,22 +1,19 @@
 #!/usr/bin/env python3
 """Live smoke for UI Chat, UI Code, and OpenAI/IDE clients against a GPU stack.
 
-Credentials stay in the environment. Defaults hit the LAN API and the HTTPS
-reverse-proxy /v1 prefix used by VS Code customendpoint clients.
+Credentials and API bases stay in the environment — not in this file.
 
-  TABBY_API_KEY='…' TABBY_UI_USER=pbp TABBY_UI_PASSWORD='…' \\
-    python3 scripts/live_client_smoke.py
-
-  TABBY_BASES='http://192.168.1.14:5000/v1 https://git.pbptech.com/openai/v1' \\
+  TABBY_API_KEY='…' TABBY_UI_USER='…' TABBY_UI_PASSWORD='…' \\
+    TABBY_BASES='http://<gpu-host>:5000/v1 https://example.com/v1' \\
     python3 scripts/live_client_smoke.py
 
   python3 scripts/live_client_smoke.py --skip-images
 
 Env
   TABBY_API_KEY       Bearer token (UI login password)
-  TABBY_UI_USER       UI username (default pbp)
+  TABBY_UI_USER       UI username (default: current login)
   TABBY_UI_PASSWORD   UI password (default TABBY_API_KEY)
-  TABBY_BASES         Space-separated /v1 bases
+  TABBY_BASES         Space-separated /v1 bases (required)
   TABBY_SKIP_IMAGES   Set to 1 to skip the Comfy cycle
   TABBY_IMAGE_BASE    /v1 base that runs POST /images/generations
                       (default: first https:// base, else first base)
@@ -26,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import getpass
 import hashlib
 import json
 import os
@@ -39,10 +37,6 @@ import urllib.request
 from http.cookiejar import CookieJar
 from typing import Any
 
-DEFAULT_BASES = (
-    "http://192.168.1.14:5000/v1",
-    "https://git.pbptech.com/openai/v1",
-)
 MODEL = "gpt-4o"
 COOKIE_NAME = "tabby_ui"
 PNG_1X1 = base64.b64decode(
@@ -807,13 +801,20 @@ def main() -> int:
     args = parser.parse_args()
 
     api_key = os.environ.get("TABBY_API_KEY") or ""
-    user = os.environ.get("TABBY_UI_USER") or "pbp"
+    user = os.environ.get("TABBY_UI_USER") or getpass.getuser()
     password = os.environ.get("TABBY_UI_PASSWORD") or api_key
     if not api_key or not password:
         print("Set TABBY_API_KEY (and TABBY_UI_PASSWORD if it differs).", file=sys.stderr)
         return 2
 
-    bases = os.environ.get("TABBY_BASES", "").split() or list(DEFAULT_BASES)
+    bases = os.environ.get("TABBY_BASES", "").split()
+    if not bases:
+        print(
+            "Set TABBY_BASES to one or more /v1 URLs "
+            "(e.g. http://<gpu-host>:5000/v1).",
+            file=sys.stderr,
+        )
+        return 2
     skip_images = args.skip_images or os.environ.get("TABBY_SKIP_IMAGES") == "1"
     image_base = (os.environ.get("TABBY_IMAGE_BASE") or "").rstrip("/")
     if not skip_images and not image_base:

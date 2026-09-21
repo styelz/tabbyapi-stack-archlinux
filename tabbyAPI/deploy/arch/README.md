@@ -115,7 +115,7 @@ from the first-menu **Restore from backup** option, `tsos-installer.sh
 chat data are copied when they were included in the backup. Restart TabbyAPI
 after restoring config onto a running stack (`tsctl restore`).
 
-Chat phrases and mixed page+images: `$HOME/tabbyapi-stack/AGENTS.md`. In Code, file writes stream into the chat; the coding transcript auto-collapses while Comfy renders. Image URLs keep any reverse-proxy prefix (`/openai/v1`). Live Chat/Code/IDE check from a machine that can reach the API: `python3 scripts/live_client_smoke.py` (see the repository README).
+Chat phrases and mixed page+images: `$HOME/tabbyapi-stack/AGENTS.md`. In Code, file writes stream into the chat; the coding transcript auto-collapses while Comfy renders. Image URLs keep any reverse-proxy prefix (`/openai/v1`).
 
 ## Update
 
