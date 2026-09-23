@@ -308,7 +308,7 @@ class LibraryAndDeleteTests(unittest.TestCase):
             self.assertIsNone(data["llms"][0]["vision"])
             self.assertIn(32768, data["context_choices"])
             self.assertEqual(data["context_choices"][0], 8192)
-            self.assertEqual(data["context_choices"][-1], 262144)
+            self.assertEqual(data["context_choices"][-1], 524288)
 
     def test_set_profile_context_writes_exl_and_gguf(self):
         with tempfile.TemporaryDirectory() as raw:

@@ -223,7 +223,8 @@ def sanitize_folder_name(raw: str) -> str:
 
 
 MIN_SEQ_LEN = 256
-MAX_SEQ_LEN = 262144
+# 512k is the longest Q4 cache that can still load beside 4 bpw 9B weights on 12 GB.
+MAX_SEQ_LEN = 524288
 CONTEXT_LEN_CHOICES = list(range(8192, MAX_SEQ_LEN + 1, 8192))
 
 

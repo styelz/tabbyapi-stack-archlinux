@@ -28,8 +28,8 @@ SECRET_KEYS = frozenset(
     }
 )
 
-# Settings UI: 8k … 256k in 8k (8192-token) steps.
-CONTEXT_LEN_CHOICES = list(range(8192, 262144 + 1, 8192))
+# Settings UI: 8k … 512k in 8k (8192-token) steps.
+CONTEXT_LEN_CHOICES = list(range(8192, 524288 + 1, 8192))
 CONTEXT_LEN_FIELDS = frozenset({"max_seq_len", "cache_size"})
 
 SYSTEM_FIELDS = (

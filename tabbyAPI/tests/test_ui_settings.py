@@ -96,11 +96,11 @@ class SettingsJsTests(unittest.TestCase):
 
 class ContextLenChoicesTests(unittest.TestCase):
     def test_model_context_fields_use_8k_steps(self):
-        steps = list(range(8192, 262144 + 1, 8192))
+        steps = list(range(8192, 524288 + 1, 8192))
         self.assertEqual(settings.CONTEXT_LEN_CHOICES, steps)
-        self.assertEqual(len(steps), 32)
+        self.assertEqual(len(steps), 64)
         self.assertEqual(steps[0], 8192)
-        self.assertEqual(steps[-1], 262144)
+        self.assertEqual(steps[-1], 524288)
         model = next(section for section in settings.tabby_schema() if section["name"] == "model")
         fields = {field["name"]: field for field in model["fields"]}
         self.assertEqual(fields["max_seq_len"]["choices"], [-1] + steps)
