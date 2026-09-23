@@ -151,6 +151,20 @@ def prepare_kiosk_sdl_env() -> None:
     os.environ.pop("WAYLAND_DISPLAY", None)
 
 
+def prepare_overlay_sdl_env(display: str, xauthority: str = "") -> None:
+    """Software SDL on an existing X seat. Do not open kmsdrm or /dev/fb0."""
+    os.environ["SDL_VIDEODRIVER"] = "x11"
+    os.environ["SDL_RENDER_DRIVER"] = "software"
+    os.environ["LIBGL_ALWAYS_SOFTWARE"] = "1"
+    os.environ["SDL_AUDIODRIVER"] = "dummy"
+    os.environ["DISPLAY"] = display
+    os.environ.pop("WAYLAND_DISPLAY", None)
+    if xauthority:
+        os.environ["XAUTHORITY"] = xauthority
+    else:
+        os.environ.pop("XAUTHORITY", None)
+
+
 def read_fb0_geometry(
     sys_dir: str = "/sys/class/graphics/fb0",
 ) -> tuple[int, int, int, int]:
@@ -3880,13 +3894,12 @@ def should_resume_saver(
 
     boot=True (service just started after install or reboot) skips those waits
     so the kiosk takes the console immediately. After the first dismiss, idle
-    and logout-idle apply as configured. A display manager or desktop that
-    owns a VT (LightDM on tty7, …) blocks resume even on boot: chvt would
-    steal DRM and leave X as a black screen with a cursor.
+    and logout-idle apply as configured. A display manager (LightDM on tty7)
+    uses the logged-in idle wait and overlays X; it must not chvt.
     """
     del was_logged_in
     if graphical:
-        return False
+        return (now - last_input) >= idle_s
     wait = idle_wait_s(
         idle_s=idle_s,
         logout_idle_s=logout_idle_s,
@@ -4037,10 +4050,61 @@ def graphic_proc_present(proc_dir: str = "/proc") -> bool:
 
 
 def x11_socket_present(path: str = "/tmp/.X11-unix") -> bool:
+    return bool(x11_socket_displays(path))
+
+
+def x11_socket_displays(path: str = "/tmp/.X11-unix") -> list[str]:
+    """X display names such as :0 from /tmp/.X11-unix/X0."""
+    found: list[str] = []
     try:
-        return any(name.startswith("X") for name in os.listdir(path))
+        names = os.listdir(path)
     except OSError:
-        return False
+        return found
+    for name in names:
+        if name.startswith("X") and name[1:].isdigit():
+            found.append(":" + name[1:])
+    found.sort(key=lambda text: int(text[1:]))
+    return found
+
+
+def x11_authority_paths(display: str, *, home: str = "") -> list[str]:
+    """Readable Xauthority files for this display, user cookie first."""
+    home = home or os.environ.get("HOME", "")
+    candidates: list[str] = []
+    env = (os.environ.get("XAUTHORITY") or "").strip()
+    if env:
+        candidates.append(env)
+    if home:
+        candidates.append(os.path.join(home, ".Xauthority"))
+    if display:
+        candidates.append(f"/run/lightdm/root/{display}")
+        candidates.append(f"/var/run/lightdm/root/{display}")
+    found: list[str] = []
+    seen: set[str] = set()
+    for path in candidates:
+        if not path or path in seen:
+            continue
+        seen.add(path)
+        if os.path.isfile(path) and os.access(path, os.R_OK):
+            found.append(path)
+    return found
+
+
+def x11_overlay_env(
+    *,
+    x11_dir: str = "/tmp/.X11-unix",
+    home: str = "",
+) -> dict[str, str] | None:
+    """DISPLAY (and XAUTHORITY when readable) for overlaying a live X seat."""
+    displays = x11_socket_displays(x11_dir)
+    if not displays:
+        return None
+    display = displays[0]
+    env = {"DISPLAY": display}
+    auths = x11_authority_paths(display, home=home)
+    if auths:
+        env["XAUTHORITY"] = auths[0]
+    return env
 
 
 def graphical_console_present(
@@ -4379,11 +4443,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _init_display(windowed: bool):
+def _init_display(windowed: bool, overlay: bool = False):
     os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
     os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
     fb: CpuFramebuffer | None = None
-    if not windowed:
+    if overlay:
+        pass
+    elif not windowed:
         prepare_kiosk_sdl_env()
     try:
         import pygame
@@ -4407,6 +4473,16 @@ def _init_display(windowed: bool):
         if val is not None and val not in allowed:
             allowed.append(val)
     pygame.event.set_allowed(allowed)
+    if overlay:
+        info = pygame.display.Info()
+        width, height = int(info.current_w or 0), int(info.current_h or 0)
+        if width < 64 or height < 36:
+            width, height = 1920, 1080
+        flags = int(getattr(pygame, "FULLSCREEN", 0) or 0)
+        noframe = int(getattr(pygame, "NOFRAME", 0) or 0)
+        screen = pygame.display.set_mode((width, height), flags | noframe)
+        pygame.display.set_caption("tabbyapi-stack")
+        return pygame, screen, None
     if windowed:
         screen = pygame.display.set_mode((1280, 720), pygame.RESIZABLE)
         pygame.display.set_caption("tabbyapi-stack")
@@ -4454,11 +4530,13 @@ def run_visible_field(
     bus: StateBus,
     follow: SceneFollow,
     watch: InputWatch | None = None,
+    overlay: bool = False,
 ) -> str:
     """Paint until input (kiosk) or ESC/Q (window). Returns dismiss, yield, or quit."""
-    pygame, screen, fb = _init_display(args.window)
+    pygame, screen, fb = _init_display(args.window, overlay=overlay)
+    windowed = bool(args.window) and not overlay
     try:
-        if args.window:
+        if windowed or overlay:
             pygame.event.set_grab(True)
     except Exception:
         pass
@@ -4467,7 +4545,7 @@ def run_visible_field(
     font = small = info = None
     clock = pygame.time.Clock()
     prev = time.monotonic()
-    grace_until = prev if args.window else prev + 0.6
+    grace_until = prev if windowed else prev + 0.6
     graphics_checked = prev
     scene: dict[str, Any] | None = None
     paint_live: bool | None = None
@@ -4484,7 +4562,7 @@ def run_visible_field(
                 action = field_input_action(
                     event,
                     pygame,
-                    args.window,
+                    windowed,
                     idle_quiet=quiet,
                     hud_alpha=hud_alpha,
                     hud_hold_s=follow.hud_hold_s,
@@ -4518,7 +4596,8 @@ def run_visible_field(
                     print("tabby-saver: field dismissed (evdev key)", file=sys.stderr)
                     return "dismiss"
             if (
-                not args.window
+                not windowed
+                and not overlay
                 and (now - graphics_checked) >= _GRAPHIC_POLL_S
             ):
                 graphics_checked = now
@@ -4599,18 +4678,47 @@ def main(argv: list[str] | None = None) -> int:
         logged_in = console_logged_in(user_tty, saver_tty=args.saver_tty)
         # Reboot / first start: take the console now. Idle and logout-idle
         # start after the first key/mouse dismiss, not at process start.
-        # A display manager (LightDM on tty7, …) keeps that wait forever
-        # until it exits; chvt would steal DRM and blank X.
+        # LightDM/X uses the logged-in idle wait, then overlays that seat
+        # instead of chvt (NVIDIA cannot recover a stolen DRM master).
         boot = True
         show = True
         restore_nr = user_nr
+        if graphical_console_present():
+            boot = False
+            show = False
+            print(
+                "tabby-saver: display manager present; overlay after idle",
+                file=sys.stderr,
+            )
         while True:
             if show:
-                if graphical_console_present():
+                graphical = graphical_console_present()
+                overlay_env = x11_overlay_env() if graphical else None
+                if graphical and overlay_env is None:
+                    time.sleep(2.0)
+                    continue
+                if overlay_env is not None:
+                    prepare_overlay_sdl_env(
+                        overlay_env["DISPLAY"],
+                        overlay_env.get("XAUTHORITY", ""),
+                    )
                     print(
-                        "tabby-saver: display manager owns the console; waiting",
+                        "tabby-saver: overlay field on",
+                        overlay_env["DISPLAY"],
                         file=sys.stderr,
                     )
+                    try:
+                        action = run_visible_field(
+                            args, bus, follow, watch=watch, overlay=True
+                        )
+                    except Exception as exc:
+                        print(f"tabby-saver: overlay failed: {exc}", file=sys.stderr)
+                        watch.bump()
+                        boot = False
+                        show = False
+                        continue
+                    if action == "quit":
+                        return 0
                     watch.bump()
                     boot = False
                     show = False

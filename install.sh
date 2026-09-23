@@ -3213,7 +3213,8 @@ hides it. While logged in it then waits ${TABBY_SAVER_IDLE_S}s with
 no input; after logout it waits ${TABBY_SAVER_LOGOUT_IDLE_S}s.
 
 Do not enable if Omarchy or another desktop already owns the GPU.
-Starting LightDM later pauses the kiosk until you stop it." \
+Starting LightDM later overlays that login screen after the same
+idle timeout as a used console." \
     "$yn" || rc=$?
   case "$rc" in
     2) return 0 ;;
@@ -4273,6 +4274,29 @@ if [[ -f "$SAVER_UNIT_SRC" ]]; then
   rm -f "$SAVER_TMP"
 fi
 
+install_lightdm_saver_hook() {
+  local tabby="$1"
+  local src="$tabby/deploy/arch/tabby-saver-lightdm.conf"
+  local dest=/etc/lightdm/lightdm.conf.d/50-tabby-saver.conf
+  [[ -f "$src" ]] || return 0
+  if [[ ! -d /etc/lightdm && ! -x /usr/bin/lightdm ]]; then
+    return 0
+  fi
+  sudo -n mkdir -p /etc/lightdm/lightdm.conf.d >>"$INSTALL_LOG" 2>&1 || return 0
+  local tmp
+  tmp="$(mktemp)"
+  sed -e "s|__TABBY_DIR__|$tabby|g" "$src" > "$tmp"
+  if [[ -f "$dest" ]] && cmp -s "$tmp" "$dest"; then
+    rm -f "$tmp"
+    return 0
+  fi
+  if sudo -n install -m 644 "$tmp" "$dest" >>"$INSTALL_LOG" 2>&1; then
+    echo "Wrote $dest" >> "$INSTALL_LOG"
+  fi
+  rm -f "$tmp"
+}
+install_lightdm_saver_hook "$DEST_TABBY"
+
 # NVIDIA fan/power controller. Root NVML; Settings / tsctl gpu write tabby.env.
 GPU_UNIT_SRC="$DEST_TABBY/deploy/arch/tabby-gpu.service"
 if [[ ! -f "$GPU_UNIT_SRC" ]]; then
@@ -4430,7 +4454,7 @@ Start / stop
   If you used a USB cache you can unmount it.
 
 TTY screensaver (spare VT, default tty8; on unless a desktop owns the GPU)
-  Do not leave it enabled beside Omarchy. Starting LightDM later pauses it.
+  Do not leave it enabled beside Omarchy. LightDM is overlaid after the idle timeout.
   Settings / tsctl can disable it.
   tsctl screensaver enable
   tsctl screensaver timeout=120

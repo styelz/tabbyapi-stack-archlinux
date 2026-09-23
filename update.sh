@@ -771,6 +771,22 @@ install_tabby_saver() {
     fi
     rm -f "$tmp"
   fi
+  if [[ -d /etc/lightdm || -x /usr/bin/lightdm ]]; then
+    local hook_src="$tabby/deploy/arch/tabby-saver-lightdm.conf"
+    local hook_dest=/etc/lightdm/lightdm.conf.d/50-tabby-saver.conf
+    if [[ -f "$hook_src" ]] && sudo -n mkdir -p /etc/lightdm/lightdm.conf.d 2>/dev/null; then
+      tmp="$(mktemp)"
+      sed -e "s|__TABBY_DIR__|$tabby|g" "$hook_src" > "$tmp"
+      if [[ -f "$hook_dest" ]] && cmp -s "$tmp" "$hook_dest"; then
+        rm -f "$tmp"
+      elif sudo -n install -m 644 "$tmp" "$hook_dest" 2>/dev/null; then
+        printf '%s\n' "==> Wrote $hook_dest" >> "$UPDATE_LOG"
+        rm -f "$tmp"
+      else
+        rm -f "$tmp"
+      fi
+    fi
+  fi
   local py=""
   py="$(command -v python3 || true)"
   [[ -x "$py" ]] || py=/usr/bin/python3

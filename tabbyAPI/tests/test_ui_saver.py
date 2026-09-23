@@ -1604,6 +1604,18 @@ class SaverKioskSceneTests(unittest.TestCase):
         self.assertNotIn("getty@", text)
         self.assertIn("plymouth-quit.service", text)
         self.assertIn("systemd-user-sessions.service", text)
+        hook = (
+            Path(__file__).resolve().parents[1]
+            / "deploy/arch/tabby-saver-x11-setup.sh"
+        ).read_text(encoding="utf-8")
+        conf = (
+            Path(__file__).resolve().parents[1]
+            / "deploy/arch/tabby-saver-lightdm.conf"
+        ).read_text(encoding="utf-8")
+        self.assertIn("xhost", hook)
+        self.assertIn("display-setup-script=__TABBY_DIR__", conf)
+        self.assertNotIn("pbptech", hook)
+        self.assertNotIn("192.168.", hook)
 
     def test_follow_fades_neuron_overlay(self):
         follow = self.kiosk.SceneFollow()
@@ -1776,7 +1788,7 @@ class SaverKioskSceneTests(unittest.TestCase):
         self.assertEqual(self.kiosk.unpack_vt_active(b"\x07\x00\x00\x00\x00\x00"), 7)
         self.assertEqual(self.kiosk.unpack_vt_active(b"\x01\x00\x00\x00\x00\x00"), 1)
 
-    def test_resume_blocked_while_graphical(self):
+    def test_resume_graphical_uses_idle_timeout(self):
         resume = self.kiosk.should_resume_saver
         self.assertFalse(
             resume(
@@ -1791,14 +1803,50 @@ class SaverKioskSceneTests(unittest.TestCase):
         )
         self.assertFalse(
             resume(
+                now=100.0,
+                last_input=10.0,
+                idle_s=120.0,
+                logout_idle_s=5.0,
+                logged_in=False,
+                graphical=True,
+            )
+        )
+        self.assertTrue(
+            resume(
                 now=140.0,
                 last_input=10.0,
                 idle_s=120.0,
                 logout_idle_s=5.0,
-                logged_in=True,
+                logged_in=False,
+                boot=True,
                 graphical=True,
             )
         )
+
+    def test_x11_overlay_env_from_socket(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            x11 = root / "X11"
+            x11.mkdir()
+            (x11 / "X0").touch()
+            home = root / "home"
+            home.mkdir()
+            auth = home / ".Xauthority"
+            auth.write_bytes(b"\0")
+            with mock.patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("XAUTHORITY", None)
+                env = self.kiosk.x11_overlay_env(x11_dir=str(x11), home=str(home))
+                self.assertEqual(env["DISPLAY"], ":0")
+                self.assertEqual(env["XAUTHORITY"], str(auth))
+                auth.unlink()
+                env = self.kiosk.x11_overlay_env(x11_dir=str(x11), home=str(home))
+                self.assertEqual(env["DISPLAY"], ":0")
+                self.assertNotIn("XAUTHORITY", env)
+                self.assertIsNone(
+                    self.kiosk.x11_overlay_env(
+                        x11_dir=str(root / "missing"), home=str(home)
+                    )
+                )
 
     def test_tty_nr_and_evdev(self):
         self.assertEqual(self.kiosk.tty_nr("tty8"), 8)
@@ -1883,6 +1931,19 @@ class SaverKioskSceneTests(unittest.TestCase):
             self.assertEqual(os.environ["SDL_VIDEODRIVER"], "dummy")
             self.assertEqual(os.environ["SDL_RENDER_DRIVER"], "software")
             self.assertNotIn("DISPLAY", os.environ)
+            self.assertNotIn("WAYLAND_DISPLAY", os.environ)
+
+    def test_overlay_sdl_env_uses_x11(self):
+        with mock.patch.dict(
+            os.environ,
+            {"SDL_VIDEODRIVER": "dummy", "WAYLAND_DISPLAY": "wayland-0"},
+            clear=False,
+        ):
+            self.kiosk.prepare_overlay_sdl_env(":0", "/tmp/xauth")
+            self.assertEqual(os.environ["SDL_VIDEODRIVER"], "x11")
+            self.assertEqual(os.environ["SDL_RENDER_DRIVER"], "software")
+            self.assertEqual(os.environ["DISPLAY"], ":0")
+            self.assertEqual(os.environ["XAUTHORITY"], "/tmp/xauth")
             self.assertNotIn("WAYLAND_DISPLAY", os.environ)
 
     def test_compose_size_caps_4k(self):

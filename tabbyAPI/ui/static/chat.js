@@ -1949,6 +1949,28 @@ function mountChat(root) {
     renderSidebar();
   }
 
+  function expandableWorkspaceIds() {
+    const list = listedChats();
+    const seen = new Set();
+    const ids = [];
+    list.forEach((chat) => {
+      const rootId = isWorkspaceRoot(chat) ? chat.id : chatParentId(chat);
+      if (!rootId || seen.has(rootId)) return;
+      seen.add(rootId);
+      if (listedWorkspaceKids(rootId, list).length) ids.push(rootId);
+    });
+    return ids;
+  }
+
+  function setAllWorkspacesOpen(open) {
+    const next = Boolean(open);
+    expandableWorkspaceIds().forEach((id) => {
+      wsOpen[id] = next;
+    });
+    persistWsOpen();
+    renderSidebar();
+  }
+
   function workspaceExpanded(id) {
     const q = String((searchEl && searchEl.value) || "").trim();
     if (q) return true;
@@ -3742,6 +3764,14 @@ function mountChat(root) {
 
   function setFolderOpen(name, open) {
     folderOpen[name] = Boolean(open);
+    renderSidebar();
+  }
+
+  function setAllFoldersOpen(open) {
+    const next = Boolean(open);
+    knownFolders().forEach((name) => {
+      folderOpen[name] = next;
+    });
     renderSidebar();
   }
 
@@ -14192,6 +14222,21 @@ function mountChat(root) {
     return Boolean(inFlight || modelLoading);
   }
 
+  function chatListToggleItems() {
+    if (activeMode() === "code") {
+      const ids = expandableWorkspaceIds();
+      return [
+        { label: "Expand all", disabled: !ids.some((wid) => !workspaceExpanded(wid)), run: () => setAllWorkspacesOpen(true) },
+        { label: "Collapse all", disabled: !ids.some((wid) => workspaceExpanded(wid)), run: () => setAllWorkspacesOpen(false) },
+      ];
+    }
+    const names = knownFolders();
+    return [
+      { label: "Expand all", disabled: !names.some((name) => !folderExpanded(name)), run: () => setAllFoldersOpen(true) },
+      { label: "Collapse all", disabled: !names.some((name) => folderExpanded(name)), run: () => setAllFoldersOpen(false) },
+    ];
+  }
+
   function navMenuItems(id) {
     const chat = store.chats.find((item) => item.id === id);
     if (!chat) return [];
@@ -14202,6 +14247,7 @@ function mountChat(root) {
       { label: "Open", run: () => (root ? openWorkspaceNav(id) : loadChat(id)) },
       root ? { label: "Expand", disabled: kidCount === 0 || expanded, run: () => setWorkspaceOpen(id, true) } : null,
       root ? { label: "Collapse", disabled: kidCount === 0 || !expanded, run: () => setWorkspaceOpen(id, false) } : null,
+      ...chatListToggleItems(),
       root ? { label: "New chat in this workspace", run: () => startNestedChat(id) } : null,
       { label: "Rename", run: () => {
         if (!root) loadChat(id);
@@ -14543,6 +14589,8 @@ function mountChat(root) {
       openCtx(event, [
         { label: "Rename folder", run: () => renameChatFolder(group.dataset.folder) },
         { label: folderExpanded(group.dataset.folder) ? "Collapse" : "Expand", run: () => setFolderOpen(group.dataset.folder, !folderExpanded(group.dataset.folder)) },
+        { sep: true },
+        ...chatListToggleItems(),
       ]);
       return;
     }
@@ -14556,6 +14604,9 @@ function mountChat(root) {
         activeMode() === "chat" ? { label: "New folder", run: () => promptNewFolder() } : null,
         activeMode() === "code" ? { label: "New chat in this workspace", run: () => startNestedChat(activeWorkspaceId()) } : null,
         { label: activeMode() === "code" ? "Search workspaces" : "Search chats", kbd: "Ctrl+K", run: () => { if (searchEl) { searchEl.focus(); searchEl.select(); } } },
+        { sep: true },
+        ...chatListToggleItems(),
+        { sep: true },
         { label: "Clear history", danger: true, run: () => clearHistory() },
       ]);
       return;
