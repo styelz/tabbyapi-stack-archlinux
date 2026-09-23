@@ -167,6 +167,26 @@ const PLAY_SVG =
   '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M5 3.25v9.5L13.25 8z"/></svg>';
 const STOP_SVG =
   '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><rect x="4" y="4" width="8" height="8" rx="1.25"/></svg>';
+const GIT_PULL_SVG =
+  '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 2.2v7.3"/><path d="M5.1 6.8 8 9.7l2.9-2.9"/><path d="M3 12.9h10"/></svg>';
+const GIT_PUSH_SVG =
+  '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 13.8V6.5"/><path d="M5.1 9.2 8 6.3l2.9 2.9"/><path d="M3 3.1h10"/></svg>';
+const GIT_SYNC_SVG =
+  '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M13.2 6.15A5.2 5.2 0 0 0 3.7 4.3"/><path d="M3.1 2.25v2.6h2.6"/><path d="M2.8 9.85a5.2 5.2 0 0 0 9.5 1.85"/><path d="M12.9 13.75v-2.6h-2.6"/></svg>';
+const GIT_FETCH_SVG =
+  '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 2.15v5.7"/><path d="M5.35 5.6 8 8.25 10.65 5.6"/><path d="M3.35 10.7h9.3V13.2h-9.3z"/></svg>';
+const GIT_REFRESH_SVG =
+  '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M13.15 8a5.15 5.15 0 1 1-1.5-3.65"/><path d="M13.2 2.35V5.25H10.3"/></svg>';
+const GIT_BRANCH_SVG =
+  '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><circle cx="4.7" cy="3.25" r="1.15" fill="currentColor"/><circle cx="11.3" cy="6.05" r="1.15" fill="currentColor"/><circle cx="4.7" cy="12.75" r="1.15" fill="currentColor"/><path d="M4.7 4.45v7.15"/><path d="M4.7 8.05c2.2.2 4.7-.35 5.35-2.05"/></svg>';
+const GIT_COMMIT_SVG =
+  '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3.1 8.35 6.35 11.55 12.9 4.5"/></svg>';
+const GIT_MORE_SVG =
+  '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><circle cx="3.2" cy="8" r="0.95" fill="currentColor"/><circle cx="8" cy="8" r="0.95" fill="currentColor"/><circle cx="12.8" cy="8" r="0.95" fill="currentColor"/></svg>';
+const GIT_CLONE_SVG =
+  '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.9 6.35V4.15h3.05L7.25 5.85H13.1v6.9H2.9z"/><path d="M8 7.15v3.45"/><path d="M6.15 9.05 8 10.85 9.85 9.05"/></svg>';
+const GIT_INIT_SVG =
+  '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><circle cx="8" cy="8" r="5.15"/><path d="M8 5.2v5.6M5.2 8h5.6"/></svg>';
 
 function mountChat(root) {
   root.innerHTML = `
@@ -425,11 +445,14 @@ function mountChat(root) {
         <div class="chat-files-tree" id="chat-files-tree"></div>
         <div class="chat-files-history is-collapsed" id="chat-files-git">
           <button type="button" class="chat-resize chat-resize-y" id="chat-files-git-resize" aria-label="Resize git pane" title="Drag to resize"></button>
-          <button type="button" class="chat-files-history-head" id="chat-files-git-toggle" aria-expanded="false">
-            <span class="chat-files-twist" aria-hidden="true"></span>
-            <span class="chat-files-history-title">Git</span>
-            <span class="chat-files-history-count" id="chat-files-git-count"></span>
-          </button>
+          <div class="chat-files-history-head chat-git-bar">
+            <button type="button" class="chat-git-toggle" id="chat-files-git-toggle" aria-expanded="false">
+              <span class="chat-files-twist" aria-hidden="true"></span>
+              <span class="chat-files-history-title">Git</span>
+              <span class="chat-files-history-count" id="chat-files-git-count"></span>
+            </button>
+            <div class="chat-git-toolbar" id="chat-files-git-tools" role="toolbar" aria-label="Git"></div>
+          </div>
           <div class="chat-files-history-list" id="chat-files-git-list"></div>
         </div>
         <div class="chat-files-history" id="chat-files-changes">
@@ -514,6 +537,7 @@ function mountChat(root) {
   const filesTree = root.querySelector("#chat-files-tree");
   const filesGitList = root.querySelector("#chat-files-git-list");
   const filesGitToggle = root.querySelector("#chat-files-git-toggle");
+  const filesGitTools = root.querySelector("#chat-files-git-tools");
   const filesGitPane = root.querySelector("#chat-files-git");
   const filesGitCountEl = root.querySelector("#chat-files-git-count");
   const filesFilterEl = root.querySelector("#chat-files-filter");
@@ -589,6 +613,8 @@ function mountChat(root) {
   let gitStatus = null;
   let gitLogRows = [];
   let gitCommitMsg = "";
+  let gitFocusMessage = false;
+  let gitToolSig = "";
   let gitBusy = false;
   let gitAction = "";
   let gitReq = 0;
@@ -2352,6 +2378,8 @@ function mountChat(root) {
     gitBusy = false;
     gitAction = "";
     gitPaintSig = "";
+    gitToolSig = "";
+    gitFocusMessage = false;
     gitRefreshAgain = false;
     if (gitRefreshTimer) {
       clearTimeout(gitRefreshTimer);
@@ -2561,6 +2589,7 @@ function mountChat(root) {
     if (filesGitPane) filesGitPane.classList.toggle("is-collapsed", !gitOpen);
     if (filesGitToggle) filesGitToggle.setAttribute("aria-expanded", gitOpen ? "true" : "false");
     paintSectionCount(filesGitCountEl, gitDirtyCount());
+    paintGitToolbar();
   }
 
   function setChangesOpen(open) {
@@ -3408,11 +3437,87 @@ function mountChat(root) {
         return "Forgetting token…";
       case "refresh":
         return "Refreshing…";
+      case "sync":
+        return "Syncing…";
+      case "stage-all":
+        return "Staging…";
+      case "unstage-all":
+        return "Unstaging…";
+      case "commit-all":
+        return "Committing…";
+      case "creds":
+        return "Saving token…";
       case "toggle":
         return "Updating…";
       default:
         return "Working…";
     }
+  }
+
+  function gitCounts() {
+    const repo = Boolean(gitStatus && gitStatus.repo);
+    return {
+      repo,
+      ahead: repo ? Number(gitStatus.ahead) || 0 : 0,
+      behind: repo ? Number(gitStatus.behind) || 0 : 0,
+      upstream: repo ? String(gitStatus.upstream || "") : "",
+    };
+  }
+
+  function gitToolButton(act, label, svg, badge) {
+    const busy = gitBusy && gitAction === act;
+    const disabled = Boolean(gitBusy && act !== "more");
+    const cls = `btn ghost chat-icon chat-git-tool${busy ? " is-busy" : ""}`;
+    const bits = [
+      'type="button"',
+      `class="${cls}"`,
+      `data-git-tool="${TabbyUI.escapeHtml(act)}"`,
+      `aria-label="${TabbyUI.escapeHtml(label)}"`,
+      `title="${TabbyUI.escapeHtml(label)}"`,
+    ];
+    if (disabled) bits.push("disabled");
+    if (busy) bits.push('aria-busy="true"');
+    if (act === "more") bits.push('aria-haspopup="menu"');
+    const mark = badge ? `<span class="chat-git-badge">${TabbyUI.escapeHtml(String(badge))}</span>` : "";
+    return `<button ${bits.join(" ")}>${svg}${mark}</button>`;
+  }
+
+  function paintGitToolbar() {
+    if (!filesGitTools) return;
+    const counts = gitCounts();
+    const sig = JSON.stringify({
+      mode: activeMode(),
+      busy: gitBusy,
+      action: gitAction,
+      repo: counts.repo,
+      known: gitStatus != null,
+      ahead: counts.ahead,
+      behind: counts.behind,
+      upstream: counts.upstream,
+    });
+    if (sig === gitToolSig) return;
+    gitToolSig = sig;
+    if (activeMode() !== "code") {
+      filesGitTools.innerHTML = "";
+      return;
+    }
+    const buttons = [];
+    if (counts.repo) {
+      const publish = !counts.upstream;
+      buttons.push(gitToolButton("pull", counts.behind ? `Pull ↓${counts.behind}` : "Pull", GIT_PULL_SVG, counts.behind || ""));
+      buttons.push(gitToolButton("push", publish ? "Publish Branch" : (counts.ahead ? `Push ↑${counts.ahead}` : "Push"), GIT_PUSH_SVG, counts.ahead || ""));
+      const syncLabel = counts.ahead || counts.behind ? `Sync ↓${counts.behind} ↑${counts.ahead}` : "Sync";
+      buttons.push(gitToolButton("sync", syncLabel, GIT_SYNC_SVG));
+      buttons.push(gitToolButton("fetch", "Fetch", GIT_FETCH_SVG));
+      buttons.push(gitToolButton("commit", "Commit", GIT_COMMIT_SVG));
+      buttons.push(gitToolButton("branch", "Checkout to…", GIT_BRANCH_SVG));
+    } else if (gitStatus) {
+      buttons.push(gitToolButton("clone", "Clone Repository", GIT_CLONE_SVG));
+      buttons.push(gitToolButton("init", "Initialize Repository", GIT_INIT_SVG));
+    }
+    buttons.push(gitToolButton("refresh", "Refresh", GIT_REFRESH_SVG));
+    buttons.push(gitToolButton("more", "More Actions", GIT_MORE_SVG));
+    filesGitTools.innerHTML = buttons.join("");
   }
 
   function gitActionBtn(act, label, extraClass) {
@@ -3465,7 +3570,10 @@ function mountChat(root) {
     filesGitList.setAttribute("aria-busy", gitBusy ? "true" : "false");
     filesGitList.classList.toggle("is-busy", gitBusy);
     const sig = gitListSignature();
-    if (!force && sig === gitPaintSig && filesGitList.childElementCount) return;
+    if (!force && sig === gitPaintSig && filesGitList.childElementCount) {
+      if (gitFocusMessage) focusGitMessage();
+      return;
+    }
     gitPaintSig = sig;
     if (activeMode() !== "code") {
       filesGitList.innerHTML = "";
@@ -3506,15 +3614,14 @@ function mountChat(root) {
     }
     const head = document.createElement("div");
     head.className = "chat-git-head";
+    const branchTitle = gitStatus.upstream ? `Checkout to… (${gitStatus.upstream})` : "Checkout to…";
     head.innerHTML =
-      `<span class="chat-git-branch" title="${TabbyUI.escapeHtml(gitStatus.upstream || branch)}">${TabbyUI.escapeHtml(branch)}${TabbyUI.escapeHtml(track)}</span>` +
-      gitActionBtn("branch", "Branch");
+      `<button type="button" class="chat-git-branch" data-git="branch" title="${TabbyUI.escapeHtml(branchTitle)}"${gitBusy ? " disabled" : ""}>${TabbyUI.escapeHtml(branch)}${TabbyUI.escapeHtml(track)}</button>`;
     frag.appendChild(head);
     const commitWrap = document.createElement("div");
     commitWrap.className = "chat-git-commit";
     commitWrap.innerHTML =
-      `<textarea id="chat-git-message" rows="2" placeholder="Commit message"${gitBusy ? " disabled" : ""}>${TabbyUI.escapeHtml(gitCommitMsg)}</textarea>` +
-      gitActionBtn("commit", "Commit", "btn primary");
+      `<textarea id="chat-git-message" rows="2" placeholder="Message (Ctrl+Enter to commit)"${gitBusy ? " disabled" : ""}>${TabbyUI.escapeHtml(gitCommitMsg)}</textarea>`;
     frag.appendChild(commitWrap);
     if (!files.length) {
       const empty = document.createElement("p");
@@ -3536,15 +3643,6 @@ function mountChat(root) {
         frag.appendChild(item);
       });
     }
-    const remote = document.createElement("div");
-    remote.className = "chat-git-actions";
-    remote.setAttribute("aria-live", "polite");
-    remote.innerHTML =
-      gitActionBtn("fetch", "Fetch") +
-      gitActionBtn("pull", "Pull") +
-      gitActionBtn("push", "Push") +
-      (gitStatus.has_creds ? gitActionBtn("clear-creds", "Forget token") : "");
-    frag.appendChild(remote);
     if (gitLogRows.length) {
       const logHead = document.createElement("p");
       logHead.className = "chat-git-log-title";
@@ -3565,11 +3663,28 @@ function mountChat(root) {
       msg.addEventListener("input", () => {
         gitCommitMsg = msg.value;
       });
+      msg.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+          event.preventDefault();
+          gitHandle("commit");
+        }
+      });
       if (keepMsg) {
+        gitFocusMessage = false;
         msg.focus();
         msg.setSelectionRange(keepMsg.start, keepMsg.end);
+      } else if (gitFocusMessage) {
+        focusGitMessage();
       }
     }
+  }
+
+  function focusGitMessage() {
+    const box = filesGitList && filesGitList.querySelector("#chat-git-message");
+    if (!box) return false;
+    gitFocusMessage = false;
+    box.focus();
+    return true;
   }
 
   function refreshGitSoon() {
@@ -3586,6 +3701,7 @@ function mountChat(root) {
       gitStatus = null;
       gitLogRows = [];
       gitPaintSig = "";
+      gitToolSig = "";
       paintGitList(true);
       return;
     }
@@ -3663,6 +3779,35 @@ function mountChat(root) {
     return data;
   }
 
+  async function gitCommit(stageAll) {
+    const message = String(gitCommitMsg || "").trim();
+    if (!message) {
+      gitFocusMessage = true;
+      const wasOpen = gitOpen;
+      if (!wasOpen) setGitOpen(true);
+      if (wasOpen) focusGitMessage();
+      return;
+    }
+    const files = (gitStatus && gitStatus.files) || [];
+    const staged = files.some((row) => row.staged);
+    const stagePaths = stageAll || !staged ? files.map((row) => row.path) : [];
+    if (!stageAll && !staged && stagePaths.length) {
+      const ok = await TabbyUI.confirmModal({
+        title: "Commit all changes",
+        text: "Nothing is staged. Stage all changes and commit?",
+        yes: "Commit all",
+        no: "Cancel",
+      });
+      if (!ok) return;
+    }
+    await withGitBusy(stageAll ? "commit-all" : "commit", async () => {
+      if (stagePaths.length) await runGitAction("stage", { paths: stagePaths });
+      await runGitAction("commit", { message });
+      gitCommitMsg = "";
+      await refreshGit();
+    });
+  }
+
   async function gitHandle(act, path, staged) {
     if (act === "open" && path) {
       openGitDiff(path, Boolean(staged));
@@ -3682,9 +3827,45 @@ function mountChat(root) {
         });
         return;
       }
-      if (act === "init" || act === "fetch" || act === "pull" || act === "push" || act === "clear-creds" || act === "refresh") {
+      if ((act === "stage" || act === "unstage") && path) {
+        await withGitBusy("toggle", async () => {
+          await runGitAction(act, { paths: [path] });
+          await refreshGit();
+        });
+        return;
+      }
+      if (act === "stage-all" || act === "unstage-all") {
+        const files = (gitStatus && gitStatus.files) || [];
+        const paths = act === "stage-all"
+          ? files.filter((row) => row.unstaged || !row.staged).map((row) => row.path)
+          : files.filter((row) => row.staged).map((row) => row.path);
+        if (!paths.length) return;
+        await withGitBusy(act, async () => {
+          await runGitAction(act === "stage-all" ? "stage" : "unstage", { paths });
+          await refreshGit();
+        });
+        return;
+      }
+      if (act === "creds") {
+        const token = await gitPromptToken();
+        if (!token) return;
+        await withGitBusy("creds", async () => {
+          await runGitAction("creds", { token });
+          await refreshGit();
+        });
+        return;
+      }
+      if (act === "init" || act === "fetch" || act === "pull" || act === "push" || act === "sync" || act === "clear-creds" || act === "refresh") {
         if (act === "refresh") {
           await withGitBusy("refresh", async () => {
+            await refreshGit();
+          });
+          return;
+        }
+        if (act === "sync") {
+          await withGitBusy("sync", async () => {
+            await runGitAction("pull");
+            await runGitAction("push");
             await refreshGit();
           });
           return;
@@ -3696,17 +3877,8 @@ function mountChat(root) {
         });
         return;
       }
-      if (act === "commit") {
-        const message = String(gitCommitMsg || "").trim();
-        if (!message) {
-          addBubble("assistant", "Error: A commit message is required.");
-          return;
-        }
-        await withGitBusy("commit", async () => {
-          await runGitAction("commit", { message });
-          gitCommitMsg = "";
-          await refreshGit();
-        });
+      if (act === "commit" || act === "commit-all") {
+        await gitCommit(act === "commit-all");
         return;
       }
       if (act === "branch") {
@@ -14453,15 +14625,75 @@ function mountChat(root) {
     ];
   }
 
+  function gitCommandItems() {
+    const counts = gitCounts();
+    const lock = gitBusy;
+    const files = (gitStatus && gitStatus.files) || [];
+    const canStage = files.some((row) => row.unstaged || !row.staged);
+    const canUnstage = files.some((row) => row.staged);
+    const items = [];
+    if (counts.repo) {
+      const publish = !counts.upstream;
+      items.push(
+        { label: counts.behind ? `Pull ↓${counts.behind}` : "Pull", disabled: lock, run: () => gitHandle("pull") },
+        { label: publish ? "Publish Branch" : (counts.ahead ? `Push ↑${counts.ahead}` : "Push"), disabled: lock, run: () => gitHandle("push") },
+        { label: counts.ahead || counts.behind ? `Sync ↓${counts.behind} ↑${counts.ahead}` : "Sync", disabled: lock, run: () => gitHandle("sync") },
+        { label: "Fetch", disabled: lock, run: () => gitHandle("fetch") },
+        { sep: true },
+        { label: "Commit", disabled: lock, run: () => gitHandle("commit") },
+        { label: "Commit All", disabled: lock || !files.length, run: () => gitHandle("commit-all") },
+        { label: "Stage All Changes", disabled: lock || !canStage, run: () => gitHandle("stage-all") },
+        { label: "Unstage All Changes", disabled: lock || !canUnstage, run: () => gitHandle("unstage-all") },
+        { sep: true },
+        { label: "Checkout to…", disabled: lock, run: () => gitHandle("branch") },
+        { sep: true }
+      );
+    }
+    items.push({ label: "Refresh", disabled: lock, run: () => gitHandle("refresh") });
+    if (!counts.repo) {
+      const known = gitStatus != null;
+      items.push(
+        { label: "Clone Repository", disabled: lock || !known, run: () => gitHandle("clone") },
+        { label: "Initialize Repository", disabled: lock || !known, run: () => gitHandle("init") }
+      );
+    } else {
+      items.push({
+        label: gitStatus.has_creds ? "Forget Remote Token" : "Set Remote Token",
+        disabled: lock,
+        run: () => gitHandle(gitStatus.has_creds ? "clear-creds" : "creds"),
+      });
+    }
+    return items;
+  }
+
   function gitPaneMenuItems() {
     return [
       { label: gitOpen ? "Collapse" : "Expand", run: () => setGitOpen(!gitOpen) },
       { sep: true },
-      { label: "Clone git repo", run: () => cloneGitRepo() },
-      gitStatus && gitStatus.repo
-        ? { label: "Forget token", run: () => gitHandle("clear-creds") }
-        : { label: "Initialize repository", run: () => gitHandle("init") },
+      ...gitCommandItems(),
     ];
+  }
+
+  function gitFileMenuItems(path) {
+    const row = ((gitStatus && gitStatus.files) || []).find((item) => item.path === path);
+    const stagedOnly = Boolean(row && row.staged && !row.unstaged);
+    const items = [
+      { label: "Open Changes", run: () => openGitDiff(path, stagedOnly) },
+      { label: "Open File", run: () => openFileTab(path) },
+      { sep: true },
+    ];
+    if (!row || row.unstaged || !row.staged) {
+      items.push({ label: "Stage Changes", disabled: gitBusy || !row, run: () => gitHandle("stage", path) });
+    }
+    if (row && row.staged) {
+      items.push({ label: "Unstage Changes", disabled: gitBusy, run: () => gitHandle("unstage", path) });
+    }
+    items.push(
+      { label: "Copy path", run: () => copyText(path) },
+      { sep: true },
+      ...gitCommandItems()
+    );
+    return items;
   }
 
   function tabMenuItems(path) {
@@ -14566,6 +14798,17 @@ function mountChat(root) {
       ]));
       return;
     }
+    if (field && field.id === "chat-git-message") {
+      openCtx(event, TabbyUI.inputMenuItems(field, gitCommandItems()));
+      return;
+    }
+    if (field && field.dataset.git === "toggle") {
+      const row = field.closest(".chat-history");
+      if (row && row.dataset.path) {
+        openCtx(event, gitFileMenuItems(row.dataset.path));
+        return;
+      }
+    }
     if (field) return;
 
     const chip = event.target.closest(".chat-attach-chip");
@@ -14633,6 +14876,11 @@ function mountChat(root) {
     }
     if (event.target.closest("#chat-files-changes")) {
       openCtx(event, changesPaneMenuItems());
+      return;
+    }
+    const gitRow = event.target.closest(".chat-history");
+    if (gitRow && filesGitList && filesGitList.contains(gitRow) && gitRow.dataset.path) {
+      openCtx(event, gitFileMenuItems(gitRow.dataset.path));
       return;
     }
     if (event.target.closest("#chat-files-git")) {
@@ -15173,6 +15421,18 @@ function mountChat(root) {
   }
   if (filesGitToggle) {
     filesGitToggle.addEventListener("click", () => setGitOpen(!gitOpen));
+  }
+  if (filesGitTools) {
+    filesGitTools.addEventListener("click", (event) => {
+      const btn = event.target.closest("[data-git-tool]");
+      if (!btn || btn.disabled) return;
+      const act = btn.dataset.gitTool;
+      if (act === "more") {
+        openCtx(event, gitPaneMenuItems());
+        return;
+      }
+      gitHandle(act);
+    });
   }
   if (filesGitList) {
     filesGitList.addEventListener("click", (event) => {
