@@ -4010,7 +4010,38 @@ if [[ "$UPDATE_MODE" -eq 1 ]] || ! "$DEST_TABBY/venv/bin/python" -c "import infi
   progress 55 "TabbyAPI extras"
   run_quiet env -C "$DEST_TABBY" "$DEST_TABBY/venv/bin/python" -m pip install "${PIP_OFFLINE_ARGS[@]}" -U ".[extras]"
 fi
-run_quiet "$DEST_TABBY/venv/bin/python" -m pip install "${PIP_OFFLINE_ARGS[@]}" -U 'numpy>=2.1.0'
+# infinity-emb still declares numpy<2, so the extras install above downgrades
+# a working NumPy 2. exllamav3 needs >=2.1. Put that back, and delete any
+# numpy dist-info left without METADATA/RECORD: pip then reports version None
+# and refuses the upgrade, which stops the API on the next start.
+install_tabby_numpy() {
+  local py="$DEST_TABBY/venv/bin/python"
+  local site d
+  shopt -s nullglob
+  for site in "$DEST_TABBY"/venv/lib/python*/site-packages; do
+    for d in "$site"/numpy-*.dist-info; do
+      if [[ ! -f "$d/METADATA" || ! -f "$d/RECORD" ]]; then
+        echo "Removing hollow numpy metadata: $d"
+        rm -rf "$d"
+      fi
+    done
+  done
+  shopt -u nullglob
+  if "$py" -m pip install "${PIP_OFFLINE_ARGS[@]}" -U 'numpy>=2.1.0'; then
+    return 0
+  fi
+  shopt -s nullglob
+  for site in "$DEST_TABBY"/venv/lib/python*/site-packages; do
+    for d in "$site"/numpy-*.dist-info; do
+      if [[ ! -f "$d/METADATA" || ! -f "$d/RECORD" ]]; then
+        rm -rf "$d"
+      fi
+    done
+  done
+  shopt -u nullglob
+  "$py" -m pip install "${PIP_OFFLINE_ARGS[@]}" -U --ignore-installed --no-deps 'numpy>=2.1.0'
+}
+run_quiet install_tabby_numpy
 if [[ -f "$DEST_TABBY/ui/fetch_monaco.py" &&
       ! -f "$DEST_TABBY/ui/static/vs/loader.js" ]]; then
   progress 56 "Monaco editor"
