@@ -17,6 +17,8 @@ AppData/
 # Editor and OS junk
 .DS_Store
 Thumbs.db
+# fontconfig writes this into every directory it scans
+.uuid
 *.swp
 *~
 .idea/

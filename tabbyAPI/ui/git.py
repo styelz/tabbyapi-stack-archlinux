@@ -18,6 +18,7 @@ from ui.workspace import (
     CLONE_TIMEOUT_S,
     MAX_TEXT_BYTES,
     _https_clone_url,
+    drop_fontconfig_markers,
     resolve_rel,
     safe_name,
     workspace_root,
@@ -398,6 +399,7 @@ def git_status(username: str, chat_id: str) -> dict[str, Any]:
     repo_rel = find_repo_rel(username, chat_id)
     if repo_rel is None:
         return {"ok": True, "repo": False, "has_creds": has_creds(username, chat_id)}
+    drop_fontconfig_markers(workspace_root(username, chat_id, create=False))
     empty = {
         "ok": False,
         "repo": True,
@@ -426,6 +428,9 @@ def git_status(username: str, chat_id: str) -> dict[str, Any]:
     files = []
     for row in parsed["files"]:
         repo_path = str(row["path"])
+        # fontconfig stamps are not project files, even when git still sees them.
+        if Path(repo_path).name == ".uuid":
+            continue
         try:
             path = _host_path(root, repo_rel, repo_path)
         except ValueError:

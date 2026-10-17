@@ -71,7 +71,11 @@ INSTRUCTIONS_MAX = 8000
 CLONE_TIMEOUT_S = 120
 # Match git log's window so Recent commits is populated without a follow-up Pull.
 CLONE_DEPTH = 50
-SKIP_LISTING_NAMES = frozenset({".gitconfig", ".git-credentials"})
+SKIP_LISTING_NAMES = frozenset({".gitconfig", ".git-credentials", ".uuid"})
+# fontconfig writes a 36-character id into every directory it scans.
+_FONTCONFIG_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
 HISTORY_SUFFIX = ".file-history"
 MAX_HISTORY_VERSIONS = 40
 DRAFTS_SUFFIX = ".drafts.json"
@@ -219,7 +223,7 @@ def _is_inside(root: Path, path: Path) -> bool:
 
 
 def skip_listing_rel(rel: str) -> bool:
-    """True for git metadata that must not appear in Files, zip, grep, or caps."""
+    """True for metadata that must not appear in Files, zip, grep, or caps."""
     text = str(rel or "").replace("\\", "/").strip("/")
     if not text:
         return False
@@ -227,6 +231,38 @@ def skip_listing_rel(rel: str) -> bool:
     if ".git" in parts:
         return True
     return bool(parts) and parts[-1] in SKIP_LISTING_NAMES
+
+
+def drop_fontconfig_marker(path: Path) -> bool:
+    """Remove a fontconfig ``.uuid`` stamp. Leave any other file of that name."""
+    if path.name != ".uuid" or path.is_symlink() or not path.is_file():
+        return False
+    if ".git" in path.parts:
+        return False
+    try:
+        if path.stat().st_size > 64:
+            return False
+        text = path.read_text(encoding="ascii").strip()
+    except (OSError, UnicodeError):
+        return False
+    if not _FONTCONFIG_UUID_RE.fullmatch(text):
+        return False
+    try:
+        path.unlink()
+    except OSError:
+        return False
+    return True
+
+
+def drop_fontconfig_markers(root: Path) -> None:
+    """Remove fontconfig ``.uuid`` stamps under a project. Skip ``.git``."""
+    if not root.is_dir():
+        return
+    for dirpath, dirnames, filenames in os.walk(root):
+        if ".git" in dirnames:
+            dirnames.remove(".git")
+        if ".uuid" in filenames:
+            drop_fontconfig_marker(Path(dirpath) / ".uuid")
 
 
 def _skip_listing_path(root: Path, path: Path) -> bool:
@@ -244,6 +280,8 @@ def _iter_files(root: Path) -> list[Path]:
     for path in sorted(root.rglob("*")):
         if path.is_symlink() or not path.is_file():
             continue
+        if path.name == ".uuid":
+            drop_fontconfig_marker(path)
         if _skip_listing_path(root, path):
             continue
         if _is_inside(root, path):
@@ -310,6 +348,8 @@ def _has_listed_file(username: str, chat_id: str, *, skip_images: bool = False) 
             if entry.is_symlink():
                 continue
             name = str(entry.name or "")
+            if name == ".uuid":
+                drop_fontconfig_marker(Path(entry.path))
             if name == ".git" or name in SKIP_LISTING_NAMES:
                 continue
             try:

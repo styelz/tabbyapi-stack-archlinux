@@ -24,8 +24,11 @@ class SkipGitListingTests(unittest.TestCase):
         self.assertTrue(workspace.skip_listing_rel("repo/.git/objects/pack/foo"))
         self.assertTrue(workspace.skip_listing_rel(".gitconfig"))
         self.assertTrue(workspace.skip_listing_rel(".git-credentials"))
+        self.assertTrue(workspace.skip_listing_rel(".uuid"))
+        self.assertTrue(workspace.skip_listing_rel("images/.uuid"))
         self.assertFalse(workspace.skip_listing_rel("src/app.js"))
         self.assertFalse(workspace.skip_listing_rel("gitignore"))
+        self.assertFalse(workspace.skip_listing_rel("uuid.txt"))
 
     def test_iterators_omit_git_objects(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -35,11 +38,19 @@ class SkipGitListingTests(unittest.TestCase):
             git.mkdir(parents=True)
             (git / "pack").write_text("blob", encoding="utf-8")
             (root / ".gitconfig").write_text("x", encoding="utf-8")
+            stamp = root / "images" / ".uuid"
+            stamp.parent.mkdir()
+            stamp.write_text("9561a5e1-3633-43f5-92e1-7080cc4a11d8", encoding="ascii")
+            kept = root / "notes" / ".uuid"
+            kept.parent.mkdir()
+            kept.write_text("not a fontconfig stamp\n", encoding="utf-8")
             files = [path.name for path in workspace._iter_files(root)]
             dirs = [path.name for path in workspace._iter_dirs(root)]
             self.assertEqual(files, ["readme.md"])
             self.assertNotIn(".git", dirs)
             self.assertNotIn(".gitconfig", files)
+            self.assertFalse(stamp.exists())
+            self.assertTrue(kept.is_file())
 
 
 class GitPorcelainTests(unittest.TestCase):
