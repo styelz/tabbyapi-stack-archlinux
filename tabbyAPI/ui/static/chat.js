@@ -194,8 +194,14 @@ function mountChat(root) {
       <button type="button" class="chat-backdrop" id="chat-backdrop" hidden aria-label="Close chats"></button>
       <aside class="chat-sidebar" id="chat-sidebar">
         <div class="chat-side-head">
-          <button class="btn primary" type="button" id="chat-new">New chat</button>
-          <button class="btn ghost" type="button" id="chat-folder-new" hidden>New folder</button>
+          <button class="chat-side-action" type="button" id="chat-new">
+            <span class="chat-side-action-mark" aria-hidden="true"></span>
+            <span class="chat-side-action-label">New chat</span>
+          </button>
+          <button class="chat-side-action" type="button" id="chat-folder-new" hidden>
+            <span class="chat-side-action-mark" aria-hidden="true"></span>
+            <span class="chat-side-action-label">New folder</span>
+          </button>
         </div>
         <div class="chat-side-search">
           <input id="chat-search" type="search" placeholder="Search chats" autocomplete="off" />
@@ -1861,7 +1867,12 @@ function mountChat(root) {
     }
     if (searchEl) searchEl.placeholder = code ? "Search workspaces" : "Search chats";
     const newBtn = root.querySelector("#chat-new");
-    if (newBtn) newBtn.textContent = code ? "New workspace" : "New chat";
+    if (newBtn) {
+      const label = newBtn.querySelector(".chat-side-action-label");
+      const text = code ? "New workspace" : "New chat";
+      if (label) label.textContent = text;
+      else newBtn.textContent = text;
+    }
     paintTabs();
     paintView();
     paintFilesToggle();
@@ -2051,14 +2062,25 @@ function mountChat(root) {
     return rows;
   }
 
-  function navRowMeta(item, kind, kidCount) {
-    const bits = [];
-    if (kind === "root" && kidCount > 0) {
-      bits.push(`${kidCount} chat${kidCount === 1 ? "" : "s"}`);
+  function navTimeLabel(ts) {
+    const n = Number(ts) || 0;
+    if (!n) return "";
+    const delta = Date.now() - n;
+    if (delta < 60_000) return "now";
+    if (delta < 3_600_000) return `${Math.max(1, Math.floor(delta / 60_000))}m`;
+    if (delta < 86_400_000) return `${Math.max(1, Math.floor(delta / 3_600_000))}h`;
+    if (delta < 14 * 86_400_000) return `${Math.max(1, Math.floor(delta / 86_400_000))}d`;
+    try {
+      return new Date(n).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    } catch {
+      return "";
     }
-    if (inFlight && item.id === flightChatId) bits.push("Generating");
-    else bits.push(timeLabel(item.updatedAt));
-    return bits.filter(Boolean).join(" · ");
+  }
+
+  function navRowMeta(item, kind) {
+    if (inFlight && item.id === flightChatId) return "live";
+    if (kind === "root") return "";
+    return navTimeLabel(item.updatedAt);
   }
 
   function navRowTools(kind, pinned) {
@@ -2094,10 +2116,11 @@ function mountChat(root) {
     const pin = kind !== "child" && item.pinned
       ? `<span class="chat-nav-pin" title="Pinned">${NAV_STAR_SVG}</span>`
       : "";
+    const when = navRowMeta(item, kind);
     return twist
       + `<span class="chat-nav-title">${TabbyUI.escapeHtml(title)}</span>`
       + pin
-      + `<span class="chat-nav-when">${TabbyUI.escapeHtml(navRowMeta(item, kind, kidCount))}</span>`
+      + (when ? `<span class="chat-nav-when">${TabbyUI.escapeHtml(when)}</span>` : "")
       + navRowTools(kind, item.pinned);
   }
 
