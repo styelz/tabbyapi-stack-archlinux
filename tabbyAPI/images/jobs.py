@@ -936,24 +936,12 @@ def _persist_job_reply(job: McpImageJob) -> None:
         for chat in store.get("chats") or []:
             if str(chat.get("id") or "") != chat_id:
                 continue
-            messages = chat.get("messages") or []
-            last = messages[-1] if messages else None
-            content = str((last or {}).get("content") or "")
-            if (
-                isinstance(last, dict)
-                and last.get("role") == "assistant"
-                and (
-                    (
-                        job.id in content
-                        and (
-                            "/v1/images/generated-" in content
-                            or content.lstrip().startswith("Error:")
-                        )
-                    )
-                    or any(name and name in content for name in names)
-                )
-            ):
-                return
+            for msg in chat.get("messages") or []:
+                if not isinstance(msg, dict) or msg.get("role") != "assistant":
+                    continue
+                content = str(msg.get("content") or "")
+                if mark in content or any(name and name in content for name in names):
+                    return
             break
         append_flight_assistant(owner, chat_id, content=text)
     except Exception as exc:

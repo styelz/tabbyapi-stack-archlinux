@@ -172,6 +172,72 @@ class ChatStoreNormalizeTests(unittest.TestCase):
         self.assertIn("Here's the video.", texts[1])
         self.assertNotIn("Here's the picture.", "\n".join(texts))
 
+    def test_workspace_created_at_ignores_later_image_echo(self):
+        store = normalize_store(
+            {
+                "chats": [
+                    {
+                        "id": "old",
+                        "mode": "code",
+                        "title": "Site",
+                        "updatedAt": 3000,
+                        "messages": [
+                            {
+                                "role": "assistant",
+                                "content": "tabby-image-job: job-1\n\nHere's the picture.",
+                                "createdAt": 1000,
+                            },
+                            {
+                                "role": "assistant",
+                                "content": "tabby-image-job: job-1\n\nHere's the picture.",
+                                "createdAt": 3000,
+                            },
+                        ],
+                    },
+                    {
+                        "id": "old-thread",
+                        "mode": "code",
+                        "parentId": "old",
+                        "title": "Build",
+                        "updatedAt": 1100,
+                        "messages": [
+                            {"role": "user", "content": "build", "createdAt": 1100},
+                        ],
+                    },
+                    {
+                        "id": "new",
+                        "mode": "code",
+                        "title": "New workspace",
+                        "updatedAt": 2000,
+                        "createdAt": 2000,
+                        "messages": [],
+                    },
+                    {
+                        "id": "new-thread",
+                        "mode": "code",
+                        "parentId": "new",
+                        "title": "New chat",
+                        "updatedAt": 2000,
+                        "createdAt": 2000,
+                        "messages": [],
+                    },
+                ]
+            }
+        )
+        by_id = {chat["id"]: chat for chat in store["chats"]}
+        self.assertEqual(by_id["old"]["createdAt"], 1000)
+        self.assertEqual(by_id["new"]["createdAt"], 2000)
+        self.assertLess(by_id["old"]["createdAt"], by_id["new"]["createdAt"])
+        marks = [
+            msg["content"]
+            for msg in by_id["old"]["messages"]
+            if "job-1" in str(msg.get("content") or "")
+        ]
+        self.assertEqual(len(marks), 1)
+        again = normalize_store(store)
+        again_old = next(chat for chat in again["chats"] if chat["id"] == "old")
+        self.assertEqual(again_old["createdAt"], 1000)
+
     def test_keeps_console_video_when_persist_echo_came_first(self):
         name = "generated-20260919-042559-1585157.mp4"
         kept = drop_duplicate_media_replies(

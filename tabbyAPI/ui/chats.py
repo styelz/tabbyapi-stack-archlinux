@@ -215,26 +215,36 @@ GENERATED_MEDIA_RE = re.compile(
     r"generated-[A-Za-z0-9._-]+\.(?:png|jpe?g|webp|gif|wav|flac|mp3|mp4|webm)",
     re.I,
 )
+JOB_MARK_RE = re.compile(r"tabby-image-job:\s*(\S+)", re.I)
 
 
 def generated_media_names(text: str) -> set[str]:
     return {match.group(0).lower() for match in GENERATED_MEDIA_RE.finditer(str(text or ""))}
 
 
+def _job_mark_ids(text: str) -> set[str]:
+    return {match.group(1).lower() for match in JOB_MARK_RE.finditer(str(text or ""))}
+
+
 def drop_duplicate_media_replies(messages: Any) -> list:
     """Drop a persist echo that repeats the same generated file as the last reply.
 
     Console Chat writes \"Here's the video.\" The job persist path used to append
-    a second \"Here's the picture.\" bubble with the same MP4.
+    a second \"Here's the picture.\" bubble with the same MP4. A later resume
+    also appended the same job id again whenever it was no longer the last reply.
     """
     if not isinstance(messages, list):
         return []
     out: list[Any] = []
+    seen_jobs: set[str] = set()
     for item in messages:
         if not (isinstance(item, dict) and item.get("role") == "assistant"):
             out.append(item)
             continue
         content = str(item.get("content") or "")
+        ids = _job_mark_ids(content)
+        if ids and ids <= seen_jobs:
+            continue
         names = generated_media_names(content)
         prev = out[-1] if out else None
         prev_content = str((prev or {}).get("content") or "") if isinstance(prev, dict) else ""
@@ -250,9 +260,61 @@ def drop_duplicate_media_replies(messages: Any) -> list:
             this_mark = "tabby-image-job:" in content
             if prev_mark and not this_mark:
                 out[-1] = item
+            seen_jobs |= ids
             continue
+        seen_jobs |= ids
         out.append(item)
     return out
+
+
+def _positive_stamp(value: Any) -> int:
+    try:
+        stamp = int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+    return stamp if stamp > 0 else 0
+
+
+def _chat_origin_stamps(chat: dict[str, Any]) -> list[int]:
+    stamps = []
+    for key in ("createdAt", "updatedAt"):
+        stamp = _positive_stamp(chat.get(key))
+        if stamp:
+            stamps.append(stamp)
+    for msg in chat.get("messages") or []:
+        if not isinstance(msg, dict):
+            continue
+        stamp = _positive_stamp(msg.get("createdAt"))
+        if stamp:
+            stamps.append(stamp)
+    return stamps
+
+
+def _backfill_created_at(chats: list[dict[str, Any]]) -> None:
+    """Freeze a creation stamp so workspace order does not follow later activity.
+
+    Image-job echoes rewrite a workspace root's updatedAt. Sorting on that
+    stamp pulls old projects above a workspace that was just created.
+    """
+    children: dict[str, list[dict[str, Any]]] = {}
+    for chat in chats:
+        parent = str(chat.get("parentId") or "").strip()
+        if parent:
+            children.setdefault(parent, []).append(chat)
+    now = int(time.time() * 1000)
+    for chat in chats:
+        existing = _positive_stamp(chat.get("createdAt"))
+        if existing:
+            chat["createdAt"] = existing
+            continue
+        stamps = _chat_origin_stamps(chat)
+        if (
+            str(chat.get("mode") or "") == "code"
+            and not str(chat.get("parentId") or "").strip()
+        ):
+            for child in children.get(str(chat.get("id") or ""), []):
+                stamps.extend(_chat_origin_stamps(child))
+        chat["createdAt"] = min(stamps) if stamps else now
 
 
 def normalize_store(raw: Any) -> dict[str, Any]:
@@ -296,6 +358,9 @@ def normalize_store(raw: Any) -> dict[str, Any]:
             "parentId": parent_id,
             "messages": drop_duplicate_media_replies(messages),
         }
+        created_at = _positive_stamp(item.get("createdAt"))
+        if created_at:
+            row["createdAt"] = created_at
         folder = str(item.get("folder") or "").strip()[:80]
         if mode == "chat" and folder:
             row["folder"] = folder
@@ -351,6 +416,7 @@ def normalize_store(raw: Any) -> dict[str, Any]:
         c["id"] == last_by_mode["code"] and c["mode"] == "code" for c in cleaned
     ):
         last_by_mode["code"] = ""
+    _backfill_created_at(cleaned)
     return {
         "version": version or 1,
         "activeId": active,

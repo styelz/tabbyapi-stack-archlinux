@@ -261,6 +261,47 @@ class AvMediaTests(unittest.TestCase):
             _persist_job_reply(job)
         append.assert_not_called()
 
+    def test_persist_job_reply_skips_job_already_earlier_in_the_thread(self):
+        from images.jobs import _persist_job_reply
+
+        job = SimpleNamespace(
+            id="job-1",
+            status="done",
+            owner="pbp",
+            chat_id="c1",
+            urls=["https://git.example.com/openai/v1/images/generated-a.png"],
+            modality="image",
+        )
+        store = {
+            "chats": [
+                {
+                    "id": "c1",
+                    "messages": [
+                        {
+                            "role": "assistant",
+                            "content": (
+                                "tabby-image-job: job-1\n\nHere are the 2 pictures.\n\n"
+                                "![](/v1/images/generated-a.png)"
+                            ),
+                        },
+                        {
+                            "role": "assistant",
+                            "content": (
+                                "tabby-image-job: job-2\n\nHere's the picture.\n\n"
+                                "![](/v1/images/generated-b.png)"
+                            ),
+                        },
+                    ],
+                }
+            ]
+        }
+        with (
+            mock.patch("ui.chats.load_store", return_value=store),
+            mock.patch("ui.chats.append_flight_assistant") as append,
+        ):
+            _persist_job_reply(job)
+        append.assert_not_called()
+
     def test_persist_job_reply_uses_video_lead_and_relative_href(self):
         from images.jobs import _persist_job_reply
 

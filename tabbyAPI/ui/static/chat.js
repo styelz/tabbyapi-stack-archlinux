@@ -909,10 +909,12 @@ function mountChat(root) {
   }
 
   function emptyChat(mode, parentId) {
+    const now = Date.now();
     const chat = {
       id: newId(),
       title: mode === "code" && !parentId ? "New workspace" : "New chat",
-      updatedAt: Date.now(),
+      createdAt: now,
+      updatedAt: now,
       pinned: false,
       titleLocked: false,
       mode: mode === "code" ? "code" : "chat",
@@ -1063,14 +1065,27 @@ function mountChat(root) {
     return names;
   }
 
+  function jobMarkIds(text) {
+    const ids = [];
+    const re = /tabby-image-job:\s*(\S+)/gi;
+    String(text || "").replace(re, (_match, id) => {
+      ids.push(String(id).toLowerCase());
+      return _match;
+    });
+    return ids;
+  }
+
   function dropDuplicateMediaReplies(list) {
     const out = [];
+    const seenJobs = new Set();
     (Array.isArray(list) ? list : []).forEach((item) => {
       if (!item || item.role !== "assistant") {
         out.push(item);
         return;
       }
       const content = String(item.content || "");
+      const ids = jobMarkIds(content);
+      if (ids.length && ids.every((id) => seenJobs.has(id))) return;
       const names = generatedMediaNames(content);
       const prev = out[out.length - 1];
       const prevContent = prev && prev.role === "assistant" ? String(prev.content || "") : "";
@@ -1083,8 +1098,10 @@ function mountChat(root) {
         if (prevContent.includes("tabby-image-job:") && !content.includes("tabby-image-job:")) {
           out[out.length - 1] = item;
         }
+        ids.forEach((id) => seenJobs.add(id));
         return;
       }
+      ids.forEach((id) => seenJobs.add(id));
       out.push(item);
     });
     return out;
@@ -1384,6 +1401,8 @@ function mountChat(root) {
         parentId: "",
         messages,
       };
+      const createdAt = Number(item.createdAt) || 0;
+      if (createdAt > 0) row.createdAt = createdAt;
       const folder = String(item.folder || "").trim();
       if (row.mode === "chat" && folder) row.folder = folder;
       const usage = cloneUsage(item.usage);
@@ -1468,7 +1487,43 @@ function mountChat(root) {
       if (threadForRoot(root.id)) return;
       chats.unshift(emptyChat("code", root.id));
     });
+    backfillCreatedAt(chats);
     return { version: 1, activeId, chats, lastByMode };
+  }
+
+  function chatOriginStamps(chat) {
+    const stamps = [];
+    const push = (n) => {
+      const v = Number(n) || 0;
+      if (v > 0) stamps.push(v);
+    };
+    if (!chat) return stamps;
+    push(chat.createdAt);
+    push(chat.updatedAt);
+    (chat.messages || []).forEach((msg) => push(msg && msg.createdAt));
+    return stamps;
+  }
+
+  // Creation time, not the last image-job echo. A bumped updatedAt used to
+  // pull old workspaces above one that was just created.
+  function backfillCreatedAt(chats) {
+    const kids = new Map();
+    chats.forEach((chat) => {
+      const parent = chatParentId(chat);
+      if (!parent) return;
+      if (!kids.has(parent)) kids.set(parent, []);
+      kids.get(parent).push(chat);
+    });
+    chats.forEach((chat) => {
+      if (Number(chat.createdAt) > 0) return;
+      const stamps = chatOriginStamps(chat);
+      if (isWorkspaceRoot(chat)) {
+        (kids.get(chat.id) || []).forEach((child) => {
+          stamps.push(...chatOriginStamps(child));
+        });
+      }
+      chat.createdAt = stamps.length ? Math.min(...stamps) : Date.now();
+    });
   }
 
   function wipeClientUiStorage() {
@@ -2048,7 +2103,7 @@ function mountChat(root) {
     roots.sort((a, b) => {
       const pin = Number(Boolean(b.pinned)) - Number(Boolean(a.pinned));
       if (pin) return pin;
-      return (b.updatedAt || 0) - (a.updatedAt || 0);
+      return (b.createdAt || 0) - (a.createdAt || 0);
     });
     const rows = [];
     roots.forEach((root) => {
