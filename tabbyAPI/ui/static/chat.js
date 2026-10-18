@@ -92,6 +92,7 @@ function mountChat(root) {
             <button class="btn chat-jump" type="button" id="chat-jump" hidden>Return to bottom</button>
           </div>
           <div class="chat-editor-col" id="chat-editor-col" hidden>
+            <div class="editor-breadcrumb" id="editor-breadcrumb"></div>
             <div class="chat-find" id="editor-find" hidden>
               <input id="editor-find-input" type="search" placeholder="Find in file" autocomplete="off" />
               <span class="chat-find-count" id="editor-find-count"></span>
@@ -382,6 +383,7 @@ function mountChat(root) {
   const editorPane = root.querySelector("#chat-editor");
   const editorSplitPane = root.querySelector("#chat-editor-split");
   const editorCol = root.querySelector("#chat-editor-col");
+  const breadcrumbEl = root.querySelector("#editor-breadcrumb");
   const followupsEl = root.querySelector("#chat-followups");
   const projectFindBar = root.querySelector("#project-find");
   const projectFindInput = root.querySelector("#project-find-input");
@@ -4170,6 +4172,47 @@ function mountChat(root) {
     tabsBar.replaceChildren(frag);
   }
 
+  function paintBreadcrumb() {
+    if (!breadcrumbEl) return;
+    const tab = activeTabRow();
+    if (!tab || isPreviewTab(tab) || isHistoryTab(tab) || !tab.path) {
+      breadcrumbEl.innerHTML = "";
+      breadcrumbEl.hidden = true;
+      return;
+    }
+    breadcrumbEl.hidden = false;
+    const parts = tab.path.split("/");
+    const frag = document.createDocumentFragment();
+    parts.forEach((part, i) => {
+      if (i > 0) {
+        const sep = document.createElement("span");
+        sep.className = "sep";
+        sep.textContent = "/";
+        frag.appendChild(sep);
+      }
+      const span = document.createElement("span");
+      const isLast = i === parts.length - 1;
+      span.className = "crumb";
+      span.textContent = part;
+      if (!isLast) {
+        const dir = parts.slice(0, i + 1).join("/");
+        span.addEventListener("click", () => {
+          folderAncestors(dir + "/x").forEach((d) => filesOpenFolders.add(d));
+          filesOpenFolders.add(dir);
+          filesFocusDir = dir;
+          if (!filesOpen) setFilesOpen(true);
+          paintFilesTree();
+          requestAnimationFrame(() => {
+            const node = filesTree && filesTree.querySelector(`[data-path="${CSS.escape(dir)}"]`);
+            if (node) node.scrollIntoView({ block: "nearest" });
+          });
+        });
+      }
+      frag.appendChild(span);
+    });
+    breadcrumbEl.replaceChildren(frag);
+  }
+
   function paintEditorHead() {
     if (!editorPane) return;
     const tab = activeTabRow();
@@ -4710,6 +4753,7 @@ function mountChat(root) {
     paintFilesHistory();
     paintFilesChanges();
     paintTabs();
+    paintBreadcrumb();
     paintView();
   }
 

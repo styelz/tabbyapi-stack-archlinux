@@ -2384,6 +2384,23 @@ button.chip {
 .chat-editor-col .chat-find {
   margin: 0 0 0.375rem;
 }
+.editor-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--line);
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+.editor-breadcrumb span { white-space: nowrap; }
+.editor-breadcrumb .sep { opacity: 0.4; }
+.editor-breadcrumb .crumb { cursor: pointer; }
+.editor-breadcrumb .crumb:hover { color: var(--accent); }
+.editor-breadcrumb .crumb:last-child { color: var(--text); font-weight: 550; }
 .chat-preview {
   display: flex;
   flex-direction: column;
