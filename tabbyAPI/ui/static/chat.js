@@ -25,6 +25,53 @@ function tabbyIsSsePing(text) {
   return /^ping\s*-\s*\d{4}-\d{2}-\d{2}[T\s]\d/i.test(String(text || "").trim());
 }
 
+// Same window as common/stutter.py: a thought that collapses into a handful
+// of repeated words ("I had to had had him now") is not shown in full.
+function tabbyCollapseStutter(text) {
+  const raw = String(text || "");
+  const windowSize = 48;
+  const maxUnique = 8;
+  const words = [];
+  const re = /[A-Za-z']+/g;
+  let match;
+  while ((match = re.exec(raw))) {
+    words.push({ token: match[0].toLowerCase(), start: match.index });
+  }
+  if (words.length < windowSize) return raw;
+  const cut = new Array(words.length).fill(false);
+  for (let start = 0; start <= words.length - windowSize; start += 1) {
+    const counts = new Map();
+    for (let i = start; i < start + windowSize; i += 1) {
+      const token = words[i].token;
+      counts.set(token, (counts.get(token) || 0) + 1);
+    }
+    let top = 0;
+    counts.forEach((count) => {
+      if (count > top) top = count;
+    });
+    if (counts.size <= maxUnique && top >= Math.floor(windowSize / 3)) {
+      for (let i = start; i < start + windowSize; i += 1) cut[i] = true;
+    }
+  }
+  if (!cut.some(Boolean)) return raw;
+  let out = "";
+  let cursor = 0;
+  let index = 0;
+  while (index < words.length) {
+    if (!cut[index]) {
+      index += 1;
+      continue;
+    }
+    const start = words[index].start;
+    while (index < words.length && cut[index]) index += 1;
+    const end = index < words.length ? words[index].start : raw.length;
+    out += raw.slice(cursor, start) + "…\n\n";
+    cursor = end;
+  }
+  out += raw.slice(cursor);
+  return out.replace(/\n{3,}/g, "\n\n").trim();
+}
+
 function tabbyIsNetworkDrop(err) {
   if (!err || err.name === "AbortError") return false;
   const msg = String(err.message || "").toLowerCase();
@@ -10922,9 +10969,10 @@ function mountChat(root) {
       const kind = String((step && step.type) || "");
       if (kind === "said" || kind === "thought") {
         const stepText = String((step && step.content) || "");
+        const shown = kind === "thought" ? tabbyCollapseStutter(stepText) : stepText;
         const cleaned = TabbyUI.formatAssistantContent
-          ? TabbyUI.formatAssistantContent(stepText)
-          : stepText;
+          ? TabbyUI.formatAssistantContent(shown)
+          : shown;
         if (!String(cleaned || "").trim()) return null;
         const row = document.createElement("div");
         row.className = kind === "said" ? "agent-step agent-step-said" : "agent-step agent-step-thought";
@@ -11056,7 +11104,7 @@ function mountChat(root) {
 
     function paintLiveReason(block) {
       block.classList.add("is-live");
-      const raw = String(reasoningText || "");
+      const raw = tabbyCollapseStutter(String(reasoningText || ""));
       if (block._liveReason === raw) return;
       block._liveReason = raw;
       // Keep this node in place (do not rebuild the whole trace). Still
@@ -11090,7 +11138,7 @@ function mountChat(root) {
         reasoningFromModel = false;
         return;
       }
-      steps.push({ type: "thought", content: reasoningText });
+      steps.push({ type: "thought", content: tabbyCollapseStutter(reasoningText) });
       reasoningText = "";
       reasoningFromModel = false;
     }
@@ -11117,7 +11165,7 @@ function mountChat(root) {
       const block = document.createElement("div");
       block.className = "think-reason";
       if (live) paintLiveReason(block);
-      else block.innerHTML = TabbyUI.renderMarkdown(reasoningText);
+      else block.innerHTML = TabbyUI.renderMarkdown(tabbyCollapseStutter(reasoningText));
       thought.appendChild(block);
     }
 
@@ -11440,7 +11488,7 @@ function mountChat(root) {
           keep.forEach((step) => steps.push(step));
         } else {
           if (reasoningFromModel && reasoningText) {
-            steps.push({ type: "thought", content: reasoningText });
+            steps.push({ type: "thought", content: tabbyCollapseStutter(reasoningText) });
           }
           streamMark += 1;
         }

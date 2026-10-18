@@ -20,6 +20,7 @@ from common.networking import (
     handle_request_error,
     DisconnectHandler,
 )
+from common.stutter import collapse_stutter, tail_is_stutter
 from common.utils import unwrap
 from common.vram_recover import generation_abort_message
 from endpoints.OAI.types.chat_completion import (
@@ -653,6 +654,18 @@ def _reasoning_budget_injection(mc, message: str) -> Optional[str]:
     return message + suffix
 
 
+def _end_reasoning_after_stutter(mc, job_id: str) -> None:
+    """Force the reasoning closer so a phrase loop cannot keep sampling."""
+    injection = _reasoning_budget_injection(mc, "")
+    if not injection:
+        return
+    constrain = getattr(mc, "constrain_generation_output", None)
+    if constrain and constrain(job_id, injection):
+        xlogger.warning(
+            f"Reasoning stutter detected; ending the reasoning phase. ID: {job_id}"
+        )
+
+
 async def _chat_stream_collector(
     task_idx: int,
     gen_queue: asyncio.Queue | None,
@@ -742,6 +755,7 @@ async def _chat_stream_collector(
                     )
                     budget_injection = None
             reasoning_tokens = 0
+            stutter_cut = False
             collected_logprobs = []
             job_id = request_id if attempt == 0 else f"{request_id}-noop{attempt}"
             new_generation = mc.stream_generate(
@@ -768,6 +782,8 @@ async def _chat_stream_collector(
                 delta_content = ""
                 for channel, sub in events:
                     if channel == REASONING:
+                        if stutter_cut:
+                            continue
                         delta_reasoning += sub
                         full_reasoning += sub
                     elif channel == CONTENT:
@@ -775,6 +791,19 @@ async def _chat_stream_collector(
                         full_content += sub
                     else:
                         full_tool += sub
+
+                if (
+                    delta_reasoning
+                    and not stutter_cut
+                    and parser.in_reasoning
+                    and not parser.in_tool
+                    and tail_is_stutter(full_reasoning)
+                ):
+                    stutter_cut = True
+                    full_reasoning = collapse_stutter(full_reasoning)
+                    delta_reasoning = ""
+                    if not finish_reason:
+                        _end_reasoning_after_stutter(mc, job_id)
 
                 if budget_injection is not None and parser.in_reasoning and not parser.in_tool:
                     reasoning_tokens += len(generation.get("token_ids") or [])
@@ -873,7 +902,9 @@ async def _chat_stream_collector(
                 generation["logprob_response"] = ChatCompletionLogprobs(
                     content=collected_logprobs
                 )
-            generation["reasoning_content"] = full_reasoning if mc.reasoning else ""
+            generation["reasoning_content"] = (
+                collapse_stutter(full_reasoning) if mc.reasoning else ""
+            )
             generation["content"] = full_content if has_content else None
             generation["tool_calls"] = parsed_tools
             if full_tool and parsed_tools:

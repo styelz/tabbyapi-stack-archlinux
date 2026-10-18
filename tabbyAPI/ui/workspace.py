@@ -887,6 +887,206 @@ def _image_ref_notes(
     return notes
 
 
+_HTML_CLASS_ATTR = re.compile(r"(?i)\bclass\s*=\s*['\"]([^'\"]*)['\"]")
+_HTML_ID_ATTR = re.compile(r"(?i)\bid\s*=\s*['\"]([^'\"]+)['\"]")
+_CSS_CLASS_NAME = re.compile(r"\.([A-Za-z_][\w-]*)")
+_JS_GET_ID = re.compile(r"""getElementById\(\s*['"]([^'"]+)['"]""")
+_JS_HASH_ID = re.compile(r"""querySelector(?:All)?\(\s*['"][^'"]*#([\w-]+)""")
+_ASSET_PATH = re.compile(
+    r"""['"]((?:images|videos|audio)/[^'"?#\s]+)['"]""", re.I
+)
+_WIRING_KNOWN_CSS = ("styles.css",)
+_WIRING_KNOWN_JS = ("main.js", "script.js", "app.js")
+
+
+def _norm_ident(name: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(name or "").lower())
+
+
+def _idents_close(left: str, right: str) -> bool:
+    a = _norm_ident(left)
+    b = _norm_ident(right)
+    if not a or not b or a == b:
+        return False
+    shorter, longer = (a, b) if len(a) <= len(b) else (b, a)
+    if shorter in longer and len(longer) - len(shorter) <= 8:
+        return True
+    return difflib.SequenceMatcher(None, a, b).ratio() >= 0.74
+
+
+def _closest_name(name: str, options: set[str]) -> str:
+    best = ""
+    best_score = 0.0
+    target = _norm_ident(name)
+    for option in options:
+        if not _idents_close(name, option):
+            continue
+        other = _norm_ident(option)
+        score = difflib.SequenceMatcher(None, target, other).ratio()
+        if score > best_score:
+            best_score = score
+            best = option
+    return best
+
+
+def _html_class_set(html: str) -> set[str]:
+    found: set[str] = set()
+    for raw in _HTML_CLASS_ATTR.findall(html or ""):
+        found.update(part for part in raw.split() if part)
+    return found
+
+
+def _html_id_set(html: str) -> set[str]:
+    return {item.strip() for item in _HTML_ID_ATTR.findall(html or "") if item.strip()}
+
+
+def _css_class_set(css: str) -> set[str]:
+    found: set[str] = set()
+    for selector, _body in _iter_css_rules(css or ""):
+        found.update(_CSS_CLASS_NAME.findall(selector))
+    return found
+
+
+def _js_lookup_ids(js: str) -> set[str]:
+    text = js or ""
+    return set(_JS_GET_ID.findall(text)) | set(_JS_HASH_ID.findall(text))
+
+
+def _quoted_assets(text: str) -> set[str]:
+    return {item.replace("\\", "/") for item in _ASSET_PATH.findall(text or "")}
+
+
+def _read_linked(username: str, chat_id: str, entry: str, hrefs: list[str], extras: tuple[str, ...]) -> str:
+    chunks: list[str] = []
+    seen: set[str] = set()
+    for href in hrefs:
+        rel = _local_ref(entry, href)
+        if not rel or rel in seen:
+            continue
+        seen.add(rel)
+        text = _try_read_text(username, chat_id, rel)
+        if text:
+            chunks.append(text)
+    for rel in extras:
+        if rel in seen or not _workspace_file_exists(username, chat_id, rel):
+            continue
+        seen.add(rel)
+        text = _try_read_text(username, chat_id, rel)
+        if text:
+            chunks.append(text)
+    return "\n".join(chunks)
+
+
+def _pair_names(left: set[str], right: set[str], limit: int) -> list[tuple[str, str]]:
+    pairs: list[tuple[str, str]] = []
+    used: set[str] = set()
+    for name in sorted(left):
+        match = _closest_name(name, right - used)
+        if not match:
+            continue
+        used.add(match)
+        pairs.append((name, match))
+        if len(pairs) >= limit:
+            break
+    return pairs
+
+
+def page_wiring_note(username: str, chat_id: str) -> str:
+    """Short tool-result note when HTML, CSS, and JS name different things.
+
+    A coding pass that writes each file from a separate plan produces a page
+    whose script looks up ids the markup does not have, and whose stylesheet
+    uses a different class vocabulary. The model is told to stop after a
+    successful Write, so the mismatch has to come back on the tool result.
+    """
+    if not username or not chat_id:
+        return ""
+    try:
+        entry = site_entry(username, chat_id)
+    except (OSError, ValueError):
+        return ""
+    if not entry:
+        return ""
+    html = _try_read_text(username, chat_id, entry)
+    if not html:
+        return ""
+    walker = _LayoutWalker()
+    try:
+        walker.feed(html)
+        walker.close()
+    except Exception:
+        return ""
+    css = _read_linked(username, chat_id, entry, walker.css_hrefs, _WIRING_KNOWN_CSS)
+    js = _read_linked(username, chat_id, entry, walker.js_hrefs, _WIRING_KNOWN_JS)
+    # script_blocks are inline source, not paths. Keep linked files only above.
+    if walker.script_blocks:
+        js = "\n".join([js, *walker.script_blocks]).strip()
+    html_classes = _html_class_set(html)
+    css_classes = _css_class_set(css) if css else set()
+    html_ids = _html_id_set(html)
+    js_ids = _js_lookup_ids(js) if js else set()
+    lines: list[str] = []
+    missing_ids = sorted(item for item in js_ids if item not in html_ids)
+    if len(missing_ids) >= 2:
+        bits = []
+        for name in missing_ids[:6]:
+            near = _closest_name(name, html_ids)
+            bits.append(f"{name} (HTML id is {near})" if near else name)
+        lines.append("JS looks up ids that are not in the HTML: " + ", ".join(bits) + ".")
+    html_only = html_classes - css_classes
+    css_only = css_classes - html_classes
+    if css and len(html_only) >= 8 and len(css_only) >= 8:
+        pairs = _pair_names(html_only, css_only, 6)
+        if pairs:
+            shown = ", ".join(f"HTML {html_name} vs CSS {css_name}" for html_name, css_name in pairs)
+            lines.append(f"Class names differ: {shown}.")
+        else:
+            lines.append(
+                "Stylesheet classes do not match the HTML classes ("
+                + ", ".join(sorted(html_only)[:6])
+                + " vs "
+                + ", ".join(sorted(css_only)[:6])
+                + ")."
+            )
+    try:
+        on_disk = {str(row.get("path") or "") for row in list_files(username, chat_id)}
+    except (OSError, ValueError):
+        on_disk = set()
+    html_assets = _quoted_assets(html)
+    js_assets = _quoted_assets(js) if js else set()
+    missing_assets = sorted(
+        path for path in js_assets if path not in on_disk and path not in html_assets
+    )
+    if len(missing_assets) >= 2:
+        sample = ", ".join(missing_assets[:4])
+        have = sorted(path for path in html_assets if path in on_disk)[:4]
+        extra = f" HTML already uses {', '.join(have)}." if have else ""
+        lines.append(f"JS asset paths are not on disk: {sample}.{extra}")
+    if lines:
+        unused_media = sorted(
+            path
+            for path in on_disk
+            if Path(path).suffix.lower() in {".mp4", ".webm", ".wav", ".mp3"}
+            and path not in html_assets
+            and "<video" not in html.lower()
+            and "<audio" not in html.lower()
+        )
+        if unused_media:
+            lines.append(
+                "These media files are on disk but the page never plays them: "
+                + ", ".join(unused_media[:3])
+                + "."
+            )
+    if not lines:
+        return ""
+    note = (
+        "Page wiring: the HTML, CSS, and JS do not agree. "
+        "StrReplace the mismatched ids, classes, and src paths before you summarize.\n"
+        + "\n".join(lines)
+    )
+    return note[:1200]
+
+
 def layout_report(username: str, chat_id: str) -> str:
     """Static hero/canvas/image facts for a layout-fix turn. No browser."""
     if not username or not chat_id:

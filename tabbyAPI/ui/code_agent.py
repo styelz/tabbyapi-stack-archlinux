@@ -67,8 +67,10 @@ CODE_SYSTEM = (
     "say you are done, or that you will edit, unless that same reply calls "
     "Write or StrReplace. When several files need edits, emit every Write "
     "and StrReplace in one response. After those tools succeed, stop and "
-    "summarize. Do not Read, Grep, or List to check your own edits unless a "
-    "tool returned an error. If they named files such as index.html, "
+    "summarize. If a tool result says Page wiring, the HTML, CSS, and JS "
+    "do not agree — StrReplace the mismatched ids, classes, and src paths "
+    "before that summary. Do not Read, Grep, or List to check your own edits "
+    "unless a tool returned an error. If they named files such as index.html, "
     "styles.css, and app.js, Write each of those files. If HTML links local "
     "CSS or JS, Write those files in the same coding pass — do not leave "
     "broken stylesheet or script hrefs for later, and do not inline them "
@@ -1722,6 +1724,16 @@ def _inspect_media(username: str, chat_id: str, rel: str) -> tuple[str, str]:
     return _probe_result(rel, size, code, output)
 
 
+def _with_page_wiring(username: str, chat_id: str, rel: str, result: str) -> str:
+    """Append a mismatch note when a page file write left the site unwired."""
+    if Path(rel).suffix.lower() not in _PAGE_EDIT_SUFFIXES:
+        return result
+    note = workspace.page_wiring_note(username, chat_id)
+    if not note:
+        return result
+    return f"{result}\n{note}"
+
+
 def _note_change(sink: Optional[dict], kind: str, path: str, **extra: str) -> None:
     """Record what a mutating tool actually changed, for the browser to act on.
 
@@ -1881,7 +1893,7 @@ def _execute_tool(
         written = workspace.write_text(username, chat_id, rel, _arg_contents(args))
         extra = {"created": "1"} if created else {}
         _note_change(change, "write", written, **extra)
-        return f"Writing {written}", f"Wrote {written}"
+        return f"Writing {written}", _with_page_wiring(username, chat_id, rel, f"Wrote {written}")
     if kind == "replace":
         old = str(args.get("old_string") or args.get("oldStr") or "")
         new = str(args.get("new_string") or args.get("newStr") or "")
@@ -1892,7 +1904,7 @@ def _execute_tool(
                 return "Tool error", _LAYOUT_SRC_REFUSE
         workspace.str_replace(username, chat_id, rel, old, new)
         _note_change(change, "edit", rel)
-        return f"Editing {rel}", f"Updated {rel}"
+        return f"Editing {rel}", _with_page_wiring(username, chat_id, rel, f"Updated {rel}")
     if kind == "read":
         offset = args.get("offset")
         limit = args.get("limit")

@@ -754,6 +754,38 @@ def merge_tool_call_deltas(existing, incoming):
     return out
 
 
+class StutterDisplayTests(unittest.TestCase):
+    def setUp(self):
+        self.src = CHAT_JS.read_text(encoding="utf-8")
+
+    def test_thoughts_collapse_a_repeated_phrase(self):
+        self.assertIn("function tabbyCollapseStutter(text)", self.src)
+        self.assertIn("tabbyCollapseStutter(stepText)", self.src)
+        self.assertIn("tabbyCollapseStutter(String(reasoningText || \"\"))", self.src)
+        self.assertIn("tabbyCollapseStutter(reasoningText)", self.src)
+        node = __import__("shutil").which("node")
+        if not node:
+            self.skipTest("node is not installed")
+        script = (
+            self.src.split("function tabbyCollapseStutter", 1)[1]
+        )
+        script = "function tabbyCollapseStutter" + script.split("\nfunction tabbyIsNetworkDrop", 1)[0]
+        sample = "I had to had had him now. " * 40
+        sample += (
+            "Now I need to write styles.css and main.js in one response after the "
+            "tools succeed. The hero keeps a full-bleed photograph, a gold headline, "
+            "and two buttons. The garage grid filters classics, muscle, and race."
+        )
+        proc = __import__("subprocess").run(
+            [node, "-e", script + "\nprocess.stdout.write(tabbyCollapseStutter(process.argv[1]));", sample],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertIn("garage grid", proc.stdout)
+        self.assertLess(proc.stdout.count("I had to had had him now"), 10)
+
+
 class MergeToolCallDeltasTests(unittest.TestCase):
     def test_llama_fragments_rebuild_a_write_call(self):
         chunks = [
