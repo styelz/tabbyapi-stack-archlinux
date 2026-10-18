@@ -886,4 +886,215 @@
   });
   show(currentName());
   if (typeof TABBY_REVEAL_UI === "function") TABBY_REVEAL_UI();
+
+  /* ==== Command palette registrations ==== */
+  if (window.TabbyPalette && typeof TabbyPalette.register === "function") {
+    const reg = TabbyPalette.register;
+    const isMac = /Mac|iPhone|iPad/.test(navigator.platform || "");
+    const mod = isMac ? "⌘" : "Ctrl+";
+
+    function clickEl(id) {
+      const el = document.getElementById(id);
+      if (el) el.click();
+    }
+
+    // -- Navigation --
+    reg("nav.chat",     { label: "Go to Chat",     group: "Navigation", run: () => { location.hash = "#chat"; } });
+    reg("nav.status",   { label: "Go to Status",   group: "Navigation", run: () => { location.hash = "#status"; } });
+    reg("nav.models",   { label: "Go to Models",   group: "Navigation", run: () => { location.hash = "#models"; } });
+    reg("nav.gallery",  { label: "Go to Gallery",  group: "Navigation", run: () => { location.hash = "#gallery"; } });
+    reg("nav.logs",     { label: "Go to Logs",     group: "Navigation", run: () => { location.hash = "#logs"; } });
+    reg("nav.settings", { label: "Go to Settings", group: "Navigation", run: () => { location.hash = "#settings"; } });
+
+    // -- Chat --
+    reg("chat.new", {
+      label: "New chat", group: "Chat", kbd: mod + "N",
+      run: () => { location.hash = "#chat"; clickEl("chat-new"); },
+    });
+    reg("chat.search", {
+      label: "Search chats", group: "Chat", kbd: mod + "K",
+      run: () => {
+        location.hash = "#chat";
+        const el = document.getElementById("chat-search");
+        if (el) { el.focus(); el.select(); }
+      },
+    });
+    reg("chat.find", {
+      label: "Find in chat", group: "Chat", kbd: mod + "F",
+      run: () => {
+        location.hash = "#chat";
+        const el = document.getElementById("chat-find-input");
+        const bar = document.getElementById("chat-find");
+        if (bar) bar.hidden = false;
+        if (el) { el.focus(); el.select(); }
+      },
+    });
+    reg("chat.export", {
+      label: "Export markdown", group: "Chat",
+      run: () => {
+        location.hash = "#chat";
+        const btn = document.querySelector('[data-more="export"]');
+        if (btn) btn.click();
+      },
+    });
+    reg("chat.copy", {
+      label: "Copy entire chat", group: "Chat",
+      run: () => {
+        location.hash = "#chat";
+        const btn = document.querySelector('[data-more="copy"]');
+        if (btn) btn.click();
+      },
+    });
+    reg("chat.regen", {
+      label: "Regenerate last reply", group: "Chat",
+      run: () => {
+        location.hash = "#chat";
+        const btn = document.querySelector('[data-more="regen"]');
+        if (btn) btn.click();
+      },
+    });
+    reg("chat.handoff", {
+      label: "Continue in new chat", group: "Chat",
+      run: () => {
+        if (typeof window.tabbyContinueInNewChat === "function") window.tabbyContinueInNewChat();
+      },
+    });
+
+    // -- Code --
+    reg("code.jump", {
+      label: "Jump to file", group: "Code", kbd: mod + "P",
+      run: () => {
+        location.hash = "#chat";
+        setTimeout(() => {
+          const el = document.querySelector('[data-more="jump"]');
+          if (el) { el.click(); return; }
+          if (window.TabbyPalette) TabbyPalette.open({ title: "Jump to file", placeholder: "File name…", items: [] });
+        }, 50);
+      },
+    });
+    reg("code.findInFiles", {
+      label: "Find in files", group: "Code", kbd: mod + "Shift+F",
+      run: () => {
+        location.hash = "#chat";
+        setTimeout(() => {
+          const bar = document.getElementById("project-find");
+          const inp = document.getElementById("project-find-input");
+          if (bar) bar.hidden = false;
+          if (inp) { inp.focus(); inp.select(); }
+        }, 50);
+      },
+    });
+    reg("code.save", {
+      label: "Save file", group: "Code", kbd: mod + "S",
+      run: () => {
+        document.dispatchEvent(new KeyboardEvent("keydown", {
+          key: "s", code: "KeyS", ctrlKey: !isMac, metaKey: isMac, bubbles: true,
+        }));
+      },
+    });
+    reg("code.terminal", {
+      label: "Toggle terminal", group: "Code", kbd: mod + "`",
+      run: () => {
+        location.hash = "#chat";
+        setTimeout(() => clickEl("chat-term-toggle") || clickEl("files-term-btn"), 50);
+      },
+    });
+    reg("code.newTerminal", {
+      label: "New terminal", group: "Code",
+      run: () => {
+        location.hash = "#chat";
+        setTimeout(() => {
+          const btn = document.querySelector('[data-term-action="add"]');
+          if (btn) btn.click();
+        }, 50);
+      },
+    });
+    reg("code.preview", {
+      label: "Toggle preview", group: "Code",
+      run: () => {
+        location.hash = "#chat";
+        setTimeout(() => clickEl("files-preview-btn"), 50);
+      },
+    });
+    reg("code.split", {
+      label: "Split editor", group: "Code",
+      run: () => {
+        location.hash = "#chat";
+        setTimeout(() => {
+          const btn = document.querySelector('[data-editor-action="split"]');
+          if (btn) btn.click();
+        }, 50);
+      },
+    });
+
+    // -- GPU --
+    const gpuProfiles = (TabbyUI.lastGpuStatus && TabbyUI.lastGpuStatus.profiles) || [];
+    const gpuLabels = (TabbyUI.lastGpuStatus && TabbyUI.lastGpuStatus.profile_labels) || {};
+    function regGpuSwitch(name, label) {
+      reg("gpu." + name, {
+        label: "Switch to " + label, group: "GPU",
+        run: () => { if (TabbyUI.switchGpu) TabbyUI.switchGpu(name); },
+      });
+    }
+    regGpuSwitch("qwen", "qwen");
+    regGpuSwitch("gemma", "gemma");
+    regGpuSwitch("comfy", "comfy");
+    reg("gpu.restart", {
+      label: "Restart API", group: "GPU",
+      run: () => {
+        const btn = document.querySelector('[data-user-act="restart"]');
+        if (btn) btn.click();
+        else restartApi && restartApi();
+      },
+    });
+
+    // -- Theme --
+    (TabbyUI.THEME_FAMILIES || []).forEach((family) => {
+      (TabbyUI.THEME_MODES || []).forEach((mode) => {
+        const familyLabel = (TabbyUI.THEME_LABELS || {})[family] || family;
+        const modeLabel = (TabbyUI.MODE_LABELS || {})[mode] || mode;
+        reg("theme." + family + "." + mode, {
+          label: familyLabel + " — " + modeLabel, group: "Theme",
+          run: () => {
+            TabbyUI.setTheme(family);
+            TabbyUI.setMode(mode);
+          },
+        });
+      });
+    });
+
+    // -- Account --
+    reg("account.keys", {
+      label: "Keyboard shortcuts", group: "Account", kbd: "?",
+      run: () => { if (TabbyUI.showShortcuts) TabbyUI.showShortcuts(); },
+    });
+    reg("account.backup", {
+      label: "Download backup", group: "Account",
+      run: () => {
+        const btn = document.querySelector('[data-user-act="backup"]');
+        if (btn) btn.click();
+      },
+    });
+    reg("account.restore", {
+      label: "Restore backup", group: "Account",
+      run: () => {
+        const btn = document.querySelector('[data-user-act="restore"]');
+        if (btn) btn.click();
+      },
+    });
+    reg("account.fullscreen", {
+      label: "Full screen", group: "Account", kbd: "F11",
+      run: () => {
+        if (document.fullscreenElement) document.exitFullscreen();
+        else document.documentElement.requestFullscreen().catch(() => {});
+      },
+    });
+    reg("account.logout", {
+      label: "Log out", group: "Account",
+      run: () => {
+        const btn = document.querySelector('[data-user-act="logout"]');
+        if (btn) btn.click();
+      },
+    });
+  }
 })();

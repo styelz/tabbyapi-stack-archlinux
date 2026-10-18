@@ -6242,6 +6242,93 @@ button.chat-git-branch:hover:not(:disabled) {
   color: var(--muted);
   font-size: 0.6875rem;
 }
+/* ---- Command palette (Ctrl+Shift+P) ---- */
+.cmd-palette {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+.cmd-palette-backdrop {
+  background: rgba(0, 0, 0, 0.4);
+}
+.cmd-palette-card {
+  margin-top: 15%;
+  width: min(36rem, 90vw);
+  background: var(--bg-elev-2);
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  box-shadow: var(--shadow);
+  padding: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  max-height: 60vh;
+}
+.cmd-palette-input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  background: var(--bg);
+  color: inherit;
+  font: inherit;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.9375rem;
+  outline: none;
+  flex-shrink: 0;
+}
+.cmd-palette-input:focus {
+  border-color: var(--accent);
+}
+.cmd-palette-list {
+  list-style: none;
+  margin: 0.375rem 0 0;
+  padding: 0;
+  overflow-y: auto;
+  flex: 1 1 0;
+  min-height: 0;
+}
+.cmd-palette-group {
+  padding: 0.5rem 0.625rem 0.25rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  pointer-events: none;
+}
+.cmd-palette-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.4375rem 0.625rem;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  font-size: 0.875rem;
+}
+.cmd-palette-item.is-active {
+  background: rgba(var(--accent-rgb), 0.16);
+}
+.cmd-palette-label {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cmd-palette-kbd {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 0.6875rem;
+  font-family: inherit;
+  white-space: nowrap;
+}
+.cmd-palette-match {
+  color: var(--accent);
+  font-weight: 600;
+}
 .chat-preview.is-md .chat-preview-head {
   display: none;
 }
