@@ -243,68 +243,90 @@ function mountChat(root) {
       </div>
       <aside class="chat-files" id="chat-files" hidden>
         <button type="button" class="chat-resize" id="chat-files-resize" aria-label="Resize files pane" title="Drag to resize"></button>
-        <div class="chat-files-head">
-          <span>Files</span>
-          <span class="chat-files-count" id="chat-files-count"></span>
-          <span class="spacer"></span>
-          <div class="chat-more chat-files-more">
-            <button class="btn ghost chat-icon" type="button" id="chat-files-more" aria-haspopup="true" aria-expanded="false" aria-label="More file actions" title="More">⋯</button>
-            <div class="chat-more-menu" id="chat-files-more-menu" hidden>
-              <button type="button" data-files-more="refresh">Refresh</button>
-              <button type="button" data-files-more="zip" id="chat-files-zip">Download zip</button>
-              <button type="button" data-files-more="clone">Clone git repo</button>
-              <button type="button" data-files-more="clear" id="chat-files-clear">Clear files</button>
-            </div>
-          </div>
-          <button class="btn ghost chat-icon chat-files-close" type="button" id="chat-files-close" aria-label="Hide files" title="Hide files">×</button>
-          <div class="chat-files-actions">
-            <button class="btn ghost chat-icon" type="button" id="chat-files-new" aria-label="New">${FILES_NEW_SVG}</button>
-            <div class="chat-more chat-files-upload-wrap">
-              <button class="btn ghost chat-icon" type="button" id="chat-files-upload" aria-label="Upload" aria-haspopup="true" aria-expanded="false">${FILES_UPLOAD_SVG}</button>
-              <div class="chat-more-menu" id="chat-files-upload-menu" hidden>
-                <button type="button" data-upload="files">Files</button>
-                <button type="button" data-upload="folder">Folder</button>
-                <button type="button" data-upload="gallery">From gallery</button>
+        <nav class="code-activity-bar" id="code-activity-bar" aria-label="Files view">
+          <button type="button" class="code-activity-btn is-active" data-activity="explorer" aria-label="Explorer" title="Explorer">${ACT_EXPLORER_SVG}</button>
+          <button type="button" class="code-activity-btn" data-activity="search" aria-label="Search" title="Search">${ACT_SEARCH_SVG}</button>
+          <button type="button" class="code-activity-btn" data-activity="git" aria-label="Git" title="Git">${ACT_GIT_SVG}</button>
+          <button type="button" class="code-activity-btn" data-activity="changes" aria-label="Changes" title="Changes">${ACT_CHANGES_SVG}</button>
+        </nav>
+        <div class="code-activity-content" id="code-activity-content">
+          <div class="chat-files-head" id="chat-files-head">
+            <span id="chat-files-head-title">Files</span>
+            <span class="chat-files-count" id="chat-files-count"></span>
+            <span class="spacer"></span>
+            <div class="chat-more chat-files-more">
+              <button class="btn ghost chat-icon" type="button" id="chat-files-more" aria-haspopup="true" aria-expanded="false" aria-label="More file actions" title="More">⋯</button>
+              <div class="chat-more-menu" id="chat-files-more-menu" hidden>
+                <button type="button" data-files-more="refresh">Refresh</button>
+                <button type="button" data-files-more="zip" id="chat-files-zip">Download zip</button>
+                <button type="button" data-files-more="clone">Clone git repo</button>
+                <button type="button" data-files-more="clear" id="chat-files-clear">Clear files</button>
               </div>
             </div>
-            <button class="btn ghost chat-icon" type="button" id="chat-files-site" aria-label="Open site">${FILES_SITE_SVG}</button>
-            <button class="btn ghost chat-icon" type="button" id="chat-files-preview" aria-label="Preview">${FILES_PREVIEW_SVG}</button>
-            <button class="btn ghost chat-icon" type="button" id="chat-files-term" aria-label="Terminal" aria-keyshortcuts="Control+\`" title="Terminal (Ctrl+\`)">${FILES_TERM_SVG}</button>
+            <button class="btn ghost chat-icon chat-files-close" type="button" id="chat-files-close" aria-label="Hide files" title="Hide files">×</button>
+            <div class="chat-files-actions" id="chat-files-actions-explorer">
+              <button class="btn ghost chat-icon" type="button" id="chat-files-new" aria-label="New">${FILES_NEW_SVG}</button>
+              <div class="chat-more chat-files-upload-wrap">
+                <button class="btn ghost chat-icon" type="button" id="chat-files-upload" aria-label="Upload" aria-haspopup="true" aria-expanded="false">${FILES_UPLOAD_SVG}</button>
+                <div class="chat-more-menu" id="chat-files-upload-menu" hidden>
+                  <button type="button" data-upload="files">Files</button>
+                  <button type="button" data-upload="folder">Folder</button>
+                  <button type="button" data-upload="gallery">From gallery</button>
+                </div>
+              </div>
+              <button class="btn ghost chat-icon" type="button" id="chat-files-site" aria-label="Open site">${FILES_SITE_SVG}</button>
+              <button class="btn ghost chat-icon" type="button" id="chat-files-preview" aria-label="Preview">${FILES_PREVIEW_SVG}</button>
+              <button class="btn ghost chat-icon" type="button" id="chat-files-term" aria-label="Terminal" aria-keyshortcuts="Control+\`" title="Terminal (Ctrl+\`)">${FILES_TERM_SVG}</button>
+            </div>
           </div>
-        </div>
-        <div class="chat-files-filter" id="chat-files-filter-wrap">
-          <input id="chat-files-filter" type="search" placeholder="Filter files" autocomplete="off" />
-        </div>
-        <div class="chat-files-tree" id="chat-files-tree"></div>
-        <div class="chat-files-history is-collapsed" id="chat-files-git">
-          <button type="button" class="chat-resize chat-resize-y" id="chat-files-git-resize" aria-label="Resize git pane" title="Drag to resize"></button>
-          <div class="chat-files-history-head chat-git-bar">
-            <button type="button" class="chat-git-toggle" id="chat-files-git-toggle" aria-expanded="false">
-              <span class="chat-files-twist" aria-hidden="true"></span>
-              <span class="chat-files-history-title">Git</span>
-              <span class="chat-files-history-count" id="chat-files-git-count"></span>
-            </button>
-            <div class="chat-git-toolbar" id="chat-files-git-tools" role="toolbar" aria-label="Git"></div>
+          <div class="code-activity-panel" id="activity-panel-explorer">
+            <div class="chat-files-filter" id="chat-files-filter-wrap">
+              <input id="chat-files-filter" type="search" placeholder="Filter files" autocomplete="off" />
+            </div>
+            <div class="chat-files-tree" id="chat-files-tree"></div>
           </div>
-          <div class="chat-files-history-list" id="chat-files-git-list"></div>
-        </div>
-        <div class="chat-files-history" id="chat-files-changes">
-          <button type="button" class="chat-resize chat-resize-y" id="chat-files-changes-resize" aria-label="Resize changes pane" title="Drag to resize"></button>
-          <button type="button" class="chat-files-history-head" id="chat-files-changes-toggle" aria-expanded="true">
-            <span class="chat-files-twist" aria-hidden="true"></span>
-            <span class="chat-files-history-title">Changes</span>
-            <span class="chat-files-history-count" id="chat-files-changes-count"></span>
-          </button>
-          <div class="chat-files-history-list" id="chat-files-changes-list"></div>
-        </div>
-        <div class="chat-files-history" id="chat-files-history">
-          <button type="button" class="chat-resize chat-resize-y" id="chat-files-history-resize" aria-label="Resize history pane" title="Drag to resize"></button>
-          <button type="button" class="chat-files-history-head" id="chat-files-history-toggle" aria-expanded="true">
-            <span class="chat-files-twist" aria-hidden="true"></span>
-            <span class="chat-files-history-title">History</span>
-            <span class="chat-files-history-count" id="chat-files-history-count"></span>
-          </button>
-          <div class="chat-files-history-list" id="chat-files-history-list"></div>
+          <div class="code-activity-panel" id="activity-panel-search" hidden>
+            <div class="code-search-bar">
+              <input id="code-search-input" type="search" placeholder="Find in files" autocomplete="off" />
+              <button type="button" class="btn ghost" id="code-search-go">Find</button>
+            </div>
+            <div class="code-search-count" id="code-search-count"></div>
+            <div class="code-search-results" id="code-search-results"></div>
+          </div>
+          <div class="code-activity-panel" id="activity-panel-git" hidden>
+            <div class="chat-files-history" id="chat-files-git">
+              <button type="button" class="chat-resize chat-resize-y" id="chat-files-git-resize" aria-label="Resize git pane" title="Drag to resize"></button>
+              <div class="chat-files-history-head chat-git-bar">
+                <button type="button" class="chat-git-toggle" id="chat-files-git-toggle" aria-expanded="false">
+                  <span class="chat-files-twist" aria-hidden="true"></span>
+                  <span class="chat-files-history-title">Git</span>
+                  <span class="chat-files-history-count" id="chat-files-git-count"></span>
+                </button>
+                <div class="chat-git-toolbar" id="chat-files-git-tools" role="toolbar" aria-label="Git"></div>
+              </div>
+              <div class="chat-files-history-list" id="chat-files-git-list"></div>
+            </div>
+            <div class="chat-files-history" id="chat-files-history">
+              <button type="button" class="chat-resize chat-resize-y" id="chat-files-history-resize" aria-label="Resize history pane" title="Drag to resize"></button>
+              <button type="button" class="chat-files-history-head" id="chat-files-history-toggle" aria-expanded="true">
+                <span class="chat-files-twist" aria-hidden="true"></span>
+                <span class="chat-files-history-title">History</span>
+                <span class="chat-files-history-count" id="chat-files-history-count"></span>
+              </button>
+              <div class="chat-files-history-list" id="chat-files-history-list"></div>
+            </div>
+          </div>
+          <div class="code-activity-panel" id="activity-panel-changes" hidden>
+            <div class="chat-files-history" id="chat-files-changes">
+              <button type="button" class="chat-resize chat-resize-y" id="chat-files-changes-resize" aria-label="Resize changes pane" title="Drag to resize"></button>
+              <button type="button" class="chat-files-history-head" id="chat-files-changes-toggle" aria-expanded="true">
+                <span class="chat-files-twist" aria-hidden="true"></span>
+                <span class="chat-files-history-title">Changes</span>
+                <span class="chat-files-history-count" id="chat-files-changes-count"></span>
+              </button>
+              <div class="chat-files-history-list" id="chat-files-changes-list"></div>
+            </div>
+          </div>
         </div>
       </aside>
     </div>
@@ -367,6 +389,14 @@ function mountChat(root) {
   const codeWriteText = root.querySelector("#chat-code-write-text");
   const codeWriteQwenBtn = root.querySelector("#chat-code-write-qwen");
   const filesPane = root.querySelector("#chat-files");
+  const activityBar = root.querySelector("#code-activity-bar");
+  const activityContent = root.querySelector("#code-activity-content");
+  const filesHeadTitle = root.querySelector("#chat-files-head-title");
+  const activityExplorerActions = root.querySelector("#chat-files-actions-explorer");
+  const codeSearchInput = root.querySelector("#code-search-input");
+  const codeSearchGoBtn = root.querySelector("#code-search-go");
+  const codeSearchCountEl = root.querySelector("#code-search-count");
+  const codeSearchResults = root.querySelector("#code-search-results");
   const filesTree = root.querySelector("#chat-files-tree");
   const filesGitList = root.querySelector("#chat-files-git-list");
   const filesGitToggle = root.querySelector("#chat-files-git-toggle");
@@ -458,6 +488,9 @@ function mountChat(root) {
   let gitRefreshTimer = 0;
   let projectFindHits = [];
   let projectFindIndex = 0;
+  let activityPanel = "explorer";
+  let activitySearchHits = [];
+  let activitySearchIndex = -1;
   let termSlots = [{ id: "1", label: "1" }];
   let termSlot = "1";
   let speakUtter = null;
@@ -2548,6 +2581,129 @@ function mountChat(root) {
       filesPreviewBtn.classList.toggle("is-on", previewOpen);
     }
     if (filesTermBtn) filesTermBtn.classList.toggle("is-on", termOpen);
+    paintActivityBar();
+  }
+
+  /* --- Activity-bar panel switching --- */
+
+  var ACTIVITY_TITLES = { explorer: "Files", search: "Search", git: "Git", changes: "Changes" };
+
+  function setActivityPanel(panel) {
+    if (panel === activityPanel) return;
+    activityPanel = panel;
+    paintActivityBar();
+  }
+
+  function paintActivityBar() {
+    if (!activityBar) return;
+    activityBar.querySelectorAll(".code-activity-btn").forEach(function (btn) {
+      var on = btn.dataset.activity === activityPanel;
+      btn.classList.toggle("is-active", on);
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+    var panels = activityContent
+      ? activityContent.querySelectorAll(".code-activity-panel")
+      : [];
+    panels.forEach(function (p) {
+      p.hidden = p.id !== "activity-panel-" + activityPanel;
+    });
+    if (filesHeadTitle) filesHeadTitle.textContent = ACTIVITY_TITLES[activityPanel] || "Files";
+    // Show explorer-specific actions only in explorer panel
+    if (activityExplorerActions) activityExplorerActions.hidden = activityPanel !== "explorer";
+    // Count badge: only in explorer
+    if (filesCountEl) filesCountEl.hidden = activityPanel !== "explorer";
+    // More menu: show in explorer, hide in others
+    var moreWrap = filesPane && filesPane.querySelector(".chat-files-more");
+    if (moreWrap) moreWrap.hidden = activityPanel !== "explorer";
+    // When switching to git, expand it and refresh
+    if (activityPanel === "git") {
+      gitOpen = true;
+      paintGitPane();
+      refreshGit();
+    }
+    if (activityPanel === "changes") {
+      changesOpen = true;
+      paintChangesPane();
+    }
+  }
+
+  /* --- Activity bar: Search panel --- */
+
+  async function runActivitySearch() {
+    if (!codeSearchInput) return;
+    var pattern = codeSearchInput.value;
+    if (!pattern) {
+      activitySearchHits = [];
+      activitySearchIndex = -1;
+      if (codeSearchCountEl) codeSearchCountEl.textContent = "";
+      if (codeSearchResults) codeSearchResults.innerHTML = "";
+      return;
+    }
+    try {
+      var data = await TabbyUI.api("workspace/" + encodeURIComponent(activeWorkspaceId()) + "/grep", {
+        method: "POST",
+        body: { pattern: pattern, literal: true },
+      });
+      activitySearchHits = data.hits || [];
+      activitySearchIndex = activitySearchHits.length ? 0 : -1;
+      if (codeSearchCountEl) {
+        codeSearchCountEl.textContent = activitySearchHits.length
+          ? activitySearchHits.length + " result" + (activitySearchHits.length === 1 ? "" : "s")
+          : "No results";
+      }
+      paintActivitySearchResults();
+    } catch (err) {
+      if (codeSearchCountEl) codeSearchCountEl.textContent = "Error";
+      if (codeSearchResults) codeSearchResults.innerHTML = "";
+    }
+  }
+
+  function paintActivitySearchResults() {
+    if (!codeSearchResults) return;
+    if (!activitySearchHits.length) {
+      codeSearchResults.innerHTML = '<p class="muted chat-files-empty">No matches.</p>';
+      return;
+    }
+    // Group by file
+    var groups = Object.create(null);
+    var order = [];
+    activitySearchHits.forEach(function (hit) {
+      if (!groups[hit.path]) {
+        groups[hit.path] = [];
+        order.push(hit.path);
+      }
+      groups[hit.path].push(hit);
+    });
+    var frag = document.createDocumentFragment();
+    order.forEach(function (path) {
+      var fileRow = document.createElement("div");
+      fileRow.className = "code-search-file";
+      var fileLabel = document.createElement("button");
+      fileLabel.type = "button";
+      fileLabel.className = "code-search-file-name";
+      fileLabel.textContent = path;
+      fileLabel.dataset.searchPath = path;
+      fileRow.appendChild(fileLabel);
+      groups[path].forEach(function (hit) {
+        var hitRow = document.createElement("button");
+        hitRow.type = "button";
+        hitRow.className = "code-search-hit";
+        hitRow.dataset.searchPath = hit.path;
+        hitRow.dataset.searchLine = String(hit.line);
+        var lineNum = document.createElement("span");
+        lineNum.className = "code-search-line";
+        lineNum.textContent = String(hit.line);
+        var lineText = document.createElement("span");
+        lineText.className = "code-search-text";
+        lineText.textContent = hit.text;
+        hitRow.appendChild(lineNum);
+        hitRow.appendChild(lineText);
+        fileRow.appendChild(hitRow);
+      });
+      frag.appendChild(fileRow);
+    });
+    codeSearchResults.innerHTML = "";
+    codeSearchResults.appendChild(frag);
   }
 
   function paintFilesTree() {
@@ -3177,10 +3333,15 @@ function mountChat(root) {
   }
 
   function openProjectFind() {
+    setActivityPanel("search");
     if (projectFindBar) projectFindBar.hidden = false;
     if (projectFindInput) {
       projectFindInput.focus();
       projectFindInput.select();
+    }
+    if (codeSearchInput) {
+      codeSearchInput.focus();
+      codeSearchInput.select();
     }
   }
 
@@ -7629,11 +7790,19 @@ function mountChat(root) {
   }
 
   function filesSplitSections() {
+    if (activityPanel === "git") {
+      return [
+        { key: "git", el: filesGitPane, open: gitOpen },
+        { key: "history", el: filesHistoryPane, open: historyOpen },
+      ];
+    }
+    if (activityPanel === "changes") {
+      return [
+        { key: "changes", el: filesChangesPane, open: changesOpen },
+      ];
+    }
     return [
       { key: "tree", el: filesTree, open: true },
-      { key: "git", el: filesGitPane, open: gitOpen },
-      { key: "changes", el: filesChangesPane, open: changesOpen },
-      { key: "history", el: filesHistoryPane, open: historyOpen },
     ];
   }
 
@@ -15619,6 +15788,34 @@ function mountChat(root) {
   }
   if (filesCloseBtn) {
     filesCloseBtn.addEventListener("click", () => setFilesOpen(false));
+  }
+  // Activity bar panel switching
+  if (activityBar) {
+    activityBar.addEventListener("click", (event) => {
+      const btn = event.target.closest("[data-activity]");
+      if (!btn) return;
+      setActivityPanel(btn.dataset.activity);
+    });
+  }
+  if (codeSearchInput) {
+    codeSearchInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        runActivitySearch();
+      }
+    });
+  }
+  if (codeSearchGoBtn) {
+    codeSearchGoBtn.addEventListener("click", () => runActivitySearch());
+  }
+  if (codeSearchResults) {
+    codeSearchResults.addEventListener("click", (event) => {
+      const btn = event.target.closest("[data-search-path]");
+      if (!btn) return;
+      const path = btn.dataset.searchPath;
+      const line = btn.dataset.searchLine ? Number(btn.dataset.searchLine) : undefined;
+      if (path) openFileTab(path, line ? { line: line } : undefined);
+    });
   }
   // Crossing the breakpoint flips the pane between a column and a bottom sheet,
   // so pick the sensible default for the new shape.

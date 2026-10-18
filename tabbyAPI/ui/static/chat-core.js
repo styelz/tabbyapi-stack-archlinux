@@ -235,6 +235,14 @@
     '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.9 6.35V4.15h3.05L7.25 5.85H13.1v6.9H2.9z"/><path d="M8 7.15v3.45"/><path d="M6.15 9.05 8 10.85 9.85 9.05"/></svg>';
   var GIT_INIT_SVG =
     '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><circle cx="8" cy="8" r="5.15"/><path d="M8 5.2v5.6M5.2 8h5.6"/></svg>';
+  var ACT_EXPLORER_SVG =
+    '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3H7l1.2 1.5H12.5A1.5 1.5 0 0 1 14 6v5.5A1.5 1.5 0 0 1 12.5 13h-9A1.5 1.5 0 0 1 2 11.5z" /></svg>';
+  var ACT_SEARCH_SVG =
+    '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><circle cx="7" cy="7" r="3.75"/><path d="m10 10 3.5 3.5"/></svg>';
+  var ACT_GIT_SVG =
+    '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><circle cx="4.7" cy="3.25" r="1.15" fill="currentColor"/><circle cx="11.3" cy="6.05" r="1.15" fill="currentColor"/><circle cx="4.7" cy="12.75" r="1.15" fill="currentColor"/><path d="M4.7 4.45v7.15"/><path d="M4.7 8.05c2.2.2 4.7-.35 5.35-2.05"/></svg>';
+  var ACT_CHANGES_SVG =
+    '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M4 2h5.2L12 4.8V14H4z"/><path d="M7 7h3M7 9.5h3M6 7H5.5M6 9.5H5.5"/></svg>';
 
   window.TabbyChatCore = {
     tabbyChatComposeAction: tabbyChatComposeAction,
@@ -276,6 +284,10 @@
     GIT_MORE_SVG: GIT_MORE_SVG,
     GIT_CLONE_SVG: GIT_CLONE_SVG,
     GIT_INIT_SVG: GIT_INIT_SVG,
+    ACT_EXPLORER_SVG: ACT_EXPLORER_SVG,
+    ACT_SEARCH_SVG: ACT_SEARCH_SVG,
+    ACT_GIT_SVG: ACT_GIT_SVG,
+    ACT_CHANGES_SVG: ACT_CHANGES_SVG,
   };
 
   // Expose as globals so existing references in chat.js and other modules work.
@@ -318,4 +330,8 @@
   window.GIT_MORE_SVG = GIT_MORE_SVG;
   window.GIT_CLONE_SVG = GIT_CLONE_SVG;
   window.GIT_INIT_SVG = GIT_INIT_SVG;
+  window.ACT_EXPLORER_SVG = ACT_EXPLORER_SVG;
+  window.ACT_SEARCH_SVG = ACT_SEARCH_SVG;
+  window.ACT_GIT_SVG = ACT_GIT_SVG;
+  window.ACT_CHANGES_SVG = ACT_CHANGES_SVG;
 })();
