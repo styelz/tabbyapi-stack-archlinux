@@ -597,6 +597,16 @@ html, body {
 *::-webkit-scrollbar-thumb:active {
   background-color: var(--scroll-thumb-active);
 }
+
+/* Catch-all focus ring for interactive elements without a specific rule */
+button:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible,
+summary:focus-visible {
+  outline: 0.125rem solid var(--focus-ring);
+  outline-offset: 0.125rem;
+}
+
 body {
   margin: 0;
   font-family: var(--sans);
@@ -673,6 +683,10 @@ input:focus, textarea:focus { outline: 0.125rem solid var(--focus-ring); border-
   line-height: 1;
 }
 .btn:hover { border-color: rgba(var(--accent-rgb), 0.4); background: var(--hover-fill); }
+.btn:focus-visible {
+  outline: 0.125rem solid var(--focus-ring);
+  outline-offset: 0.125rem;
+}
 .btn.primary {
   background: var(--accent);
   color: var(--mode-on-fg);
@@ -1241,6 +1255,7 @@ button.chip {
   position: relative;
   background: var(--sidebar-bg);
   border-right: 1px solid color-mix(in srgb, var(--line) 42%, transparent);
+  box-shadow: 1px 0 0 0 var(--line);
 }
 .chat-resize {
   position: absolute;
@@ -1790,16 +1805,9 @@ button.chip {
 .chat-mode-btn:hover { color: var(--text); background: var(--hover-fill); }
 .chat-mode-btn.is-active,
 .chat-mode-btn.is-active:hover {
-  background: linear-gradient(
-    90deg,
-    #e78f98 0%,
-    #dbbe70 22%,
-    #5db88c 48%,
-    #98b0e7 74%,
-    #c29ee6 100%
-  );
+  background: var(--accent);
   color: var(--mode-on-fg);
-  box-shadow: 0 1px 0.125rem rgba(0, 0, 0, 0.28);
+  box-shadow: 0 1px 0.125rem rgba(0, 0, 0, 0.18);
 }
 
 /* One control per side rail. The chevron faces the way the pane would fold,
@@ -1860,6 +1868,7 @@ button.chip {
   position: relative;
   border-left: 1px solid color-mix(in srgb, var(--line) 42%, transparent);
   background: var(--files-bg);
+  box-shadow: -1px 0 0 0 var(--line);
 }
 .code-activity-bar {
   display: flex;
@@ -2561,6 +2570,7 @@ button.chip {
   border-radius: var(--radius);
   background: var(--bg-elev);
   overflow: hidden;
+  box-shadow: -1px 0 0 0 var(--line);
 }
 .chat-preview-chrome {
   display: flex;
@@ -2701,6 +2711,7 @@ button.chip {
   border-radius: var(--radius);
   background: var(--bg);
   overflow: hidden;
+  box-shadow: 0 -1px 0 0 var(--line);
 }
 .chat-term-head {
   display: flex;
@@ -2832,6 +2843,7 @@ button.chip {
   font-size: 0.5625rem;
 }
 
+.chat-editor *::-webkit-scrollbar { width: 0.75rem; }
 .chat-editor {
   display: flex;
   flex-direction: column;
@@ -3431,6 +3443,7 @@ button.chip {
   border-radius: 0.625rem;
   font-size: 0.8125rem;
   line-height: 1.45;
+  letter-spacing: -0.006em;
   white-space: pre-wrap;
   overflow-wrap: break-word;
 }
@@ -3447,8 +3460,9 @@ button.chip {
   border: 0;
   padding: 0.15rem 0;
 }
-.bubble.assistant p { margin: 0 0 0.55em; }
+.bubble.assistant p { margin: 0 0 0.55em; line-height: 1.65; }
 .bubble.assistant p:last-child { margin-bottom: 0; }
+.bubble.assistant p + p { margin-top: 0.6em; }
 .bubble.assistant h1,
 .bubble.assistant h2,
 .bubble.assistant h3 {
@@ -3467,13 +3481,14 @@ button.chip {
   margin: 0.35em 0 0.55em;
   padding-left: 1.35em;
 }
-.bubble.assistant li { margin: 0.15em 0; }
+.bubble.assistant li { margin: 0.15em 0; line-height: 1.65; }
 .bubble.assistant code {
   font-family: var(--mono);
-  font-size: 0.88em;
+  font-size: 0.875em;
+  font-weight: 500;
   background: var(--code-inline-bg);
-  padding: 0.12em 0.38em;
-  border-radius: 0.25rem;
+  padding: 0.125em 0.35em;
+  border-radius: 0.3em;
 }
 .md-code {
   margin: 0.65em 0;
@@ -3634,6 +3649,10 @@ button.chip {
   z-index: 1;
   flex: 0 0 auto;
   max-width: 100%;
+}
+.chat-turn.assistant .bubble.assistant {
+  border-left: 2px solid rgba(var(--accent-rgb), 0.35);
+  padding-left: calc(0.875rem + 2px);
 }
 .think-head {
   display: flex;
