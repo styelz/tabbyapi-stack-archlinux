@@ -17,12 +17,17 @@
     return pages[hash] ? hash : "chat";
   }
 
+  let activePage = "";
+
   function show(name) {
     if (window.TabbyUI && TabbyUI.hideContextMenu) TabbyUI.hideContextMenu();
     closeUserMenu();
     closeGpuMenu();
     closeContextMenu();
     const key = pages[name] ? name : "chat";
+    const previous = activePage;
+    activePage = key;
+    if (window.TabbyStore) TabbyStore.set("page", { current: key, previous });
     Object.entries(pages).forEach(([id, page]) => {
       const on = id === key;
       page.el.hidden = !on;
@@ -823,6 +828,7 @@
       if (chip && name) chip.setAttribute("aria-label", name);
       isAdmin = Boolean(data.is_admin);
       TabbyUI.isAdmin = isAdmin;
+      if (window.TabbyStore) TabbyStore.set("user", { name, isAdmin });
       const logsTab = document.getElementById("tab-logs");
       const usersTab = document.getElementById("tab-users");
       const settingsTab = document.getElementById("tab-settings");
@@ -862,6 +868,9 @@
       const data = TabbyUI.lastGpuStatus;
       const switching = gpuSwitchBusy || (data && (data.switching || data.restarting || data.busy));
       const occupied = Boolean(data && data.stack_queue && (data.stack_queue.busy || data.stack_queue.queued));
+      if (window.TabbyStore && data) {
+        TabbyStore.patch("gpu", { switching: Boolean(switching) });
+      }
       kickHeaderStatus(headerFailing ? 5000 : switching || occupied ? 5000 : 15000);
     }
   }

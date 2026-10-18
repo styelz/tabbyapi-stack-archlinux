@@ -2263,6 +2263,22 @@
     return Boolean(data.switching || data.busy);
   }
 
+  /** Derive the gpu store slice from raw status data. */
+  function gpuStoreValue(data) {
+    if (!data) return { status: null, switching: false, serving: false, mode: "" };
+    return {
+      status: data,
+      switching: gpuSwitchPaused(data),
+      serving: gpuIsServing(data),
+      mode: String(data.gpu_mode || "").toLowerCase(),
+    };
+  }
+
+  /** Push gpu status into TabbyStore when available. */
+  function syncGpuStore(data) {
+    if (window.TabbyStore) TabbyStore.set("gpu", gpuStoreValue(data));
+  }
+
   window.TabbyUI = {
     base: uiBase,
     path: uiPath,
@@ -2397,6 +2413,7 @@
         chip.title = holderTitle || `Waiting to switch to ${name}`;
         chip.setAttribute("aria-label", text);
         window.dispatchEvent(new CustomEvent("tabby-gpu-status", { detail: data }));
+        syncGpuStore(data);
         return;
       }
       if (this.gpuSwitchPaused(data)) {
@@ -2413,6 +2430,7 @@
             : `Loading ${name}. Chat is paused until the model is ready.`;
         chip.setAttribute("aria-label", text);
         window.dispatchEvent(new CustomEvent("tabby-gpu-status", { detail: data }));
+        syncGpuStore(data);
         return;
       }
       if (queue.busy && !queue.mine) {
@@ -2425,6 +2443,7 @@
         chip.title = holderTitle || "The stack is being used";
         chip.setAttribute("aria-label", text);
         window.dispatchEvent(new CustomEvent("tabby-gpu-status", { detail: data }));
+        syncGpuStore(data);
         return;
       }
       const loaded = this.gpuIsServing(data);
@@ -2448,6 +2467,7 @@
       chip.title = parts.join(" · ");
       chip.setAttribute("aria-label", `GPU and model: ${text}`);
       window.dispatchEvent(new CustomEvent("tabby-gpu-status", { detail: data }));
+      syncGpuStore(data);
     },
     paintApiDown(err) {
       const chip = document.getElementById("gpu-chip");
@@ -2476,6 +2496,7 @@
           switch_target: prev.switch_target || prev.profile || "llm",
         });
         window.dispatchEvent(new CustomEvent("tabby-gpu-status", { detail: this.lastGpuStatus }));
+        syncGpuStore(this.lastGpuStatus);
         return;
       }
       let detail = "reconnecting";
@@ -2489,6 +2510,7 @@
       chip.setAttribute("aria-label", text);
       this.lastGpuStatus = Object.assign({}, prev, { down: true });
       window.dispatchEvent(new CustomEvent("tabby-gpu-status", { detail: this.lastGpuStatus }));
+      syncGpuStore(this.lastGpuStatus);
     },
   };
 })();

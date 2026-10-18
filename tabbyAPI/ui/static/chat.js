@@ -13937,6 +13937,7 @@ function mountChat(root) {
     loopBusy = true;
     flightChatId = store.activeId;
     inFlight = true;
+    if (window.TabbyStore) TabbyStore.set("flight", { inFlight: true, chatId: flightChatId, away: false });
     stopSpeak();
     paintFollowups("");
     paintCompose();
@@ -14030,6 +14031,7 @@ function mountChat(root) {
       loopBusy = false;
       abortController = null;
       flightChatId = "";
+      if (window.TabbyStore) TabbyStore.set("flight", { inFlight: false, chatId: "", away: false });
       paintCompose();
       renderSidebar();
       refreshPlanBuild();
@@ -16290,6 +16292,31 @@ function mountChat(root) {
   }
   window.addEventListener("tabby-gpu-status", onGpuStatus);
   window.addEventListener("tabby-gallery-use", consumeGalleryUse);
+
+  /* ---- TabbyStore subscriptions ---- */
+  const storeUnsubs = [];
+  if (window.TabbyStore) {
+    storeUnsubs.push(TabbyStore.subscribe("gpu", (cur) => {
+      if (!cur) return;
+      if (loadingBar) loadingBar.hidden = !cur.switching;
+      paintComfyHint();
+      paintCodeWriteHint();
+    }));
+    storeUnsubs.push(TabbyStore.subscribe("flight", (cur) => {
+      const here = Boolean(cur && cur.inFlight && cur.chatId && store.activeId === cur.chatId);
+      const away = Boolean(cur && cur.inFlight && !here);
+      if (flightAwayBar) flightAwayBar.hidden = modelLoading || !away;
+    }));
+    storeUnsubs.push(TabbyStore.subscribe("page", (cur) => {
+      if (!cur) return;
+      if (cur.current === "chat") {
+        startGatePoll();
+      } else {
+        stopGatePoll();
+      }
+    }));
+  }
+
   loadStore();
   consumeGalleryUse();
   window.tabbyContinueInNewChat = continueInNewChat;
@@ -16324,6 +16351,7 @@ function mountChat(root) {
       rememberCompose();
       hideHistoryMenu();
       hideMoreMenu();
+      storeUnsubs.forEach((fn) => fn());
       document.removeEventListener("pointerdown", onPointerDownAway);
       document.removeEventListener("keydown", onGlobalKey);
       document.removeEventListener("keydown", onCodeShortcut, true);
