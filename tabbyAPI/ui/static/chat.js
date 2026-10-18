@@ -10986,6 +10986,17 @@ function mountChat(root) {
       const shot = String((step && (step.imagePreview || step.imageData)) || "");
       const showShot = shot.startsWith("data:image");
       const showResult = Boolean(result) && !(write && writeResultIsEcho(step, path));
+
+      const isStrReplace = /strreplace|str_replace|search_replace|replace_in_file/i.test(name);
+      const isWrite = /^write$/i.test(name) || (/write/i.test(name) && !isStrReplace);
+      const hasDiffData = isStrReplace && args.old_string && args.new_string;
+      const hasWriteData = isWrite && typeof args.contents === "string";
+      const showDiff = write && (hasDiffData || hasWriteData) && Boolean(result);
+
+      if (showDiff) {
+        return renderAgentDiffWidget(step, args, path, name, titleText, result, isStrReplace, showResult, showShot, shot);
+      }
+
       const hasBody = Boolean(detail || showResult || showShot);
       const row = document.createElement(finished && hasBody ? "details" : "div");
       row.className = "agent-step";
@@ -11013,6 +11024,131 @@ function mountChat(root) {
         row.appendChild(img);
       }
       return row;
+    }
+
+    function renderAgentDiffWidget(step, args, path, name, titleText, result, isStrReplace, showResult, showShot, shot) {
+      const change = (step && step.change) || {};
+      const created = change.created === "1" || /^wrote\b/i.test(String((step && step.label) || ""));
+      const wrap = document.createElement("div");
+      wrap.className = "agent-step";
+
+      const widget = document.createElement("div");
+      widget.className = "agent-diff";
+
+      const head = document.createElement("div");
+      head.className = "agent-diff-head";
+      const pathSpan = document.createElement("span");
+      pathSpan.textContent = path || name;
+      head.appendChild(pathSpan);
+
+      const badge = document.createElement("span");
+      badge.className = isStrReplace
+        ? "agent-diff-badge is-edited"
+        : (created ? "agent-diff-badge is-created" : "agent-diff-badge is-edited");
+      badge.textContent = isStrReplace ? "Edited" : (created ? "Created" : "Updated");
+      head.appendChild(badge);
+
+      const openBtn = document.createElement("button");
+      openBtn.type = "button";
+      openBtn.className = "agent-diff-open";
+      openBtn.textContent = "Open in editor";
+      openBtn.addEventListener("click", () => {
+        if (path) openFileTab(path);
+      });
+      head.appendChild(openBtn);
+      widget.appendChild(head);
+
+      const body = document.createElement("div");
+      body.className = "agent-diff-body";
+
+      if (isStrReplace) {
+        const oldStr = String(args.old_string || "");
+        const newStr = String(args.new_string || "");
+        const oldLines = oldStr.split("\n");
+        const newLines = newStr.split("\n");
+        oldLines.forEach((line) => {
+          const span = document.createElement("span");
+          span.className = "agent-diff-line is-del";
+          span.textContent = "- " + line;
+          body.appendChild(span);
+        });
+        newLines.forEach((line) => {
+          const span = document.createElement("span");
+          span.className = "agent-diff-line is-add";
+          span.textContent = "+ " + line;
+          body.appendChild(span);
+        });
+      } else {
+        const contents = String(args.contents || "");
+        const allLines = contents.split("\n");
+        const PREVIEW_LIMIT = 20;
+        const needsCollapse = allLines.length > PREVIEW_LIMIT;
+        const previewLines = needsCollapse ? allLines.slice(0, PREVIEW_LIMIT) : allLines;
+        const highlighted = fileHighlight(path, previewLines.join("\n"));
+        body.innerHTML = highlighted.split("\n").map((html) =>
+          `<span class="agent-diff-line">${html}</span>`
+        ).join("");
+
+        if (needsCollapse) {
+          const restHighlighted = fileHighlight(path, allLines.slice(PREVIEW_LIMIT).join("\n"));
+          const restEl = document.createElement("div");
+          restEl.hidden = true;
+          restEl.innerHTML = restHighlighted.split("\n").map((html) =>
+            `<span class="agent-diff-line">${html}</span>`
+          ).join("");
+          body.appendChild(restEl);
+
+          const toggle = document.createElement("button");
+          toggle.type = "button";
+          toggle.className = "agent-diff-toggle";
+          toggle.textContent = `Show more (${allLines.length - PREVIEW_LIMIT} lines)`;
+          toggle.addEventListener("click", () => {
+            const showing = !restEl.hidden;
+            restEl.hidden = showing;
+            toggle.textContent = showing
+              ? `Show more (${allLines.length - PREVIEW_LIMIT} lines)`
+              : "Show less";
+          });
+          widget.appendChild(body);
+          widget.appendChild(toggle);
+        } else {
+          widget.appendChild(body);
+        }
+      }
+
+      if (isStrReplace) {
+        widget.appendChild(body);
+      }
+
+      const rawToggle = document.createElement("button");
+      rawToggle.type = "button";
+      rawToggle.className = "agent-diff-toggle";
+      rawToggle.textContent = "Show raw";
+      const rawPre = document.createElement("pre");
+      rawPre.className = "agent-diff-raw";
+      rawPre.hidden = true;
+      const rawParts = [];
+      if (showResult) rawParts.push(result);
+      else rawParts.push(JSON.stringify(args, null, 2));
+      rawPre.textContent = rawParts.join("\n\n");
+      rawToggle.addEventListener("click", () => {
+        const showing = !rawPre.hidden;
+        rawPre.hidden = showing;
+        rawToggle.textContent = showing ? "Show raw" : "Hide raw";
+      });
+      widget.appendChild(rawToggle);
+      widget.appendChild(rawPre);
+
+      wrap.appendChild(widget);
+
+      if (showShot) {
+        const img = document.createElement("img");
+        img.className = "agent-step-shot";
+        img.src = shot;
+        img.alt = path ? `Preview of ${path}` : "Preview screenshot";
+        wrap.appendChild(img);
+      }
+      return wrap;
     }
 
     function stepIsVisible(step) {

@@ -592,6 +592,24 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
         self.assertIn("if (row) thought.appendChild(row)", self.src)
         self.assertIn("draft !== lastText", self.src)
 
+    def test_agent_diff_widget(self):
+        self.assertIn("function renderAgentDiffWidget(", self.src)
+        self.assertIn("agent-diff", self.src)
+        self.assertIn("agent-diff-head", self.src)
+        self.assertIn("agent-diff-badge", self.src)
+        self.assertIn("Open in editor", self.src)
+        self.assertIn("Show raw", self.src)
+        css = CHAT_CSS.read_text(encoding="utf-8")
+        self.assertIn(".agent-diff", css)
+        self.assertIn(".agent-diff-head", css)
+        self.assertIn(".agent-diff-badge.is-created", css)
+        self.assertIn(".agent-diff-badge.is-edited", css)
+        self.assertIn(".agent-diff-line.is-add", css)
+        self.assertIn(".agent-diff-line.is-del", css)
+        self.assertIn(".agent-diff-open", css)
+        self.assertIn(".agent-diff-toggle", css)
+        self.assertIn(".agent-diff-raw", css)
+
     def test_code_git_pane(self):
         css = CHAT_CSS.read_text(encoding="utf-8")
         self.assertIn('id="chat-files-git"', self.src)
