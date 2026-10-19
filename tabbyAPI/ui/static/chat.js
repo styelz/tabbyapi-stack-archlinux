@@ -4411,6 +4411,7 @@ function mountChat(root) {
   function editorSpinnerHtml() {
     return (
       '<div class="chat-editor-spinner-host" role="status" aria-label="Loading">' +
+      '<span class="chat-editor-file-icon" aria-hidden="true">📄</span>' +
       '<span class="chat-editor-spinner" aria-hidden="true"></span>' +
       "</div>"
     );
@@ -7462,6 +7463,18 @@ function mountChat(root) {
       filesEntry = "";
       paintFiles();
       return;
+    }
+    if (!filesListing.length && filesTree) {
+      const widths = [60, 80, 45, 70, 55, 75, 40, 65];
+      const frag = document.createDocumentFragment();
+      for (let i = 0; i < 8; i++) {
+        const row = document.createElement("div");
+        row.className = "skeleton-row";
+        row.setAttribute("aria-hidden", "true");
+        row.style.width = widths[i] + "%";
+        frag.appendChild(row);
+      }
+      filesTree.replaceChildren(frag);
     }
     try {
       const data = await TabbyUI.api(`workspace/${encodeURIComponent(chatId)}`);
@@ -16627,6 +16640,16 @@ function mountChat(root) {
   document.addEventListener("pointerdown", onPointerDownAway);
   document.addEventListener("keydown", onGlobalKey);
   document.addEventListener("keydown", onCodeShortcut, true);
+  /* Show skeleton bubbles while the chat store loads from the server. */
+  if (log) {
+    for (let si = 0; si < 3; si++) {
+      const sk = document.createElement("div");
+      sk.className = "skeleton-bubble" + (si % 2 === 0 ? "" : " is-right");
+      sk.setAttribute("aria-hidden", "true");
+      log.appendChild(sk);
+    }
+  }
+
   async function loadStore() {
     wipeClientUiStorage();
     let incoming = null;

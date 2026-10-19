@@ -885,6 +885,18 @@ function mountStatus(root) {
   });
 
   setActivePreset();
+  /* Show skeleton cards while the first status fetch runs. */
+  {
+    const skelCount = 10;
+    const frag = document.createDocumentFragment();
+    for (let i = 0; i < skelCount; i++) {
+      const card = document.createElement("div");
+      card.className = "skeleton-card is-fact";
+      card.setAttribute("aria-hidden", "true");
+      frag.appendChild(card);
+    }
+    cards.replaceChildren(frag);
+  }
   refresh().catch((err) => {
     msg.textContent = err.message;
     TabbyUI.paintApiDown(err);

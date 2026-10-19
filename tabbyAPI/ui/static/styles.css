@@ -4031,7 +4031,11 @@ button.chip {
   .chat-editor-spinner,
   .dialog-progress.is-busy .progress-spin,
   .progress-meter.is-indeterminate .progress-meter-fill,
-  #chat-mic.is-live {
+  #chat-mic.is-live,
+  .skeleton-row,
+  .skeleton-bubble,
+  .skeleton-card,
+  .chat-editor-file-icon {
     animation: none;
     opacity: 1;
     transform: none;
@@ -6579,4 +6583,61 @@ button.chat-git-branch:hover:not(:disabled) {
   gap: 0.75rem;
   max-height: min(60vh, 28rem);
   overflow: auto;
+}
+
+/* ── Skeleton loading ── */
+.skeleton-row {
+  height: 1.375rem;
+  margin: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+  background: linear-gradient(90deg, var(--bg-elev-2) 25%, var(--hover-fill) 50%, var(--bg-elev-2) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s ease-in-out infinite;
+}
+@keyframes skeleton-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.skeleton-bubble {
+  height: 3.5rem;
+  margin: 0.5rem 0.75rem;
+  border-radius: 0.75rem;
+  max-width: 70%;
+  background: linear-gradient(90deg, var(--bg-elev-2) 25%, var(--hover-fill) 50%, var(--bg-elev-2) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s ease-in-out infinite;
+}
+.skeleton-bubble.is-right { margin-left: auto; max-width: 55%; }
+.skeleton-bubble:nth-child(2) { height: 5rem; }
+.skeleton-bubble:nth-child(3) { height: 2.5rem; max-width: 45%; }
+.skeleton-card {
+  border-radius: 0.5rem;
+  background: linear-gradient(90deg, var(--bg-elev-2) 25%, var(--hover-fill) 50%, var(--bg-elev-2) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s ease-in-out infinite;
+}
+.skeleton-card.is-fact {
+  height: 4rem;
+}
+.skeleton-card.is-gallery {
+  height: 220px;
+  border-radius: 0.625rem;
+}
+.chat-editor-spinner-host {
+  position: relative;
+}
+.chat-editor-file-icon {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  opacity: 0.10;
+  animation: skeleton-pulse 2s ease-in-out infinite;
+  pointer-events: none;
+  font-size: 5rem;
+  line-height: 1;
+}
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 0.07; }
+  50%      { opacity: 0.16; }
 }

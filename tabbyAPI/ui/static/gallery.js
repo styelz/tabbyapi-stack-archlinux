@@ -469,6 +469,18 @@ function mountGallery(root) {
     if (target !== page) lastIndex = 0;
     page = target;
     showError("");
+    /* Show skeleton cards while the gallery loads. */
+    if (!grid.querySelector("figure")) {
+      const skelCount = 6;
+      const frag = document.createDocumentFragment();
+      for (let i = 0; i < skelCount; i++) {
+        const card = document.createElement("div");
+        card.className = "skeleton-card is-gallery";
+        card.setAttribute("aria-hidden", "true");
+        frag.appendChild(card);
+      }
+      grid.replaceChildren(frag);
+    }
     try {
       const data = await TabbyUI.api(`gallery/list?page=${page}&per_page=24`);
       if (gen !== loadGen) return;

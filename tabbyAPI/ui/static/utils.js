@@ -2342,6 +2342,25 @@
     THEME_LABELS,
     THEME_MODES,
     MODE_LABELS,
+    skeletonRows(count, container) {
+      const n = Math.max(0, Number(count) || 0);
+      const frag = document.createDocumentFragment();
+      for (let i = 0; i < n; i += 1) {
+        const row = document.createElement("div");
+        row.className = "skeleton-row";
+        row.setAttribute("aria-hidden", "true");
+        frag.appendChild(row);
+      }
+      if (container) {
+        container.replaceChildren(frag);
+      }
+      return frag;
+    },
+    clearSkeleton(container) {
+      if (!container) return;
+      const items = container.querySelectorAll(".skeleton-row, .skeleton-bubble, .skeleton-card");
+      items.forEach((el) => el.remove());
+    },
     lastGpuStatus: null,
     gpuIsServing,
     comfyIsStarting,
