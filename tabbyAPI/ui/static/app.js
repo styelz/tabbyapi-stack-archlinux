@@ -898,11 +898,7 @@
     }
     show(currentName());
   });
-  show(currentName());
-  if (typeof TABBY_REVEAL_UI === "function") TABBY_REVEAL_UI();
-  performance.mark("tabby-page-ready");
-
-  /* ==== Background tasks panel ==== */
+  /* ==== Background tasks panel (variables hoisted above show() to avoid TDZ) ==== */
   const tasksMenu = document.getElementById("tasks-menu");
   const tasksBtn = document.getElementById("tasks-btn");
   const tasksBadge = document.getElementById("tasks-badge");
@@ -911,6 +907,10 @@
   let tasksOpen = false;
   let taskSeq = 0;
   const taskDismissTimers = {};
+
+  show(currentName());
+  if (typeof TABBY_REVEAL_UI === "function") TABBY_REVEAL_UI();
+  performance.mark("tabby-page-ready");
 
   function taskId(type, extra) {
     return type + ":" + (extra || "default");
