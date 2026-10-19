@@ -1378,8 +1378,13 @@ button.chip {
 .chat-side-search {
   margin: 0.1rem 0.3rem 0.2rem;
   flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
 }
 .chat-side-search input {
+  flex: 1 1 auto;
+  min-width: 0;
   padding: 0.28rem 0.45rem;
   font-size: 0.75rem;
   background: transparent;
@@ -1393,6 +1398,67 @@ button.chip {
   background: color-mix(in srgb, var(--text) 6%, transparent);
   border-color: transparent;
   outline: none;
+}
+.search-mode-toggle {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: none;
+  border-radius: 0.25rem;
+  background: transparent;
+  color: var(--text-muted, var(--text));
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 0.15s, background 0.15s;
+}
+.search-mode-toggle:hover {
+  opacity: 1;
+  background: var(--hover-fill);
+}
+.search-mode-toggle.is-semantic-active {
+  opacity: 1;
+  color: var(--accent, #6c8bff);
+}
+.search-mode-icon {
+  width: 0.85rem;
+  height: 0.85rem;
+}
+.semantic-status {
+  margin: 0 0.4rem 0.15rem;
+  padding: 0.15rem 0.35rem;
+  font-size: 0.68rem;
+  color: var(--text-muted, var(--text));
+  opacity: 0.75;
+  border-radius: 0.2rem;
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+  line-height: 1.35;
+}
+.semantic-status.is-busy::before {
+  content: "";
+  display: inline-block;
+  width: 0.55rem;
+  height: 0.55rem;
+  border: 1.5px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  margin-right: 0.3rem;
+  vertical-align: -0.06rem;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.semantic-score {
+  padding: 0.05rem 0.3rem;
+  font-size: 0.6rem;
+  font-weight: 600;
+  line-height: 1.35;
+  border-radius: 0.6rem;
+  background: color-mix(in srgb, var(--accent, #6c8bff) 18%, transparent);
+  color: var(--accent, #6c8bff);
+  white-space: nowrap;
 }
 .chat-nav-list {
   flex: 1 1 auto;

@@ -31,7 +31,12 @@ function mountChat(root) {
         </div>
         <div class="chat-side-search">
           <input id="chat-search" type="search" placeholder="Search chats" autocomplete="off" />
+          <button type="button" class="search-mode-toggle" id="search-mode-toggle" aria-label="Switch to semantic search" title="Text search">
+            <svg class="search-mode-icon is-text" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="5.2" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="10.8" y1="10.8" x2="14" y2="14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            <svg class="search-mode-icon is-semantic" viewBox="0 0 16 16" aria-hidden="true" hidden><path d="M8 1.6l1.5 3.1 3.4.5-2.5 2.4.6 3.4L8 9.4 4.9 11l.7-3.4-2.5-2.4 3.4-.5Z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
+          </button>
         </div>
+        <div class="semantic-status" id="semantic-status" hidden></div>
         <div class="chat-nav-list" id="chat-nav-list"></div>
         <div class="chat-side-foot">
           <button class="btn danger" type="button" id="chat-clear">Clear history</button>
@@ -355,6 +360,11 @@ function mountChat(root) {
   const flightBackBtn = root.querySelector("#chat-flight-back");
   const navList = root.querySelector("#chat-nav-list");
   const searchEl = root.querySelector("#chat-search");
+  const searchModeToggle = root.querySelector("#search-mode-toggle");
+  const semanticStatusEl = root.querySelector("#semantic-status");
+  let semanticMode = false;
+  let semanticResults = null;
+  let semanticEmbedding = false;
   const moreBtn = root.querySelector("#chat-more");
   const moreMenu = root.querySelector("#chat-more-menu");
   const editBar = root.querySelector("#chat-edit-bar");
@@ -2083,6 +2093,170 @@ function mountChat(root) {
     startNestedChat(id);
   }
 
+  /* ── Semantic search via embeddings ── */
+
+  function cosineSim(a, b) {
+    let dot = 0, magA = 0, magB = 0;
+    for (let i = 0; i < a.length; i++) {
+      dot += a[i] * b[i];
+      magA += a[i] * a[i];
+      magB += b[i] * b[i];
+    }
+    return dot / (Math.sqrt(magA) * Math.sqrt(magB) + 1e-8);
+  }
+
+  function embeddingV1Base() {
+    const ui = TabbyUI.base();
+    return ui.endsWith("/ui") ? ui.slice(0, -3) : "/v1";
+  }
+
+  function chatEmbeddingText(chat) {
+    const title = String(chat.title || "").trim();
+    const first = (chat.messages || []).find(
+      (item) => item.role === "user" && String(item.content || "").trim()
+    );
+    const body = first ? String(first.content || "").replace(/\s+/g, " ").trim().slice(0, 200) : "";
+    return (title + " " + body).trim();
+  }
+
+  function embCacheKey(chatId) {
+    return "tabby-chat-emb-" + chatId;
+  }
+
+  function getCachedEmbedding(chatId) {
+    try {
+      const raw = sessionStorage.getItem(embCacheKey(chatId));
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (parsed && Array.isArray(parsed.vec)) return parsed;
+      return null;
+    } catch { return null; }
+  }
+
+  function setCachedEmbedding(chatId, title, vec) {
+    try {
+      sessionStorage.setItem(embCacheKey(chatId), JSON.stringify({ title, vec }));
+    } catch { /* quota */ }
+  }
+
+  function clearCachedEmbedding(chatId) {
+    try { sessionStorage.removeItem(embCacheKey(chatId)); } catch { /* */ }
+  }
+
+  async function fetchEmbeddings(texts) {
+    const base = embeddingV1Base();
+    const response = await fetch(base + "/embeddings", {
+      method: "POST",
+      credentials: "same-origin",
+      cache: "no-store",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ model: "qwen3-embedding", input: texts }),
+    });
+    if (!response.ok) {
+      const msg = await response.text().catch(() => "");
+      throw new Error(msg || "Embeddings request failed (" + response.status + ")");
+    }
+    const data = await response.json();
+    return (data.data || []).sort((a, b) => a.index - b.index).map((item) => item.embedding);
+  }
+
+  async function ensureChatEmbeddings(chats, onProgress) {
+    const need = [];
+    chats.forEach((chat) => {
+      const cached = getCachedEmbedding(chat.id);
+      const title = String(chat.title || "").trim();
+      if (cached && cached.title === title) return;
+      need.push(chat);
+    });
+    if (!need.length) return;
+    const BATCH = 20;
+    let done = 0;
+    for (let i = 0; i < need.length; i += BATCH) {
+      const batch = need.slice(i, i + BATCH);
+      const texts = batch.map(chatEmbeddingText);
+      const vecs = await fetchEmbeddings(texts);
+      batch.forEach((chat, idx) => {
+        if (vecs[idx]) setCachedEmbedding(chat.id, String(chat.title || "").trim(), vecs[idx]);
+      });
+      done += batch.length;
+      if (onProgress) onProgress(done, need.length);
+    }
+  }
+
+  function setSemanticStatus(text, busy) {
+    if (!semanticStatusEl) return;
+    if (!text) { semanticStatusEl.hidden = true; return; }
+    semanticStatusEl.hidden = false;
+    semanticStatusEl.textContent = text;
+    semanticStatusEl.classList.toggle("is-busy", Boolean(busy));
+  }
+
+  async function runSemanticSearch(query) {
+    if (!query.trim()) { semanticResults = null; renderSidebar(); return; }
+    semanticEmbedding = true;
+    const allChats = store.chats.filter((chat) => chatMode(chat) === activeMode() && chatIsKept(chat, store.chats));
+    setSemanticStatus("Embedding chats…", true);
+    try {
+      await ensureChatEmbeddings(allChats, (done, total) => {
+        setSemanticStatus(`Embedding chats… ${done}/${total}`, true);
+      });
+    } catch (err) {
+      semanticMode = false;
+      semanticResults = null;
+      semanticEmbedding = false;
+      updateSearchModeUI();
+      setSemanticStatus("Embeddings unavailable — using text search", false);
+      setTimeout(() => setSemanticStatus("", false), 4000);
+      renderSidebar();
+      return;
+    }
+    setSemanticStatus("Searching…", true);
+    let queryVec;
+    try {
+      const vecs = await fetchEmbeddings([query]);
+      queryVec = vecs[0];
+    } catch (err) {
+      semanticMode = false;
+      semanticResults = null;
+      semanticEmbedding = false;
+      updateSearchModeUI();
+      setSemanticStatus("Embeddings unavailable — using text search", false);
+      setTimeout(() => setSemanticStatus("", false), 4000);
+      renderSidebar();
+      return;
+    }
+    const scored = [];
+    allChats.forEach((chat) => {
+      const cached = getCachedEmbedding(chat.id);
+      if (!cached || !cached.vec) return;
+      const sim = cosineSim(queryVec, cached.vec);
+      scored.push({ chat, score: sim });
+    });
+    scored.sort((a, b) => b.score - a.score);
+    semanticResults = scored.filter((r) => r.score > 0.1).slice(0, 30);
+    semanticEmbedding = false;
+    setSemanticStatus("", false);
+    renderSidebar();
+  }
+
+  function updateSearchModeUI() {
+    if (!searchModeToggle) return;
+    const textIcon = searchModeToggle.querySelector(".is-text");
+    const semIcon = searchModeToggle.querySelector(".is-semantic");
+    if (textIcon) textIcon.hidden = semanticMode;
+    if (semIcon) semIcon.hidden = !semanticMode;
+    searchModeToggle.title = semanticMode ? "Semantic search" : "Text search";
+    searchModeToggle.setAttribute("aria-label", semanticMode ? "Switch to text search" : "Switch to semantic search");
+    searchModeToggle.classList.toggle("is-semantic-active", semanticMode);
+    if (searchEl) searchEl.placeholder = semanticMode ? "Semantic search (Enter to search)" : "Search chats";
+  }
+
+  function invalidateChatEmbedding(chatId) {
+    clearCachedEmbedding(chatId);
+  }
+
+  /* ── End semantic search ── */
+
   function renderSidebar() {
     if (!navList) return;
     const code = activeMode() === "code";
@@ -2119,6 +2293,26 @@ function mountChat(root) {
         }
         group = null;
         frag.appendChild(btn);
+      });
+      navList.replaceChildren(frag);
+      return;
+    }
+    if (semanticMode && semanticResults) {
+      if (!semanticResults.length) {
+        navList.innerHTML = '<div class="chat-nav-empty">No semantic matches.</div>';
+        return;
+      }
+      const active = activeChat();
+      const frag = document.createDocumentFragment();
+      semanticResults.forEach((result) => {
+        const el = navRowEl({ chat: result.chat, kind: "flat", kids: 0, showKids: false }, active);
+        const when = el.querySelector(".chat-nav-when");
+        if (when) when.remove();
+        const badge = document.createElement("span");
+        badge.className = "chat-nav-when semantic-score";
+        badge.textContent = Math.round(result.score * 100) + "%";
+        el.appendChild(badge);
+        frag.appendChild(el);
       });
       navList.replaceChildren(frag);
       return;
@@ -9181,6 +9375,7 @@ function mountChat(root) {
       if (save && next) {
         chat.title = next;
         chat.titleLocked = true;
+        invalidateChatEmbedding(chat.id);
         persist();
       }
       field.replaceWith(titleEl);
@@ -15121,7 +15316,7 @@ function mountChat(root) {
     }
     if (field && field.id === "chat-search") {
       openCtx(event, TabbyUI.inputMenuItems(field, [
-        { label: "Clear", disabled: !field.value, run: () => { field.value = ""; renderSidebar(); field.focus(); } },
+        { label: "Clear", disabled: !field.value, run: () => { field.value = ""; semanticResults = null; renderSidebar(); field.focus(); } },
       ]));
       return;
     }
@@ -15495,7 +15690,26 @@ function mountChat(root) {
   });
   root.querySelector("#chat-backdrop").addEventListener("click", () => setSidebarOpen(false));
   if (searchEl) {
-    searchEl.addEventListener("input", () => renderSidebar());
+    searchEl.addEventListener("input", () => {
+      if (!semanticMode) renderSidebar();
+    });
+    searchEl.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      if (!semanticMode) return;
+      event.preventDefault();
+      const q = searchEl.value.trim();
+      if (!q) { semanticResults = null; renderSidebar(); return; }
+      runSemanticSearch(q);
+    });
+  }
+  if (searchModeToggle) {
+    searchModeToggle.addEventListener("click", () => {
+      semanticMode = !semanticMode;
+      semanticResults = null;
+      updateSearchModeUI();
+      setSemanticStatus("", false);
+      if (!semanticMode) renderSidebar();
+    });
   }
   navList.addEventListener("click", (event) => {
     const tool = event.target.closest("[data-nav]");
