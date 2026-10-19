@@ -2911,6 +2911,7 @@ function mountChat(root) {
   function paintFilesTree() {
     if (!filesTree) return;
     if (!filesListing.length) {
+      if (filesTree.querySelector(".empty-state")) return;
       filesOpenFolders.clear();
       filesSeenPaths = new Set();
       filesRevealed = "";
@@ -8018,7 +8019,7 @@ function mountChat(root) {
       paintFiles();
       return;
     }
-    if (!filesListing.length && filesTree) {
+    if (!filesListing.length && filesTree && !filesTree.querySelector(".empty-state")) {
       const widths = [60, 80, 45, 70, 55, 75, 40, 65];
       const frag = document.createDocumentFragment();
       for (let i = 0; i < 8; i++) {
