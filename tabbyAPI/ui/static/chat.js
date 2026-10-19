@@ -3667,8 +3667,15 @@ function mountChat(root) {
     gitBusy = true;
     gitAction = act;
     paintGitList(true);
+    const gitTaskId = "git:" + act + ":" + Date.now();
+    const gitLabels = { clone: "Cloning repo", pull: "Git pull", push: "Git push", sync: "Git sync", fetch: "Git fetch", init: "Git init", commit: "Git commit", "commit-all": "Git commit all", checkout: "Git checkout" };
+    if (window.TabbyTasks) TabbyTasks.add({ id: gitTaskId, type: "git", label: gitLabels[act] || "Git " + act, progress: null, status: "running", startedAt: Date.now() });
     try {
       await fn();
+      if (window.TabbyTasks) TabbyTasks.update(gitTaskId, { status: "done", label: (gitLabels[act] || "Git " + act) + " done" });
+    } catch (err) {
+      if (window.TabbyTasks) TabbyTasks.update(gitTaskId, { status: "failed", label: (gitLabels[act] || "Git " + act) + " failed" });
+      throw err;
     } finally {
       gitBusy = false;
       gitAction = "";
@@ -10974,6 +10981,7 @@ function mountChat(root) {
         return;
       }
       const title = tabbyCleanStatusLabel(status) || activityLabel || "Generating images";
+      if (renderTaskId && window.TabbyTasks) TabbyTasks.update(renderTaskId, { label: title });
       const detail = String(note || "").trim() || tabbyImageProgressNote(title);
       imageProgressLabel.textContent = title;
       imageProgressNote.textContent = detail && detail !== title ? detail : tabbyImageProgressNote(title);
@@ -10989,12 +10997,16 @@ function mountChat(root) {
       imageProgress.hidden = false;
     }
 
+    let renderTaskId = "";
+
     function beginImageHold(status, note) {
       if (finished) return;
       const next = tabbyCleanStatusLabel(status);
       if (!imageHoldActive) {
         imageHoldActive = true;
         kind = "image";
+        renderTaskId = "render:" + Date.now() + ":" + Math.random().toString(36).slice(2, 6);
+        if (window.TabbyTasks) TabbyTasks.add({ id: renderTaskId, type: "render", label: next || "Rendering", progress: null, status: "running", startedAt: Date.now() });
         expanded = false;
         if (visibleAnswerText(answerText) && !looksLikeImageReply(answerText)) {
           steps.push({ type: "said", content: String(answerText) });
@@ -11601,6 +11613,7 @@ function mountChat(root) {
         showAnswer(displayAnswer(text), text);
         if (imageReply && (kind === "image" || imageHoldActive)) {
           hideImageProgress();
+          if (renderTaskId && window.TabbyTasks) TabbyTasks.update(renderTaskId, { status: "done", label: "Render complete" });
           const seconds = Math.max(1, Math.round((Date.now() - started) / 1000));
           foldNotesIntoThought();
           finished = true;

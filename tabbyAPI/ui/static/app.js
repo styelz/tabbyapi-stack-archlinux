@@ -24,6 +24,7 @@
     closeUserMenu();
     closeGpuMenu();
     closeContextMenu();
+    closeTasksPanel();
     const key = pages[name] ? name : "chat";
     const previous = activePage;
     activePage = key;
@@ -202,6 +203,7 @@
     if (!contextChip || contextChip.hidden) return;
     closeUserMenu();
     closeGpuMenu();
+    closeTasksPanel();
     contextMenuOpen = true;
     if (contextPanel) contextPanel.hidden = false;
     contextChip.setAttribute("aria-expanded", "true");
@@ -210,6 +212,7 @@
   async function openGpuMenu() {
     closeUserMenu();
     closeContextMenu();
+    closeTasksPanel();
     gpuMenuOpen = true;
     if (gpuPanel) gpuPanel.hidden = false;
     if (gpuChip) gpuChip.setAttribute("aria-expanded", "true");
@@ -248,6 +251,8 @@
     closeGpuMenu();
     gpuSwitchBusy = true;
     gpuSwitchTarget = token;
+    const switchTaskId = "switch:" + token;
+    if (window.TabbyTasks) TabbyTasks.add({ id: switchTaskId, type: "switch", label: "Switching to " + token, progress: null, status: "running", startedAt: Date.now() });
     const queue = data.stack_queue || {};
     const waiting = Boolean(queue.busy) && !data.switching && !data.restarting;
     TabbyUI.paintGpuChip(
@@ -264,7 +269,9 @@
     try {
       await TabbyUI.api("gpu", { method: "POST", body: { mode: token } });
       await refreshHeaderStatus();
+      if (window.TabbyTasks) TabbyTasks.update(switchTaskId, { status: "done", label: "Switched to " + token });
     } catch (err) {
+      if (window.TabbyTasks) TabbyTasks.update(switchTaskId, { status: "failed", label: "Switch to " + token + " failed" });
       TabbyUI.paintApiDown(err);
       throw err;
     } finally {
@@ -392,6 +399,7 @@
   function openUserMenu() {
     closeGpuMenu();
     closeContextMenu();
+    closeTasksPanel();
     userMenuOpen = true;
     if (userPanel) userPanel.hidden = false;
     if (userChip) userChip.setAttribute("aria-expanded", "true");
@@ -725,17 +733,21 @@
       no: "Cancel",
     });
     if (!yes) return;
+    const restartTaskId = "restart:" + Date.now();
+    if (window.TabbyTasks) TabbyTasks.add({ id: restartTaskId, type: "restart", label: "Restarting API", progress: null, status: "running", startedAt: Date.now() });
     const modal = TabbyUI.progressModal({
       title: "Restarting",
       note: "Restarting TabbyAPI. The UI will drop for about a minute.",
     });
     try {
       await TabbyUI.followRestart(modal);
+      if (window.TabbyTasks) TabbyTasks.update(restartTaskId, { status: "done", label: "API restarted" });
       modal.setActions([
         { label: "Close", run: () => modal.close() },
         { label: "Reload UI", primary: true, run: () => location.reload() },
       ]);
     } catch (err) {
+      if (window.TabbyTasks) TabbyTasks.update(restartTaskId, { status: "failed", label: "API restart failed" });
       modal.setBusy(false);
       modal.setTitle("Restart");
       modal.setNote((err && err.message) || "Restart failed.");
@@ -811,12 +823,14 @@
     if (userMenuOpen && userMenu && !userMenu.contains(event.target)) closeUserMenu();
     if (gpuMenuOpen && gpuMenu && !gpuMenu.contains(event.target)) closeGpuMenu();
     if (contextMenuOpen && contextMenu && !contextMenu.contains(event.target)) closeContextMenu();
+    if (tasksOpen && tasksMenu && !tasksMenu.contains(event.target)) closeTasksPanel();
   });
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;
     if (gpuMenuOpen) closeGpuMenu();
     if (userMenuOpen) closeUserMenu();
     if (contextMenuOpen) closeContextMenu();
+    if (tasksOpen) closeTasksPanel();
   });
 
   TabbyUI.api("auth/check")
@@ -886,6 +900,181 @@
   });
   show(currentName());
   if (typeof TABBY_REVEAL_UI === "function") TABBY_REVEAL_UI();
+
+  /* ==== Background tasks panel ==== */
+  const tasksMenu = document.getElementById("tasks-menu");
+  const tasksBtn = document.getElementById("tasks-btn");
+  const tasksBadge = document.getElementById("tasks-badge");
+  const tasksPanel = document.getElementById("tasks-panel");
+  const tasksList = document.getElementById("tasks-list");
+  let tasksOpen = false;
+  let taskSeq = 0;
+  const taskDismissTimers = {};
+
+  function taskId(type, extra) {
+    return type + ":" + (extra || "default");
+  }
+
+  function getTasks() {
+    return (window.TabbyStore && TabbyStore.get("tasks")) || [];
+  }
+
+  function setTasks(tasks) {
+    if (window.TabbyStore) TabbyStore.set("tasks", tasks);
+    paintTasks();
+  }
+
+  function addTask(task) {
+    const tasks = getTasks().filter((t) => t.id !== task.id);
+    task.startedAt = task.startedAt || Date.now();
+    tasks.push(task);
+    setTasks(tasks);
+    return task;
+  }
+
+  function updateTask(id, patch) {
+    const tasks = getTasks();
+    const task = tasks.find((t) => t.id === id);
+    if (!task) return;
+    Object.assign(task, patch);
+    setTasks(tasks);
+    if (patch.status === "done") scheduleAutoDismiss(id);
+    else if (patch.status === "failed") clearAutoDismiss(id);
+  }
+
+  function removeTask(id) {
+    clearAutoDismiss(id);
+    setTasks(getTasks().filter((t) => t.id !== id));
+  }
+
+  function scheduleAutoDismiss(id) {
+    clearAutoDismiss(id);
+    taskDismissTimers[id] = setTimeout(() => {
+      const el = tasksList && tasksList.querySelector(`[data-task-id="${CSS.escape(id)}"]`);
+      if (el) {
+        el.classList.add("is-fading");
+        setTimeout(() => removeTask(id), 400);
+      } else {
+        removeTask(id);
+      }
+    }, 5000);
+  }
+
+  function clearAutoDismiss(id) {
+    if (taskDismissTimers[id]) {
+      clearTimeout(taskDismissTimers[id]);
+      delete taskDismissTimers[id];
+    }
+  }
+
+  function paintTasks() {
+    const tasks = getTasks();
+    const active = tasks.filter((t) => t.status === "running");
+    const count = active.length;
+    if (tasksBtn) tasksBtn.hidden = tasks.length === 0;
+    if (tasksBadge) {
+      tasksBadge.hidden = count === 0;
+      tasksBadge.textContent = String(count);
+    }
+    if (!tasksList) return;
+    if (!tasks.length) {
+      tasksList.innerHTML = '<div class="tasks-empty">No background tasks</div>';
+      return;
+    }
+    const frag = document.createDocumentFragment();
+    tasks.forEach((task) => {
+      const row = document.createElement("div");
+      row.className = "tasks-item" + (task.status === "done" ? " is-done" : "") + (task.status === "failed" ? " is-failed" : "");
+      row.setAttribute("data-task-id", task.id);
+
+      if (task.status === "running") {
+        const spinner = document.createElement("span");
+        spinner.className = "tasks-spinner";
+        row.appendChild(spinner);
+      } else {
+        const icon = document.createElement("span");
+        icon.className = "tasks-icon" + (task.status === "done" ? " is-done" : " is-failed");
+        icon.textContent = task.status === "done" ? "✓" : "✗";
+        row.appendChild(icon);
+      }
+
+      const label = document.createElement("span");
+      label.className = "tasks-item-label";
+      label.textContent = task.label || task.type;
+      row.appendChild(label);
+
+      if (task.progress != null && task.status === "running") {
+        const pct = document.createElement("span");
+        pct.className = "tasks-item-pct";
+        pct.textContent = `${Math.round(task.progress)}%`;
+        row.appendChild(pct);
+        const bar = document.createElement("div");
+        bar.className = "tasks-item-progress";
+        const fill = document.createElement("div");
+        fill.className = "tasks-item-fill";
+        fill.style.width = `${Math.max(0, Math.min(100, task.progress))}%`;
+        bar.appendChild(fill);
+        row.appendChild(bar);
+      }
+
+      if (task.status === "failed" || task.status === "done") {
+        const dismiss = document.createElement("button");
+        dismiss.type = "button";
+        dismiss.className = "tasks-item-dismiss";
+        dismiss.textContent = "×";
+        dismiss.title = "Dismiss";
+        dismiss.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          removeTask(task.id);
+        });
+        row.appendChild(dismiss);
+      }
+      frag.appendChild(row);
+    });
+    tasksList.replaceChildren(frag);
+  }
+
+  function closeTasksPanel() {
+    tasksOpen = false;
+    if (tasksPanel) tasksPanel.hidden = true;
+    if (tasksBtn) tasksBtn.setAttribute("aria-expanded", "false");
+  }
+
+  function openTasksPanel() {
+    closeUserMenu();
+    closeGpuMenu();
+    closeContextMenu();
+    tasksOpen = true;
+    if (tasksPanel) tasksPanel.hidden = false;
+    if (tasksBtn) tasksBtn.setAttribute("aria-expanded", "true");
+    paintTasks();
+  }
+
+  if (tasksBtn) {
+    tasksBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (tasksOpen) closeTasksPanel();
+      else openTasksPanel();
+    });
+  }
+
+  document.addEventListener("pointerdown", (event) => {
+    if (tasksOpen && tasksMenu && !tasksMenu.contains(event.target)) closeTasksPanel();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && tasksOpen) closeTasksPanel();
+  });
+
+  window.TabbyTasks = Object.freeze({
+    add: addTask,
+    update: updateTask,
+    remove: removeTask,
+    id: taskId,
+    get: getTasks,
+  });
+
+  paintTasks();
 
   /* ==== Command palette registrations ==== */
   if (window.TabbyPalette && typeof TabbyPalette.register === "function") {

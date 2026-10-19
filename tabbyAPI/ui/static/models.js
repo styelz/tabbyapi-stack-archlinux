@@ -190,7 +190,27 @@ function mountModels(root) {
     paintedJobId = "";
   }
 
+  function syncDownloadTask(job) {
+    if (!window.TabbyTasks || !job || !job.id) return;
+    const tid = "download:" + job.id;
+    if (jobBusy(job)) {
+      const pct = Math.max(0, Math.min(100, Number(job.percent) || 0));
+      const label = job.label || "Download";
+      const existing = TabbyTasks.get().find((t) => t.id === tid);
+      if (existing) {
+        TabbyTasks.update(tid, { progress: pct, label });
+      } else {
+        TabbyTasks.add({ id: tid, type: "download", label, progress: pct, status: "running", startedAt: Date.now() });
+      }
+    } else if (job.status === "done") {
+      TabbyTasks.update(tid, { status: "done", progress: 100, label: (job.label || "Download") + " complete" });
+    } else if (job.status === "error" || job.status === "cancelled") {
+      TabbyTasks.update(tid, { status: "failed", label: (job.label || "Download") + (job.status === "cancelled" ? " cancelled" : " failed") });
+    }
+  }
+
   function paintJob(job) {
+    syncDownloadTask(job);
     if (!shouldPaintJob(job)) {
       if (!jobBusy(job)) {
         clearHideTimer();
