@@ -8515,6 +8515,7 @@ function mountChat(root) {
       if (/^Error:/i.test(String(text || ""))) add("retry", "Retry");
     }
     if (canSplit(idx)) add("split", "Split", "Move this turn and later messages to a new chat");
+    if (canBranch(idx)) add("branch", "Branch", "Branch conversation from here into a new chat");
     const item = messages[idx];
     let stamp = null;
     if (item && item.createdAt) {
@@ -9300,6 +9301,81 @@ function mountChat(root) {
     hideMoreMenu();
     setSidebarOpen(false);
     input.focus();
+  }
+
+  function canBranch(idx) {
+    if (inFlight || modelLoading) return false;
+    if (!Number.isInteger(idx) || idx < 0 || idx >= messages.length) return false;
+    const item = messages[idx];
+    if (!item || item.role === "system") return false;
+    return messages.slice(0, idx + 1).some((msg) => msg.role !== "system");
+  }
+
+  function userTurnIndex(idx) {
+    const item = messages[idx];
+    if (!item) return -1;
+    if (item.role === "user") return idx;
+    if (item.role === "assistant" && idx > 0 && messages[idx - 1].role === "user") return idx - 1;
+    return idx;
+  }
+
+  function branchTurnLabel(idx) {
+    let n = 0;
+    for (let i = 0; i <= idx; i += 1) {
+      if (messages[i] && messages[i].role !== "system") n += 1;
+    }
+    return n;
+  }
+
+  async function branchFromTurn(idx) {
+    if (!canBranch(idx)) return;
+    const current = activeChat();
+    if (!current) return;
+    persist();
+    const srcTitle = String(current.title || "New chat");
+    const turnNum = branchTurnLabel(idx);
+    const copied = cloneMessages(messages.slice(0, idx + 1));
+    const mode = activeMode();
+    const parentId = mode === "code" ? workspaceId(current) : "";
+    const chat = emptyChat(mode, parentId);
+    chat.messages = copied.length ? copied : [{ ...SYSTEM }];
+    if (!chat.messages.some((m) => m.role === "system")) chat.messages.unshift({ ...SYSTEM });
+    chat.title = "Branch of " + srcTitle;
+    if (chat.title.length > 120) chat.title = chat.title.slice(0, 117) + "…";
+    chat.titleLocked = true;
+    chat.updatedAt = Date.now();
+    chat.branchedFrom = {
+      chatId: current.id,
+      title: srcTitle,
+      turn: idx,
+    };
+    store.chats.unshift(chat);
+    store.activeId = chat.id;
+    messages = cloneMessages(chat.messages);
+    persist();
+    resetRecall();
+    restoreCompose(chat.id);
+    renderLog();
+    refreshFiles();
+    hideHistoryMenu();
+    hideMoreMenu();
+    setSidebarOpen(false);
+    input.focus();
+    showBranchToast(turnNum, srcTitle);
+  }
+
+  function showBranchToast(turnNum, srcTitle) {
+    let toast = document.getElementById("branch-toast");
+    if (!toast) {
+      toast = document.createElement("div");
+      toast.id = "branch-toast";
+      toast.className = "branch-toast";
+      document.body.appendChild(toast);
+    }
+    toast.textContent = "Branched from turn " + turnNum + " of " + srcTitle;
+    toast.classList.add("is-visible");
+    clearTimeout(toast._timer);
+    toast._timer = setTimeout(() => toast.classList.remove("is-visible"), 3500);
   }
 
   function regenerateLast() {
@@ -12050,12 +12126,48 @@ function mountChat(root) {
     openFind(q);
   }
 
+  function renderBranchNote() {
+    const chat = activeChat();
+    if (!chat || !chat.branchedFrom) return;
+    const info = chat.branchedFrom;
+    if (!info.chatId) return;
+    const note = document.createElement("div");
+    note.className = "branch-note";
+    const turnLabel = typeof info.turn === "number" ? info.turn + 1 : "?";
+    const title = info.title || "another chat";
+    const link = document.createElement("a");
+    link.href = "#";
+    link.textContent = title;
+    link.addEventListener("click", (e) => {
+      e.preventDefault();
+      const exists = store.chats.find((c) => c.id === info.chatId);
+      if (exists) loadChat(info.chatId);
+    });
+    const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    icon.setAttribute("width", "14");
+    icon.setAttribute("height", "14");
+    icon.setAttribute("viewBox", "0 0 16 16");
+    icon.setAttribute("fill", "none");
+    icon.setAttribute("stroke", "currentColor");
+    icon.setAttribute("stroke-width", "1.5");
+    icon.setAttribute("stroke-linecap", "round");
+    icon.setAttribute("stroke-linejoin", "round");
+    icon.innerHTML = '<path d="M5 3v4a2 2 0 0 0 2 2h2"/><circle cx="5" cy="3" r="1.5"/><circle cx="11" cy="9" r="1.5"/><path d="M5 7v4a2 2 0 0 0 2 2h0"/><circle cx="5" cy="13" r="1.5"/>';
+    note.appendChild(icon);
+    note.append(" Branched from ");
+    note.appendChild(link);
+    note.append(` at turn ${turnLabel}`);
+    return note;
+  }
+
   function renderLog(stickToEnd) {
     if (logSizeObs) {
       logSizeObs.disconnect();
       logSizeObs.observe(log);
     }
     log.replaceChildren();
+    const branchNote = renderBranchNote();
+    if (branchNote) log.appendChild(branchNote);
     messages.forEach((item, idx) => {
       if (item.role === "user") {
         if (isHiddenUserTurn(item)) return;
@@ -15046,6 +15158,9 @@ function mountChat(root) {
     if (canSplit(idx)) {
       items.push({ label: "Split to new chat", disabled: busyLocked(), run: () => splitAfterTurn(idx) });
     }
+    if (canBranch(idx)) {
+      items.push({ label: "Branch from here", disabled: busyLocked(), run: () => branchFromTurn(idx) });
+    }
     if (extra && extra.after) items.push({ sep: true }, ...extra.after);
     return items;
   }
@@ -15669,6 +15784,7 @@ function mountChat(root) {
       if (act === "edit") beginEdit(idx);
       if (act === "delete") deleteTurn(idx);
       if (act === "split") splitAfterTurn(idx);
+      if (act === "branch") branchFromTurn(idx);
       if (act === "regen" || act === "retry") regenerateLast();
       if (act === "build") buildApprovedPlan(idx);
       return;

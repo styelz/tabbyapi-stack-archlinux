@@ -361,6 +361,20 @@ def normalize_store(raw: Any) -> dict[str, Any]:
         created_at = _positive_stamp(item.get("createdAt"))
         if created_at:
             row["createdAt"] = created_at
+        branched = item.get("branchedFrom")
+        if isinstance(branched, dict):
+            bf: dict[str, Any] = {}
+            bf_id = str(branched.get("chatId") or "").strip()
+            bf_title = str(branched.get("title") or "").strip()[:120]
+            bf_turn = branched.get("turn")
+            if bf_id:
+                bf["chatId"] = bf_id
+            if bf_title:
+                bf["title"] = bf_title
+            if isinstance(bf_turn, int) and bf_turn >= 0:
+                bf["turn"] = bf_turn
+            if bf:
+                row["branchedFrom"] = bf
         folder = str(item.get("folder") or "").strip()[:80]
         if mode == "chat" and folder:
             row["folder"] = folder
@@ -839,6 +853,58 @@ def chat_count(username: str) -> int:
         ):
             n += 1
     return n
+
+
+def branch_chat(
+    username: str, chat_id: str, up_to_index: int
+) -> dict[str, Any]:
+    """Create a new chat with messages 0..up_to_index copied from *chat_id*."""
+    store = load_store(username)
+    source = None
+    for chat in store.get("chats") or []:
+        if isinstance(chat, dict) and str(chat.get("id") or "") == str(chat_id):
+            source = chat
+            break
+    if source is None:
+        raise ValueError("Source chat not found")
+    src_messages = source.get("messages")
+    if not isinstance(src_messages, list):
+        src_messages = []
+    if up_to_index < 0 or up_to_index >= len(src_messages):
+        raise ValueError("up_to_index is out of range")
+    copied = [
+        dict(msg) for msg in src_messages[: up_to_index + 1] if isinstance(msg, dict)
+    ]
+    src_title = str(source.get("title") or "New chat")
+    new_title = f"Branch of {src_title}"[:120]
+    now = int(time.time() * 1000)
+    import uuid
+
+    new_id = str(uuid.uuid4())
+    mode = str(source.get("mode") or "chat")
+    parent_id = ""
+    if mode == "code":
+        parent_id = str(source.get("parentId") or "").strip()
+    new_chat: dict[str, Any] = {
+        "id": new_id,
+        "title": new_title,
+        "createdAt": now,
+        "updatedAt": now,
+        "pinned": False,
+        "titleLocked": True,
+        "mode": mode,
+        "parentId": parent_id,
+        "messages": copied,
+        "branchedFrom": {
+            "chatId": str(chat_id),
+            "title": src_title,
+            "turn": up_to_index,
+        },
+    }
+    store.setdefault("chats", []).insert(0, new_chat)
+    store["activeId"] = new_id
+    save_store(username, store)
+    return {"chat_id": new_id, "title": new_title}
 
 
 def delete_store(username: str) -> None:

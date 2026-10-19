@@ -963,6 +963,24 @@ async def ui_chats_put(request: Request, _user: str = Depends(require_ui_user)):
     return _private_json(await asyncio.to_thread(save_store, _user, body))
 
 
+@router.post("/chats/{chat_id}/branch", include_in_schema=False)
+async def ui_chats_branch(chat_id: str, request: Request, _user: str = Depends(require_ui_user)):
+    from ui.chats import branch_chat
+
+    try:
+        body = await request.json()
+    except Exception as exc:
+        raise HTTPException(400, "JSON body required") from exc
+    up_to = body.get("up_to_index")
+    if not isinstance(up_to, int) or up_to < 0:
+        raise HTTPException(400, "up_to_index must be a non-negative integer")
+    try:
+        result = await asyncio.to_thread(branch_chat, _user, chat_id, up_to)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return _private_json(result)
+
+
 @router.get("/workspaces", include_in_schema=False)
 async def ui_workspaces(_user: str = Depends(require_ui_user)):
     """Code workspace ids whose project folders are not empty."""
