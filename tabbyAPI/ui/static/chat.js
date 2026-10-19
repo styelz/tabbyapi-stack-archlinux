@@ -213,6 +213,7 @@ function mountChat(root) {
             <span class="chat-comfy-hint-text" id="chat-code-write-text">This model cannot write Code files. Switch to qwen or gemma to edit the project.</span>
             <button class="btn primary" type="button" id="chat-code-write-qwen">Switch to qwen</button>
           </div>
+          <div class="changes-summary" id="chat-changes-summary" hidden></div>
           <form class="chat-form" id="chat-form">
             <textarea id="chat-input" rows="3" placeholder="Talk to the loaded model. Type / for commands. ↑↓ recalls what you sent."></textarea>
             <input id="chat-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden />
@@ -398,6 +399,7 @@ function mountChat(root) {
   const codeWriteMark = root.querySelector("#chat-code-write-mark");
   const codeWriteText = root.querySelector("#chat-code-write-text");
   const codeWriteQwenBtn = root.querySelector("#chat-code-write-qwen");
+  const changesSummaryEl = root.querySelector("#chat-changes-summary");
   const filesPane = root.querySelector("#chat-files");
   const activityBar = root.querySelector("#code-activity-bar");
   const activityContent = root.querySelector("#code-activity-content");
@@ -3284,6 +3286,267 @@ function mountChat(root) {
     const created = filesChanged.filter((row) => row.run === run && row.created).map((row) => row.path);
     await revertCodeHistory({ runs: [run], created });
   }
+
+  /* ---- Accept / Reject changes summary ---- */
+  const PENDING_REVIEW_KEY = "tabby-pending-review";
+  let pendingReview = null; // { chatId, run, files: [{ path, kind, lines, oldString, newString }] }
+
+  function loadPendingReview() {
+    try {
+      const raw = sessionStorage.getItem(PENDING_REVIEW_KEY);
+      if (raw) pendingReview = JSON.parse(raw);
+    } catch { /* ignore */ }
+  }
+
+  function savePendingReview() {
+    try {
+      if (pendingReview) {
+        sessionStorage.setItem(PENDING_REVIEW_KEY, JSON.stringify(pendingReview));
+      } else {
+        sessionStorage.removeItem(PENDING_REVIEW_KEY);
+      }
+    } catch { /* ignore */ }
+  }
+
+  function clearPendingReview() {
+    pendingReview = null;
+    savePendingReview();
+    paintChangesSummary();
+  }
+
+  function collectPendingFiles(steps, run) {
+    const files = [];
+    const seen = new Map();
+    if (!Array.isArray(steps)) return files;
+    steps.forEach((step) => {
+      if (!step || step.type !== "tool") return;
+      const name = String(step.name || "").toLowerCase();
+      const change = step.change;
+      if (!change || !change.path) return;
+      const path = String(change.path).replace(/\\/g, "/").replace(/^\/+/, "");
+      const isWrite = /^write$/i.test(name) || change.kind === "write";
+      const isReplace = /^strreplace$/i.test(name) || change.kind === "edit";
+      if (!isWrite && !isReplace) return;
+      const args = step.args || {};
+      const created = Boolean(change.created);
+      const lines = estimateLines(step);
+      const entry = {
+        path,
+        kind: created ? "created" : "edited",
+        lines,
+        status: "pending",
+      };
+      if (isReplace) {
+        entry.toolName = "StrReplace";
+        entry.oldString = String(args.old_string || "");
+        entry.newString = String(args.new_string || "");
+      } else {
+        entry.toolName = "Write";
+        entry.created = created;
+      }
+      if (seen.has(path)) {
+        const prev = seen.get(path);
+        prev.lines += lines;
+        if (created) prev.kind = "created";
+        if (!prev.edits) prev.edits = [];
+        prev.edits.push(entry);
+      } else {
+        entry.edits = [];
+        files.push(entry);
+        seen.set(path, entry);
+      }
+    });
+    return files;
+  }
+
+  function estimateLines(step) {
+    const args = step.args || {};
+    const contents = args.contents || args.new_string || "";
+    if (!contents) return 0;
+    return String(contents).split("\n").length;
+  }
+
+  function showPendingReview(chatId, run, steps) {
+    const files = collectPendingFiles(steps, run);
+    if (!files.length) return;
+    pendingReview = { chatId, run, files };
+    savePendingReview();
+    paintChangesSummary();
+  }
+
+  function paintChangesSummary() {
+    if (!changesSummaryEl) return;
+    if (!pendingReview || !pendingReview.files || !pendingReview.files.length) {
+      changesSummaryEl.hidden = true;
+      changesSummaryEl.innerHTML = "";
+      return;
+    }
+    if (pendingReview.chatId && store.activeId !== pendingReview.chatId) {
+      changesSummaryEl.hidden = true;
+      return;
+    }
+    const allSettled = pendingReview.files.every((f) => f.status !== "pending");
+    if (allSettled) {
+      changesSummaryEl.hidden = true;
+      changesSummaryEl.innerHTML = "";
+      pendingReview = null;
+      savePendingReview();
+      return;
+    }
+    const frag = document.createDocumentFragment();
+    const head = document.createElement("div");
+    head.className = "changes-summary-head";
+    const pending = pendingReview.files.filter((f) => f.status === "pending").length;
+    head.innerHTML = `<span>Changes Summary · ${pending} file${pending !== 1 ? "s" : ""} pending</span>`;
+    frag.appendChild(head);
+
+    pendingReview.files.forEach((file, idx) => {
+      const row = document.createElement("div");
+      row.className = "changes-summary-file" + (file.status === "accepted" ? " is-accepted" : file.status === "reverted" ? " is-reverted" : "");
+      row.dataset.idx = idx;
+      const badge = document.createElement("span");
+      badge.className = "badge " + (file.kind === "created" ? "is-created" : "is-edited");
+      badge.textContent = file.kind === "created" ? "Created" : "Edited";
+      const name = document.createElement("span");
+      name.className = "changes-file-name";
+      name.textContent = file.path;
+      name.title = file.path;
+      const lines = document.createElement("span");
+      lines.className = "changes-file-lines";
+      lines.textContent = file.lines ? `${file.lines} line${file.lines !== 1 ? "s" : ""}` : "";
+      row.append(badge, name, lines);
+      if (file.status === "pending") {
+        const btns = document.createElement("span");
+        btns.className = "changes-file-btns";
+        btns.innerHTML =
+          `<button type="button" class="btn accept-file" data-action="accept-file" data-idx="${idx}" title="Accept this file">✓</button>` +
+          `<button type="button" class="btn revert-file" data-action="revert-file" data-idx="${idx}" title="Revert this file">✗</button>`;
+        row.appendChild(btns);
+      }
+      frag.appendChild(row);
+    });
+
+    const actions = document.createElement("div");
+    actions.className = "changes-summary-actions";
+    actions.innerHTML =
+      '<button type="button" class="btn accept-all" data-action="accept-all">Accept All</button>' +
+      '<button type="button" class="btn revert-all" data-action="revert-all">Revert All</button>';
+    frag.appendChild(actions);
+
+    changesSummaryEl.replaceChildren(frag);
+    changesSummaryEl.hidden = false;
+  }
+
+  async function revertSingleFile(file) {
+    if (!file || file.status !== "pending") return false;
+    const wsId = activeWorkspaceId();
+    if (!wsId) return false;
+    if (file.toolName === "Write" && file.created) {
+      try {
+        await TabbyUI.api(
+          `workspace/${encodeURIComponent(wsId)}/file?path=${encodeURIComponent(file.path)}`,
+          { method: "DELETE" }
+        );
+      } catch (err) {
+        addBubble("assistant", `Cannot revert ${file.path}: ${err.message}`);
+        return false;
+      }
+    } else if (file.toolName === "StrReplace") {
+      const edits = [file].concat(file.edits || []).filter((e) => e.toolName === "StrReplace");
+      for (let i = edits.length - 1; i >= 0; i--) {
+        const edit = edits[i];
+        try {
+          await TabbyUI.api(
+            `workspace/${encodeURIComponent(wsId)}/tools`,
+            {
+              method: "POST",
+              body: {
+                name: "StrReplace",
+                arguments: { path: edit.path, old_string: edit.newString, new_string: edit.oldString },
+                agent: "agent",
+                user_text: "",
+                history_run: "",
+              },
+            }
+          );
+        } catch (err) {
+          addBubble("assistant", `Cannot revert edit in ${edit.path}: ${err.message}`);
+          return false;
+        }
+      }
+    } else if (file.toolName === "Write" && !file.created) {
+      addBubble("assistant", `Cannot revert ${file.path} individually — original content not saved. Use "Revert All" to undo the entire run.`);
+      return false;
+    }
+    return true;
+  }
+
+  async function acceptAllChanges() {
+    if (!pendingReview) return;
+    pendingReview.files.forEach((f) => { if (f.status === "pending") f.status = "accepted"; });
+    savePendingReview();
+    paintChangesSummary();
+  }
+
+  async function revertAllChanges() {
+    if (!pendingReview) return;
+    const wsId = activeWorkspaceId();
+    if (!wsId) return;
+    if (pendingReview.run) {
+      const created = pendingReview.files.filter((f) => f.status === "pending" && f.created).map((f) => f.path);
+      const pending = pendingReview.files.filter((f) => f.status === "pending");
+      if (pending.length) {
+        try {
+          await revertCodeHistory({ runs: [pendingReview.run], created });
+          pending.forEach((f) => { f.status = "reverted"; });
+        } catch (err) {
+          addBubble("assistant", `Error reverting: ${err.message}`);
+        }
+      }
+    } else {
+      for (const file of pendingReview.files) {
+        if (file.status !== "pending") continue;
+        const ok = await revertSingleFile(file);
+        file.status = ok ? "reverted" : "pending";
+      }
+    }
+    savePendingReview();
+    paintChangesSummary();
+    refreshFiles();
+  }
+
+  if (changesSummaryEl) {
+    changesSummaryEl.addEventListener("click", async (e) => {
+      const btn = e.target.closest("[data-action]");
+      if (!btn || !pendingReview) return;
+      const action = btn.dataset.action;
+      if (action === "accept-all") {
+        await acceptAllChanges();
+        return;
+      }
+      if (action === "revert-all") {
+        await revertAllChanges();
+        return;
+      }
+      const idx = Number(btn.dataset.idx);
+      const file = pendingReview.files[idx];
+      if (!file) return;
+      if (action === "accept-file") {
+        file.status = "accepted";
+        savePendingReview();
+        paintChangesSummary();
+      } else if (action === "revert-file") {
+        const ok = await revertSingleFile(file);
+        if (ok) {
+          file.status = "reverted";
+          savePendingReview();
+          paintChangesSummary();
+          refreshFiles();
+        }
+      }
+    });
+  }
+  /* ---- End Accept / Reject changes summary ---- */
 
   function contextBrief() {
     const turns = messages.filter((item) => item && (item.role === "user" || item.role === "assistant"));
@@ -12220,6 +12483,7 @@ function mountChat(root) {
     refreshFiles();
     jumpSidebarSearch();
     paintCompose();
+    paintChangesSummary();
     input.focus();
     setSidebarOpen(false);
   }
@@ -14687,6 +14951,15 @@ function mountChat(root) {
     } else if (store.activeId === chatId) {
       persist();
     }
+    if (
+      sendAgent === "agent"
+      && mutatedPaths.size
+      && savedSteps.length
+      && !userStopped
+      && store.activeId === chatId
+    ) {
+      showPendingReview(chatId, historyRun, savedSteps);
+    }
     if (planChecklistBuilding) {
       finishChecklistBuild({ chatId, stopped: userStopped });
     }
@@ -17111,11 +17384,13 @@ function mountChat(root) {
     persistReady = fetched;
     wipeClientUiStorage();
     restoreCompose(store.activeId);
+    loadPendingReview();
     renderLog();
     paintToolbar();
     renderSidebar();
     paintActiveContext();
     paintCompose();
+    paintChangesSummary();
     resizeInput();
     refreshFiles();
     startGatePoll();

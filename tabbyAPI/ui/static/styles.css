@@ -6934,3 +6934,110 @@ button.chat-git-branch:hover:not(:disabled) {
   opacity: 0;
   transition: opacity 0.4s ease;
 }
+
+/* ---- Accept / Reject changes summary ---- */
+.changes-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  padding: 0.625rem 0.75rem;
+  margin: 0.5rem 0;
+  border: 1px solid rgba(var(--accent-rgb), 0.3);
+  border-radius: 0.625rem;
+  background: var(--bg-elev);
+}
+.changes-summary-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+.changes-summary-file {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.375rem;
+  border-radius: 0.375rem;
+  font-size: 0.75rem;
+  font-family: var(--mono);
+}
+.changes-summary-file:hover { background: var(--hover-fill); }
+.changes-summary-file .badge {
+  font-size: 0.625rem;
+  padding: 0.0625rem 0.375rem;
+  border-radius: 999px;
+}
+.changes-summary-file .badge.is-created {
+  background: rgba(var(--success-rgb, 76, 175, 80), 0.18);
+  color: var(--success, #4caf50);
+}
+.changes-summary-file .badge.is-edited {
+  background: rgba(var(--accent-rgb), 0.18);
+  color: var(--accent);
+}
+.changes-summary-file .changes-file-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.changes-summary-file .changes-file-lines {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 0.625rem;
+}
+.changes-summary-file .changes-file-btns {
+  display: flex;
+  gap: 0.25rem;
+  flex-shrink: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+.changes-summary-file:hover .changes-file-btns,
+.changes-summary-file:focus-within .changes-file-btns {
+  opacity: 1;
+  pointer-events: auto;
+}
+.changes-summary-file .changes-file-btns .btn {
+  font-size: 0.625rem;
+  padding: 0.0625rem 0.375rem;
+  line-height: 1.35;
+}
+.changes-summary-file.is-accepted {
+  opacity: 0.5;
+  text-decoration: line-through;
+}
+.changes-summary-file.is-reverted {
+  opacity: 0.35;
+  text-decoration: line-through;
+}
+.changes-summary-actions {
+  display: flex;
+  gap: 0.375rem;
+  justify-content: flex-end;
+}
+.changes-summary-actions .btn.accept-all {
+  background: var(--success, #4caf50);
+  border-color: var(--success, #4caf50);
+  color: #fff;
+}
+.changes-summary-actions .btn.accept-all:hover {
+  filter: brightness(1.1);
+}
+.changes-summary-actions .btn.revert-all {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+.changes-summary-actions .btn.revert-all:hover {
+  filter: brightness(1.1);
+}
+@media (pointer: coarse) {
+  .changes-summary-file .changes-file-btns {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
