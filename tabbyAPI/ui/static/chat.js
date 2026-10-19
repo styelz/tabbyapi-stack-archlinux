@@ -4735,8 +4735,13 @@ function mountChat(root) {
     }
     if (!window.TabbyMonaco) {
       return (
-        '<div class="chat-editor-body"><p class="muted">Code editor failed to load.</p>' +
-        '<button type="button" class="btn" data-edit="retry-editor">Retry</button></div>'
+        '<div class="chat-editor-body is-loading"><div class="editor-skeleton">' +
+        '<div class="skeleton-line" style="width:60%"></div>' +
+        '<div class="skeleton-line" style="width:80%"></div>' +
+        '<div class="skeleton-line" style="width:45%"></div>' +
+        '<div class="skeleton-line" style="width:70%"></div>' +
+        '<div class="skeleton-line" style="width:55%"></div>' +
+        '</div><p class="muted">Loading editor…</p></div>'
       );
     }
     const spin = window.monaco ? "" : editorSpinnerHtml();
@@ -4856,28 +4861,38 @@ function mountChat(root) {
   function mountMonaco(tab, view) {
     const host = editorPane.querySelector(".code-monaco");
     if (!host) return;
-    if (!window.TabbyMonaco) return;
-    window.TabbyMonaco.onChange(onMonacoChange);
-    window.TabbyMonaco.onSave((host, path) => saveTab(host, path));
-    const path = isHistoryTab(tab) ? tab.filePath || tab.path : tab.path;
-    const pending =
-      view === "diff"
-        ? window.TabbyMonaco.showDiff(host, {
-            path,
-            original: tab.oldText || "",
-            modified: tab.text || tab.original || "",
-          })
-        : window.TabbyMonaco.showFile(host, {
-            path,
-            text: tab.text || "",
-            caret: tab.caret,
-            line: tab.revealLine,
-          });
-    if (tab.revealLine) tab.revealLine = 0;
-    Promise.resolve(pending).catch((err) => {
-      const body = editorPane.querySelector(".chat-editor-body");
-      if (body) body.outerHTML = monacoLoadErrorHtml(err && err.message);
-    });
+    const doMount = () => {
+      if (!window.TabbyMonaco) return;
+      window.TabbyMonaco.onChange(onMonacoChange);
+      window.TabbyMonaco.onSave((host, path) => saveTab(host, path));
+      const path = isHistoryTab(tab) ? tab.filePath || tab.path : tab.path;
+      const pending =
+        view === "diff"
+          ? window.TabbyMonaco.showDiff(host, {
+              path,
+              original: tab.oldText || "",
+              modified: tab.text || tab.original || "",
+            })
+          : window.TabbyMonaco.showFile(host, {
+              path,
+              text: tab.text || "",
+              caret: tab.caret,
+              line: tab.revealLine,
+            });
+      if (tab.revealLine) tab.revealLine = 0;
+      Promise.resolve(pending).catch((err) => {
+        const body = editorPane.querySelector(".chat-editor-body");
+        if (body) body.outerHTML = monacoLoadErrorHtml(err && err.message);
+      });
+    };
+    if (window.TabbyMonaco) {
+      doMount();
+    } else {
+      TabbyCodeEditor.ensureMonaco().then(doMount).catch((err) => {
+        const body = editorPane.querySelector(".chat-editor-body");
+        if (body) body.outerHTML = monacoLoadErrorHtml(err && err.message);
+      });
+    }
   }
 
   function syncEditorScroll() {
@@ -7564,7 +7579,17 @@ function mountChat(root) {
     setTermH(termH, false);
     if (filesTermBtn) filesTermBtn.classList.add("is-on");
     if (typeof window.Terminal !== "function") {
-      if (termNote) termNote.textContent = "xterm.js is missing.";
+      if (termNote) termNote.textContent = "Loading terminal…";
+      TabbyCodeTerminal.ensureXterm().then(() => {
+        if (termGen !== gen || !termWanted) return;
+        if (termNote) termNote.textContent = "";
+        disposeTermClient().then(() => {
+          if (termGen !== gen || !termWanted) return;
+          connectTerm(chatId, gen, 0);
+        });
+      }).catch(() => {
+        if (termNote) termNote.textContent = "Terminal failed to load.";
+      });
       return;
     }
     disposeTermClient().then(() => {

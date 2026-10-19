@@ -900,6 +900,7 @@
   });
   show(currentName());
   if (typeof TABBY_REVEAL_UI === "function") TABBY_REVEAL_UI();
+  performance.mark("tabby-page-ready");
 
   /* ==== Background tasks panel ==== */
   const tasksMenu = document.getElementById("tasks-menu");

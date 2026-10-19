@@ -122,7 +122,12 @@
     // document.write keeps CSS render-blocking. createElement("link") does not,
     // and unhiding on the first sheet's onload flashed the unstyled shell.
     document.write('<link rel="stylesheet" href="' + TABBY_UI_BASE + "/assets/styles.css?v=" + TABBY_UI_ASSET_V + '">');
-    document.write('<link rel="stylesheet" href="' + TABBY_UI_BASE + "/assets/xterm.css?v=" + TABBY_UI_ASSET_V + '">');
+  </script>
+  <script>
+    ["monaco.js", "xterm.js", "xterm-addon-fit.js", "lsp.js"].forEach(function (name) {
+      document.write('<link rel="prefetch" href="' + TABBY_UI_BASE + "/assets/" + name + "?v=" + TABBY_UI_ASSET_V + '" as="script">');
+    });
+    document.write('<link rel="prefetch" href="' + TABBY_UI_BASE + "/assets/xterm.css?v=" + TABBY_UI_ASSET_V + '" as="style">');
   </script>
 </head>
 <body>
@@ -261,7 +266,7 @@
   </div>
 
   <script>
-    ["highlight.js", "store.js", "utils.js", "xterm.js", "xterm-addon-fit.js", "monaco.js", "lsp.js", "palette.js", "logs.js", "chat-core.js", "code-editor.js", "code-files.js", "code-terminal.js", "code-preview.js", "chat.js", "status.js", "models.js", "gallery.js", "users.js", "settings.js", "app.js"].forEach(function (name) {
+    ["highlight.js", "store.js", "utils.js", "palette.js", "logs.js", "chat-core.js", "code-editor.js", "code-files.js", "code-terminal.js", "code-preview.js", "chat.js", "status.js", "models.js", "gallery.js", "users.js", "settings.js", "app.js"].forEach(function (name) {
       document.write('<script src="' + TABBY_UI_BASE + "/assets/" + name + "?v=" + TABBY_UI_ASSET_V + '"><\/script>');
     });
   </script>

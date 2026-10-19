@@ -2959,6 +2959,18 @@ button.chip {
   place-items: center;
   padding: 0;
 }
+.editor-skeleton {
+  padding: 1.25rem 1.5rem;
+  width: 100%;
+}
+.skeleton-line {
+  height: 0.875rem;
+  margin: 0.5rem 0;
+  border-radius: 0.25rem;
+  background: linear-gradient(90deg, var(--bg-elev-2) 25%, var(--hover-fill) 50%, var(--bg-elev-2) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s ease-in-out infinite;
+}
 .chat-editor-spinner-host {
   display: grid;
   place-items: center;
