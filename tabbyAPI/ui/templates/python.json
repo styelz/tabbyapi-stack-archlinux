@@ -1,0 +1,7 @@
+{
+  "files": {
+    "main.py": "\"\"\"Main entry point.\"\"\"\n\n\ndef main():\n    print(\"Hello, world!\")\n\n\nif __name__ == \"__main__\":\n    main()",
+    "requirements.txt": "",
+    ".gitignore": "__pycache__/\n*.pyc\n*.pyo\n.env\nvenv/\n.venv/\ndist/\n*.egg-info/"
+  }
+}

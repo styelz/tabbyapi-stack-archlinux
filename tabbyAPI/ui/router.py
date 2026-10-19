@@ -1599,6 +1599,44 @@ async def ui_workspace_clone(
     }
 
 
+@router.post("/workspace/{chat_id}/template", include_in_schema=False)
+async def ui_workspace_template(
+    chat_id: str, request: Request, _user: str = Depends(require_ui_user)
+):
+    from pathlib import Path as _Path
+
+    from ui.workspace import listing, site_entry, write_text
+
+    try:
+        body = await request.json()
+    except Exception as exc:
+        raise HTTPException(400, "JSON body required") from exc
+    name = str((body or {}).get("template") or "").strip()
+    if not name or not name.isalnum():
+        raise HTTPException(400, "Invalid template name")
+    tpl_path = _Path(__file__).resolve().parent / "templates" / f"{name}.json"
+    if not tpl_path.is_file():
+        raise HTTPException(404, f"Template '{name}' not found")
+    try:
+        tpl = json.loads(tpl_path.read_text("utf-8"))
+    except Exception as exc:
+        raise HTTPException(500, "Failed to read template") from exc
+    files_map = tpl.get("files") or {}
+    if not isinstance(files_map, dict):
+        raise HTTPException(500, "Invalid template format")
+    cid = _workspace_chat_id(chat_id, _user)
+    written: list[str] = []
+    for rel, contents in files_map.items():
+        write_text(_user, cid, rel, str(contents))
+        written.append(rel)
+    return {
+        "ok": True,
+        "files": written,
+        **listing(_user, cid),
+        "entry": site_entry(_user, cid),
+    }
+
+
 @router.get("/workspace/{chat_id}/git", include_in_schema=False)
 async def ui_workspace_git_status(chat_id: str, _user: str = Depends(require_ui_user)):
     from ui.git import GitError, git_status

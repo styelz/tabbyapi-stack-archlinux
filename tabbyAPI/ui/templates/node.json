@@ -1,0 +1,7 @@
+{
+  "files": {
+    "package.json": "{\n  \"name\": \"my-app\",\n  \"version\": \"1.0.0\",\n  \"description\": \"\",\n  \"main\": \"index.js\",\n  \"scripts\": {\n    \"start\": \"node index.js\"\n  }\n}",
+    "index.js": "// index.js\n\nconsole.log('Hello, world!');",
+    ".gitignore": "node_modules/\n.env\ndist/\n*.log"
+  }
+}

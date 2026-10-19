@@ -2723,16 +2723,35 @@ function mountChat(root) {
         '<div class="empty-state">' +
           '<div class="empty-state-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5A1.5 1.5 0 0 1 5.5 6h4l2 2H18.5A1.5 1.5 0 0 1 20 9.5v7a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 16.5v-9Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg></div>' +
           '<h3>Empty workspace</h3>' +
-          '<p>Upload files, clone a repo, or ask the agent to create a project.</p>' +
+          '<p>Pick a template or start from scratch.</p>' +
+          '<div class="template-grid">' +
+            '<button type="button" class="template-card" data-template="blank">' +
+              '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h8l4 4v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M14 4v4h4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>' +
+              'Blank' +
+            '</button>' +
+            '<button type="button" class="template-card" data-template="website">' +
+              '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M3 9h18" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="6" cy="6.5" r=".8" fill="currentColor"/><circle cx="8.5" cy="6.5" r=".8" fill="currentColor"/><circle cx="11" cy="6.5" r=".8" fill="currentColor"/></svg>' +
+              'Website' +
+            '</button>' +
+            '<button type="button" class="template-card" data-template="python">' +
+              '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2c-1.7 0-3 .5-3.8 1.2C7.4 4 7 5 7 6v2h5v1H6.5C5 9 3 10.2 3 13c0 2.8 1.5 4 3.5 4H9v-2.5C9 13 10.2 12 12 12h4c1.3 0 2-1 2-2V6c0-1.3-1-2.5-2.5-3C14.5 2.3 13.3 2 12 2Zm-1.5 2a1 1 0 1 1 0 2 1 1 0 0 1 0-2Z" fill="currentColor"/><path d="M12 22c1.7 0 3-.5 3.8-1.2.8-.8 1.2-1.8 1.2-2.8v-2h-5v-1h5.5c1.5 0 3.5-1.2 3.5-4 0-2.8-1.5-4-3.5-4H15v2.5c0 1.5-1.2 2.5-3 2.5H8c-1.3 0-2 1-2 2v4c0 1.3 1 2.5 2.5 3 1 .7 2.2 1 3.5 1Zm1.5-2a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z" fill="currentColor"/></svg>' +
+              'Python' +
+            '</button>' +
+            '<button type="button" class="template-card" data-template="node">' +
+              '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l8.5 5v10L12 22l-8.5-5V7L12 2Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M12 22V12m0 0l8.5-5M12 12L3.5 7" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>' +
+              'Node.js' +
+            '</button>' +
+          '</div>' +
           '<div class="empty-state-actions">' +
             '<button type="button" class="btn" data-empty="upload">Upload files</button>' +
             '<button type="button" class="btn" data-empty="clone">Clone repo</button>' +
-            '<button type="button" class="btn" data-empty="new">New file</button>' +
           '</div>' +
         '</div>';
       filesTree.querySelector('[data-empty="upload"]').addEventListener("click", function () { if (filesUploadBtn) filesUploadBtn.click(); });
       filesTree.querySelector('[data-empty="clone"]').addEventListener("click", function () { cloneGitRepo(); });
-      filesTree.querySelector('[data-empty="new"]').addEventListener("click", function () { if (filesNewBtn) filesNewBtn.click(); });
+      filesTree.querySelectorAll("[data-template]").forEach(function (card) {
+        card.addEventListener("click", function () { applyWorkspaceTemplate(card.dataset.template); });
+      });
       return;
     }
     syncTreeFolders(filesListing);
@@ -3451,6 +3470,34 @@ function mountChat(root) {
       });
     } catch (err) {
       addBubble("assistant", `Error: ${err.message}`);
+    }
+  }
+
+  var TEMPLATE_MAIN = { website: "index.html", python: "main.py", node: "index.js" };
+
+  async function applyWorkspaceTemplate(name) {
+    var chatId = activeWorkspaceId();
+    if (!chatId) return;
+    if (name === "blank") {
+      if (filesNewBtn) filesNewBtn.click();
+      return;
+    }
+    try {
+      var data = await TabbyUI.api(
+        `workspace/${encodeURIComponent(chatId)}/template`,
+        { method: "POST", body: { template: name } }
+      );
+      if (data && data.listing) {
+        filesListing = listingFromData(data, []);
+        filesEntry = typeof data.entry === "string" ? data.entry : "";
+      }
+      await refreshFiles();
+      var main = TEMPLATE_MAIN[name];
+      if (main && filesListing.some(function (r) { return r.path === main; })) {
+        openFileTab(main, { focus: true });
+      }
+    } catch (err) {
+      addBubble("assistant", "Template error: " + (err.message || err));
     }
   }
 
