@@ -207,7 +207,12 @@ function pickGallery({
       showError("");
       const data = await TabbyUI.api(`gallery/list?page=${state.page}&per_page=24`);
       if (!Array.isArray(data.items) || !data.items.length) {
-        grid.innerHTML = "<p class='muted'>No images yet. Upload a photo or generate one in Chat.</p>";
+        grid.innerHTML =
+          '<div class="empty-state">' +
+            '<div class="empty-state-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5.5" width="16" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="m7.5 15.5 3-3.2 2.2 2.2 2.4-3 3.4 4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><circle cx="9" cy="9.2" r="1.1" fill="currentColor"/></svg></div>' +
+            '<h3>No images yet</h3>' +
+            '<p>Generated images, audio, and video will appear here. Switch to Comfy in chat and describe what you want.</p>' +
+          '</div>';
         pager.innerHTML = "";
         state.boxes = [];
         paint();
@@ -485,10 +490,18 @@ function mountGallery(root) {
       const data = await TabbyUI.api(`gallery/list?page=${page}&per_page=24`);
       if (gen !== loadGen) return;
       if (!Array.isArray(data.items) || !data.items.length) {
-        grid.innerHTML = "<p class='muted'>No images yet. Upload a photo or generate one in Chat.</p>";
+        grid.innerHTML =
+          '<div class="empty-state">' +
+            '<div class="empty-state-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5.5" width="16" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="m7.5 15.5 3-3.2 2.2 2.2 2.4-3 3.4 4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><circle cx="9" cy="9.2" r="1.1" fill="currentColor"/></svg></div>' +
+            '<h3>No images yet</h3>' +
+            '<p>Generated images, audio, and video will appear here. Switch to Comfy in chat and describe what you want.</p>' +
+            '<div class="empty-state-actions"><button type="button" class="btn" id="gal-empty-comfy">Switch to Comfy</button></div>' +
+          '</div>';
         pager.innerHTML = "";
         boxes = [];
         paint();
+        var comfyBtn = grid.querySelector("#gal-empty-comfy");
+        if (comfyBtn) comfyBtn.addEventListener("click", function () { if (TabbyUI.switchGpu) TabbyUI.switchGpu("comfy"); });
         return;
       }
       grid.innerHTML = data.items

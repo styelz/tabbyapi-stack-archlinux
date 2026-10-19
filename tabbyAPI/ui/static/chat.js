@@ -2089,7 +2089,10 @@ function mountChat(root) {
     if (code) {
       const rows = listedWorkspaceRows();
       if (!rows.length) {
-        navList.innerHTML = '<div class="chat-nav-empty">No workspaces match.</div>';
+        const hasQuery = searchEl && searchEl.value.trim();
+        navList.innerHTML = hasQuery
+          ? '<div class="chat-nav-empty">No workspaces match.</div>'
+          : '<div class="empty-state"><div class="empty-state-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5A1.5 1.5 0 0 1 5.5 6h4l2 2H18.5A1.5 1.5 0 0 1 20 9.5v7a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 16.5v-9Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg></div><h3>No workspaces yet</h3><p>Start typing below to begin.</p></div>';
         return;
       }
       const active = activeChat();
@@ -2122,7 +2125,10 @@ function mountChat(root) {
     }
     const chats = listedChats();
     if (!chats.length && !knownFolders().length) {
-      navList.innerHTML = '<div class="chat-nav-empty">No chats match.</div>';
+      const hasQuery = searchEl && searchEl.value.trim();
+      navList.innerHTML = hasQuery
+        ? '<div class="chat-nav-empty">No chats match.</div>'
+        : '<div class="empty-state"><div class="empty-state-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6.5A2.5 2.5 0 0 1 7.5 4h9A2.5 2.5 0 0 1 19 6.5v7A2.5 2.5 0 0 1 16.5 16H10l-4.2 3.2A.6.6 0 0 1 5 18.7V6.5Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg></div><h3>No chats yet</h3><p>Start typing below to begin.</p></div>';
       return;
     }
     const active = activeChat();
@@ -2714,7 +2720,19 @@ function mountChat(root) {
       filesRevealed = "";
       filesTreeReady = false;
       filesTree.innerHTML =
-        '<p class="muted chat-files-empty">No files yet. Create one, upload, or ask for a page.</p>';
+        '<div class="empty-state">' +
+          '<div class="empty-state-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5A1.5 1.5 0 0 1 5.5 6h4l2 2H18.5A1.5 1.5 0 0 1 20 9.5v7a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 16.5v-9Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg></div>' +
+          '<h3>Empty workspace</h3>' +
+          '<p>Upload files, clone a repo, or ask the agent to create a project.</p>' +
+          '<div class="empty-state-actions">' +
+            '<button type="button" class="btn" data-empty="upload">Upload files</button>' +
+            '<button type="button" class="btn" data-empty="clone">Clone repo</button>' +
+            '<button type="button" class="btn" data-empty="new">New file</button>' +
+          '</div>' +
+        '</div>';
+      filesTree.querySelector('[data-empty="upload"]').addEventListener("click", function () { if (filesUploadBtn) filesUploadBtn.click(); });
+      filesTree.querySelector('[data-empty="clone"]').addEventListener("click", function () { cloneGitRepo(); });
+      filesTree.querySelector('[data-empty="new"]').addEventListener("click", function () { if (filesNewBtn) filesNewBtn.click(); });
       return;
     }
     syncTreeFolders(filesListing);

@@ -13,7 +13,7 @@ function mountLogs(root) {
         <span class="muted" id="log-state">connecting…</span>
       </div>
     </div>
-    <pre class="log-view" id="log-view"></pre>
+    <pre class="log-view" id="log-view"><span class="empty-state" id="log-empty" style="min-height:8rem"><span class="empty-state-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M7 7h10M7 12h10M7 17h7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span><span>No log output yet.</span></span></pre>
   `;
   const view = root.querySelector("#log-view");
   const state = root.querySelector("#log-state");
@@ -77,6 +77,8 @@ function mountLogs(root) {
 
   function appendVisible(lines) {
     if (!lines.length) return;
+    var logEmpty = view.querySelector("#log-empty");
+    if (logEmpty) logEmpty.remove();
     if (filterQ) {
       const matched = lines.filter((line) => line.toLowerCase().includes(filterQ));
       if (!matched.length) return;
