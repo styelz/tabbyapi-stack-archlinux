@@ -7762,7 +7762,14 @@ function mountChat(root) {
   function connectTerm(chatId, gen, retries) {
     if (termGen !== gen || !termWanted || !chatId) return;
     if (typeof window.Terminal !== "function") {
-      if (termNote) termNote.textContent = "xterm.js is missing.";
+      if (termNote) termNote.textContent = "Loading terminal…";
+      TabbyCodeTerminal.ensureXterm().then(function () {
+        if (termGen !== gen || !termWanted) return;
+        connectTerm(chatId, gen, retries);
+      }).catch(function () {
+        if (termGen !== gen) return;
+        if (termNote) termNote.textContent = "Terminal failed to load.";
+      });
       return;
     }
     if (termNote) termNote.textContent = retries ? "Reconnecting…" : "";

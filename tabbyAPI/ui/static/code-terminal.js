@@ -19,13 +19,25 @@
     return base + "/assets/" + name + (v ? "?v=" + v : "");
   }
 
-  function loadScript(src) {
-    return new Promise(function (resolve, reject) {
-      var node = document.createElement("script");
-      node.src = src;
-      node.onload = resolve;
-      node.onerror = function () { reject(new Error("Failed to load " + src)); };
-      document.head.appendChild(node);
+  // Monaco's loader sets define.amd. xterm's UMD build then calls define()
+  // and never assigns window.Terminal, so the pane stays on "xterm.js is missing."
+  function loadClassicScript(src) {
+    return fetch(src, { credentials: "same-origin" }).then(function (res) {
+      if (!res.ok) throw new Error("Failed to load " + src);
+      return res.text();
+    }).then(function (code) {
+      var define = window.define;
+      var hide = define && define.amd;
+      var saved = hide ? define.amd : undefined;
+      if (hide) define.amd = undefined;
+      try {
+        var node = document.createElement("script");
+        node.text = code;
+        document.head.appendChild(node);
+        node.remove();
+      } finally {
+        if (hide) define.amd = saved;
+      }
     });
   }
 
@@ -39,17 +51,22 @@
   }
 
   window.TabbyCodeTerminal.ensureXterm = function ensureXterm() {
-    if (typeof window.Terminal === "function") return Promise.resolve(window.Terminal);
+    if (typeof window.Terminal === "function" && window.FitAddon && window.FitAddon.FitAddon) {
+      return Promise.resolve(window.Terminal);
+    }
     if (_xtermPromise) return _xtermPromise;
     _xtermPromise = Promise.resolve()
       .then(function () {
         loadCss(assetUrl("xterm.css"));
-        return loadScript(assetUrl("xterm.js"));
+        return loadClassicScript(assetUrl("xterm.js"));
       })
       .then(function () {
-        return loadScript(assetUrl("xterm-addon-fit.js"));
+        return loadClassicScript(assetUrl("xterm-addon-fit.js"));
       })
       .then(function () {
+        if (typeof window.Terminal !== "function") {
+          throw new Error("xterm.js did not load.");
+        }
         performance.mark("tabby-xterm-ready");
         return window.Terminal;
       })

@@ -70,6 +70,13 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
     def setUp(self):
         self.src = CHAT_JS.read_text(encoding="utf-8")
 
+    def test_terminal_retries_when_xterm_is_not_global(self):
+        start = self.src.index("function connectTerm(")
+        window = self.src[start : start + 900]
+        self.assertNotIn("xterm.js is missing.", window)
+        self.assertIn("TabbyCodeTerminal.ensureXterm()", window)
+        self.assertIn("Terminal failed to load.", window)
+
     def test_loading_editor_keeps_monaco_mount_host(self):
         start = self.src.index("if (!window.TabbyMonaco)")
         end = self.src.index("Loading editor", start)
