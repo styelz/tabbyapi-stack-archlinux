@@ -100,6 +100,23 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
         self.assertIn('mode: "stop"', self.src)
         self.assertIn("showSteer", self.src)
 
+    def test_running_status_stays_on_the_composer(self):
+        self.assertIn('id="chat-run"', self.src)
+        self.assertIn('id="chat-run-label"', self.src)
+        self.assertIn("function paintRunStatus()", self.src)
+        self.assertIn("function stopRunClock()", self.src)
+        start = self.src.index("function paintRunStatus()")
+        window = self.src[start : start + 900]
+        self.assertIn("flightIsHere()", window)
+        self.assertIn("!modelLoading", window)
+        self.assertIn("!stackWaiting", window)
+        self.assertIn("statusText()", window)
+        destroy = self.src.index("destroy() {")
+        self.assertIn("stopRunClock()", self.src[destroy : destroy + 500])
+        css = CHAT_CSS.read_text(encoding="utf-8")
+        self.assertIn(".chat-run[hidden]", css)
+        self.assertIn(".chat-run .think-icon", css)
+
     def test_chat_waits_out_api_restart_then_resends(self):
         self.assertIn("function tabbyLooksLikeRestart(err, status)", self.src)
         self.assertIn("async function pauseForRestart(working, activity, note)", self.src)

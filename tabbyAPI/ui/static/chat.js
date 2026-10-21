@@ -214,6 +214,11 @@ function mountChat(root) {
             <button class="btn primary" type="button" id="chat-code-write-qwen">Switch to qwen</button>
           </div>
           <div class="changes-summary" id="chat-changes-summary" hidden></div>
+          <div class="chat-run" id="chat-run" hidden>
+            <span class="think-icon is-processing" id="chat-run-icon" aria-hidden="true"><span class="think-spark"></span></span>
+            <span class="chat-run-label" id="chat-run-label" role="status">Working</span>
+            <span class="chat-run-time" id="chat-run-time" aria-hidden="true"></span>
+          </div>
           <form class="chat-form" id="chat-form">
             <textarea id="chat-input" rows="3" placeholder="Talk to the loaded model. Type / for commands. ↑↓ recalls what you sent."></textarea>
             <input id="chat-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden />
@@ -400,6 +405,9 @@ function mountChat(root) {
   const codeWriteText = root.querySelector("#chat-code-write-text");
   const codeWriteQwenBtn = root.querySelector("#chat-code-write-qwen");
   const changesSummaryEl = root.querySelector("#chat-changes-summary");
+  const runBar = root.querySelector("#chat-run");
+  const runLabel = root.querySelector("#chat-run-label");
+  const runTime = root.querySelector("#chat-run-time");
   const filesPane = root.querySelector("#chat-files");
   const activityBar = root.querySelector("#code-activity-bar");
   const activityContent = root.querySelector("#code-activity-content");
@@ -11597,6 +11605,7 @@ function mountChat(root) {
       }
       head.hidden = false;
       setProcessing(true);
+      paintRunStatus();
       paintThought();
       paintImageProgress(activityLabel, note);
       syncTraceChrome();
@@ -12115,6 +12124,7 @@ function mountChat(root) {
         activityLabel = next;
         label.textContent = next;
         head.hidden = false;
+        paintRunStatus();
         if (opts && opts.processing != null) setProcessing(opts.processing);
         if (opts && opts.note) addStatusNote(opts.note);
         if (tabbyImageRenderLabel(next)) beginImageHold(next, opts && opts.note);
@@ -12171,6 +12181,7 @@ function mountChat(root) {
           label.textContent = "Thinking";
           head.hidden = false;
           setProcessing(false);
+          paintRunStatus();
         }
         paintThoughtSoon();
         stickLog();
@@ -12303,6 +12314,15 @@ function mountChat(root) {
       },
       isLive() {
         return Boolean(live && !finished);
+      },
+      statusText() {
+        return String(label.textContent || "Thinking");
+      },
+      statusElapsed() {
+        const s = Math.floor((Date.now() - started) / 1000);
+        return s >= 1 && window.TabbyUI && TabbyUI.formatDuration
+          ? TabbyUI.formatDuration(s)
+          : "";
       },
     };
   }
@@ -13338,6 +13358,7 @@ function mountChat(root) {
   let loopBusy = false;
   let flightChatId = "";
   let flightWorking = null;
+  let runClock = 0;
   let gpuMode = "";
   let comfyUp = false;
   let modelLoading = false;
@@ -13863,7 +13884,36 @@ function mountChat(root) {
     persistQueue();
   }
 
+  function stopRunClock() {
+    if (!runClock) return;
+    clearInterval(runClock);
+    runClock = 0;
+  }
+
+  function paintRunStatus() {
+    const live = Boolean(!modelLoading && !stackWaiting && flightIsHere());
+    if (runBar) runBar.hidden = !live;
+    if (!live) {
+      stopRunClock();
+      return;
+    }
+    const working = flightWorking
+      && typeof flightWorking.isLive === "function"
+      && flightWorking.isLive()
+      ? flightWorking
+      : null;
+    const text = (working && working.statusText && working.statusText()) || "Working";
+    const elapsed = (working && working.statusElapsed && working.statusElapsed()) || "";
+    if (runLabel && runLabel.textContent !== text) {
+      runLabel.textContent = text;
+      runLabel.title = text;
+    }
+    if (runTime) runTime.textContent = elapsed;
+    if (!runClock) runClock = setInterval(paintRunStatus, 250);
+  }
+
   function paintCompose() {
+    paintRunStatus();
     if (form) form.classList.toggle("is-loading", modelLoading);
     if (waitingBar) waitingBar.hidden = modelLoading || !stackWaiting;
     const here = flightIsHere();
@@ -14441,6 +14491,7 @@ function mountChat(root) {
       : activityFromPrompt(outboundText, sendAgent);
     const working = addWorkingReply(activity);
     flightWorking = working;
+    paintRunStatus();
     const poll = startStatusPoll(working, activity.kind);
     let assembled = "";
     let reasoning = "";
@@ -15017,6 +15068,7 @@ function mountChat(root) {
       finishChecklistBuild({ chatId, stopped: userStopped });
     }
     if (flightWorking === working) flightWorking = null;
+    paintRunStatus();
     if (chatMode(store.chats.find((item) => item.id === chatId)) === "code") {
       if (chatsShareWorkspace(chatId)) refreshFiles();
     }
@@ -17503,6 +17555,7 @@ function mountChat(root) {
       abortSession("stop");
       stopGatePoll();
       stopLoadingClock();
+      stopRunClock();
       hideStackQueue();
       if (filesRefreshTimer) clearTimeout(filesRefreshTimer);
       if (highlightFrame) cancelAnimationFrame(highlightFrame);
