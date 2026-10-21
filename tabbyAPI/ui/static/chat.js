@@ -4998,14 +4998,17 @@ function mountChat(root) {
       return `<div class="chat-editor-body is-loading">${editorSpinnerHtml()}</div>`;
     }
     if (!window.TabbyMonaco) {
+      // The host has to exist or mountMonaco returns before ensureMonaco()
+      // and this skeleton stays on screen forever.
       return (
-        '<div class="chat-editor-body is-loading"><div class="editor-skeleton">' +
+        '<div class="chat-editor-body is-monaco"><div class="code-monaco">' +
+        '<div class="editor-skeleton">' +
         '<div class="skeleton-line" style="width:60%"></div>' +
         '<div class="skeleton-line" style="width:80%"></div>' +
         '<div class="skeleton-line" style="width:45%"></div>' +
         '<div class="skeleton-line" style="width:70%"></div>' +
         '<div class="skeleton-line" style="width:55%"></div>' +
-        '</div><p class="muted">Loading editor…</p></div>'
+        '</div><p class="muted">Loading editor…</p></div></div>'
       );
     }
     const spin = window.monaco ? "" : editorSpinnerHtml();
@@ -14144,6 +14147,47 @@ function mountChat(root) {
     return out;
   }
 
+  const FILE_TEXT_ARG_KEYS = {
+    contents: 1,
+    content: 1,
+    text: 1,
+    old_string: 1,
+    new_string: 1,
+    old_str: 1,
+    new_str: 1,
+    command: 1,
+    cmd: 1,
+    pattern: 1,
+    query: 1,
+    patch: 1,
+    input: 1,
+    diff: 1,
+  };
+
+  function fileTextFromArg(value) {
+    if (typeof value === "string") return value;
+    if (value == null) return "";
+    if (typeof value === "boolean") return value ? "true" : "false";
+    if (typeof value === "number") return String(value);
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return String(value);
+    }
+  }
+
+  // A JSON file body can arrive as an object. Stringify it before the write
+  // so package.json keeps double quotes instead of a Python dict repr.
+  function coerceFileTextArgs(args) {
+    if (!args || typeof args !== "object") return;
+    Object.keys(FILE_TEXT_ARG_KEYS).forEach((key) => {
+      if (!Object.prototype.hasOwnProperty.call(args, key)) return;
+      const value = args[key];
+      if (value == null || typeof value === "string") return;
+      args[key] = fileTextFromArg(value);
+    });
+  }
+
   function normalizeToolCalls(raw) {
     if (!Array.isArray(raw)) return [];
     return raw.map((item, index) => {
@@ -14161,6 +14205,7 @@ function mountChat(root) {
             })();
       }
       if (!args || typeof args !== "object") args = {};
+      coerceFileTextArgs(args);
       return {
         id: String((item && item.id) || `call_${index}`),
         name: String(fn.name || (item && item.name) || ""),

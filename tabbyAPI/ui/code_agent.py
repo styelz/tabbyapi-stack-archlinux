@@ -1173,10 +1173,25 @@ def _arg_path(args: dict) -> str:
     return ""
 
 
+def _as_text_arg(value: Any) -> str:
+    """File text stays text. A parsed JSON object must not become a Python repr."""
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, indent=2)
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return json.dumps(value)
+    return str(value)
+
+
 def _arg_contents(args: dict) -> str:
     for key in ("contents", "content", "text"):
         if key in args and args[key] is not None:
-            return args[key] if isinstance(args[key], str) else str(args[key])
+            return _as_text_arg(args[key])
     return ""
 
 
@@ -1895,8 +1910,8 @@ def _execute_tool(
         _note_change(change, "write", written, **extra)
         return f"Writing {written}", _with_page_wiring(username, chat_id, rel, f"Wrote {written}")
     if kind == "replace":
-        old = str(args.get("old_string") or args.get("oldStr") or "")
-        new = str(args.get("new_string") or args.get("newStr") or "")
+        old = _as_text_arg(args.get("old_string") if args.get("old_string") is not None else args.get("oldStr"))
+        new = _as_text_arg(args.get("new_string") if args.get("new_string") is not None else args.get("newStr"))
         if is_layout_fix_prompt(user_text):
             old_imgs = set(_IMAGE_IN_TEXT.findall(old))
             new_imgs = set(_IMAGE_IN_TEXT.findall(new))

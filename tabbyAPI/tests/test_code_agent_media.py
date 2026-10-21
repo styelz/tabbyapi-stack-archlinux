@@ -500,5 +500,65 @@ class InspectAndShellTests(unittest.TestCase):
         self.assertIn("/work/.venv/bin", codebox.WORK_PATH)
 
 
+class JsonFileWriteTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        workspace.set_workspaces_dir(Path(self._tmp.name))
+
+    def tearDown(self):
+        workspace.set_workspaces_dir(None)
+        self._tmp.cleanup()
+
+    def test_write_of_parsed_object_uses_double_quotes(self):
+        label, result, change = code_agent.execute_tool(
+            "alice",
+            "c1",
+            "Write",
+            {
+                "path": "package.json",
+                "contents": {
+                    "name": "bearstead",
+                    "private": True,
+                    "scripts": {"build": "node build.js"},
+                },
+            },
+            agent="agent",
+        )
+        self.assertIn("Writing", label)
+        self.assertIn("Wrote", result)
+        text = workspace.read_text("alice", "c1", "package.json")
+        self.assertIn('"name": "bearstead"', text)
+        self.assertIn('"private": true', text)
+        self.assertNotIn("True", text)
+        self.assertNotIn("'", text)
+        self.assertEqual(change["kind"], "write")
+
+    def test_strreplace_of_parsed_object_uses_double_quotes(self):
+        workspace.write_text(
+            "alice",
+            "c1",
+            "package.json",
+            "{'name': 'bearstead', 'private': True}\n",
+        )
+        label, result, change = code_agent.execute_tool(
+            "alice",
+            "c1",
+            "StrReplace",
+            {
+                "path": "package.json",
+                "old_string": "{'name': 'bearstead', 'private': True}",
+                "new_string": {"name": "bearstead", "private": True},
+            },
+            agent="agent",
+        )
+        self.assertIn("Editing", label)
+        text = workspace.read_text("alice", "c1", "package.json")
+        self.assertIn('"name": "bearstead"', text)
+        self.assertIn('"private": true', text)
+        self.assertNotIn("True", text)
+        self.assertEqual(change["kind"], "edit")
+        self.assertIn("Updated", result)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -93,6 +93,54 @@ class Qwen3CoderParseTests(unittest.TestCase):
         self.assertEqual(args["old_string"], ".hero { color: red; }")
         self.assertEqual(args["new_string"], ".hero { color: blue; }")
 
+    def test_package_json_contents_stay_double_quoted_text(self):
+        text = (
+            "<function=Write>\n"
+            "<parameter=path>\n"
+            "package.json\n"
+            "<parameter=contents>\n"
+            "{\n"
+            '  "name": "bearstead",\n'
+            '  "private": true\n'
+            "}\n"
+        )
+        calls = parse_toolcalls(text)
+        args = json.loads(calls[0].function.arguments)
+        self.assertIsInstance(args["contents"], str)
+        self.assertIn('"name": "bearstead"', args["contents"])
+        self.assertIn('"private": true', args["contents"])
+        self.assertNotIn("True", args["contents"])
+        self.assertNotIn("'", args["contents"])
+
+    def test_strreplace_json_object_stays_text(self):
+        text = (
+            "<function=StrReplace>\n"
+            "<parameter=path>\n"
+            "package.json\n"
+            "<parameter=old_string>\n"
+            "{'name': 'bearstead', 'private': True}\n"
+            "<parameter=new_string>\n"
+            '{"name": "bearstead", "private": true}\n'
+        )
+        calls = parse_toolcalls(text)
+        args = json.loads(calls[0].function.arguments)
+        self.assertEqual(args["old_string"], "{'name': 'bearstead', 'private': True}")
+        self.assertEqual(args["new_string"], '{"name": "bearstead", "private": true}')
+
+    def test_generate_image_list_still_parses(self):
+        text = (
+            "<function=GenerateImage>\n"
+            "<parameter=images>\n"
+            '[{"prompt": "a bear", "output_path": "images/hero.png"}]\n'
+            "<parameter=qwen_image>\n"
+            "true\n"
+        )
+        calls = parse_toolcalls(text)
+        args = json.loads(calls[0].function.arguments)
+        self.assertIsInstance(args["images"], list)
+        self.assertEqual(args["images"][0]["output_path"], "images/hero.png")
+        self.assertIs(args["qwen_image"], True)
+
 
 class ToolArgumentCoerceTests(unittest.TestCase):
     def test_concatenated_json_keeps_first_object(self):

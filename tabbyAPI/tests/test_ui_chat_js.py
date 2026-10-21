@@ -70,6 +70,22 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
     def setUp(self):
         self.src = CHAT_JS.read_text(encoding="utf-8")
 
+    def test_loading_editor_keeps_monaco_mount_host(self):
+        start = self.src.index("if (!window.TabbyMonaco)")
+        end = self.src.index("Loading editor", start)
+        window = self.src[start:end]
+        self.assertIn('class="code-monaco"', window)
+        self.assertIn("is-monaco", window)
+        self.assertNotIn("chat-editor-body is-loading", window)
+
+    def test_json_file_args_are_stringified_before_write(self):
+        self.assertIn("function coerceFileTextArgs(args)", self.src)
+        self.assertIn("function fileTextFromArg(value)", self.src)
+        norm = self.src.split("function normalizeToolCalls(")[1].split(
+            "async function executeWorkspaceTool("
+        )[0]
+        self.assertIn("coerceFileTextArgs(args)", norm)
+
     def test_compose_helper_matches_python_matrix(self):
         self.assertIn("function tabbyChatComposeAction(inFlight, typed, queued)", self.src)
         self.assertIn('mode: "send"', self.src)

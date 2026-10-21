@@ -37,6 +37,34 @@ _FUNC_OPEN = re.compile(r"<function=([^>\s]+)[^>]*>")
 _PARAM_OPEN = re.compile(r"<parameter=([^>\s]+)[^>]*>")
 _STOP_IN_VALUE = re.compile(r"</function>|</tool_call>|<function=")
 
+# These values are file or shell text. json.loads would turn a package.json
+# body into a dict, and str(dict) later writes single quotes and Python
+# True/False, so the file never lands as JSON.
+_TEXT_PARAM_KEYS = frozenset({
+    "contents",
+    "content",
+    "text",
+    "old_string",
+    "new_string",
+    "old_str",
+    "new_str",
+    "oldstring",
+    "newstring",
+    "command",
+    "cmd",
+    "pattern",
+    "query",
+    "input",
+    "patch",
+    "diff",
+})
+
+
+def _param_value(key: str, chunk: str):
+    if key.strip().lower() in _TEXT_PARAM_KEYS:
+        return chunk.strip()
+    return coerce_param_value(chunk)
+
 
 def _parse_params(body: str) -> dict:
     """Parse <parameter=name> values.
@@ -59,7 +87,7 @@ def _parse_params(body: str) -> dict:
         close_at = chunk.find("</parameter>")
         if close_at != -1:
             chunk = chunk[:close_at]
-        args[key] = coerce_param_value(chunk)
+        args[key] = _param_value(key, chunk)
     return args
 
 
