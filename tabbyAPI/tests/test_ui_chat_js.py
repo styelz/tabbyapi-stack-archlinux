@@ -960,6 +960,31 @@ class EditClaimTests(unittest.TestCase):
         self.assertFalse(looks_like_edit_claim("The nav uses #mobile-nav."))
 
 
+class ReasoningOnlyReplyTests(unittest.TestCase):
+    def setUp(self):
+        self.src = CHAT_JS.read_text(encoding="utf-8")
+
+    def test_finish_shows_reasoning_before_empty_note(self):
+        start = self.src.index("const answer = visibleAnswerText(finalContent);")
+        window = self.src[start : start + 700]
+        reasoning_at = window.index("visibleAnswerText(reasoningText)")
+        empty_at = window.index("EMPTY_REPLY_NOTE")
+        self.assertLess(reasoning_at, empty_at)
+        self.assertIn("showAnswer(displayAnswer(reasoningText), reasoningText)", window)
+
+    def test_reload_shows_saved_reasoning_when_content_is_blank(self):
+        start = self.src.index("turn.append(head, thought, imageProgress);")
+        window = self.src[start : start + 450]
+        self.assertIn("visibleAnswerText(reasoningText)", window)
+        self.assertIn("showAnswer(displayAnswer(reasoningText), reasoningText)", window)
+
+    def test_blank_content_is_stored_from_reasoning(self):
+        start = self.src.index("const replyBody = String(formatted || \"\").trim()")
+        window = self.src[start : start + 220]
+        self.assertIn("thought", window)
+        self.assertIn("content: replyBody", self.src[start : start + 400])
+
+
 if __name__ == "__main__":
     unittest.main()
 

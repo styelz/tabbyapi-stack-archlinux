@@ -11146,6 +11146,15 @@ function mountChat(root) {
     return cleaned.replace(/\s+/g, " ").trim();
   }
 
+  // A reasoning model can finish inside its think trace and never emit a
+  // content channel. That text is the reply; collapsing it looks empty until
+  // a reload opens the saved trace.
+  function reasoningShownAsAnswer(answer, reasoning) {
+    const thought = visibleAnswerText(reasoning);
+    const reply = visibleAnswerText(answer);
+    return Boolean(thought && reply && thought === reply);
+  }
+
   function looksLikeEditClaim(text) {
     const raw = visibleAnswerText(text);
     if (!raw) return false;
@@ -11497,6 +11506,8 @@ function mountChat(root) {
       showAnswer(displayAnswer(content), content);
     } else if (!live && wasStopped) {
       showStoppedNote();
+    } else if (!live && visibleAnswerText(reasoningText)) {
+      showAnswer(displayAnswer(reasoningText), reasoningText);
     }
     let statusNotes = [];
     let lastNote = "";
@@ -11841,7 +11852,8 @@ function mountChat(root) {
     }
 
     function hasTrace() {
-      return Boolean(reasoningText || steps.some(stepIsVisible) || statusNotes.length);
+      const thought = reasoningShownAsAnswer(answerText, reasoningText) ? "" : reasoningText;
+      return Boolean(thought || steps.some(stepIsVisible) || statusNotes.length);
     }
 
     let followThought = true;
@@ -12241,6 +12253,8 @@ function mountChat(root) {
           showAnswer(displayAnswer(finalContent), finalContent);
         } else if (wasStopped) {
           showStoppedNote();
+        } else if (visibleAnswerText(reasoningText)) {
+          showAnswer(displayAnswer(reasoningText), reasoningText);
         } else if (!bubbleMounted || !visibleAnswerText(bubble.textContent)) {
           const fromSteps = summaryFromCodeSteps(steps);
           if (fromSteps) {
@@ -15006,11 +15020,18 @@ function mountChat(root) {
     const persistEmpty = emptyReply && !userStopped && !steerEmpty && !resumeEmpty && !imageHoldEmpty;
     if (String(assembled || "").trim() || reasoning || userStopped || savedSteps.length || persistEmpty) {
       const stepSummary = summaryFromCodeSteps(savedSteps);
+      const formatted = TabbyUI.formatAssistantContent
+        ? TabbyUI.formatAssistantContent(assembled)
+        : assembled;
+      const thought = TabbyUI.formatAssistantContent
+        ? TabbyUI.formatAssistantContent(reasoning)
+        : reasoning;
+      const replyBody = String(formatted || "").trim()
+        ? formatted
+        : (String(thought || "").trim() ? thought : "");
       const item = {
         role: "assistant",
-        content: (TabbyUI.formatAssistantContent
-          ? TabbyUI.formatAssistantContent(assembled)
-          : assembled) || (persistEmpty ? (stepSummary || EMPTY_REPLY_NOTE) : stepSummary),
+        content: replyBody || (persistEmpty ? (stepSummary || EMPTY_REPLY_NOTE) : stepSummary),
         createdAt: Date.now(),
       };
       if (historyRun) item.historyRun = historyRun;
