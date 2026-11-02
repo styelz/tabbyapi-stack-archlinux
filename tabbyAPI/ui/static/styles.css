@@ -5742,7 +5742,8 @@ figure.shot .open { display: block; }
   color: var(--muted);
 }
 .ctx-item:hover,
-.ctx-item:focus-visible {
+.ctx-item:focus-visible,
+.ctx-item.is-active {
   background: rgba(var(--accent-rgb), 0.16);
   outline: none;
 }
@@ -5751,12 +5752,14 @@ figure.shot .open { display: block; }
   cursor: default;
 }
 .ctx-item:disabled:hover,
-.ctx-item:disabled:focus-visible {
+.ctx-item:disabled:focus-visible,
+.ctx-item:disabled.is-active {
   background: none;
 }
 .ctx-item.is-danger { color: var(--bad); }
 .ctx-item.is-danger:hover,
-.ctx-item.is-danger:focus-visible {
+.ctx-item.is-danger:focus-visible,
+.ctx-item.is-danger.is-active {
   background: rgba(255, 107, 122, 0.14);
 }
 @media (max-width: 720px) {

@@ -805,12 +805,28 @@
     return String(sel).trim();
   }
 
+  function placeCaret(el, start, end) {
+    if (!el || typeof el.focus !== "function") return;
+    el.focus();
+    if (start == null || end == null || typeof el.setSelectionRange !== "function") return;
+    const len = String(el.value || "").length;
+    const from = Math.max(0, Math.min(start, len));
+    const to = Math.max(from, Math.min(end, len));
+    try {
+      el.setSelectionRange(from, to);
+    } catch {
+      /* number inputs and similar fields have no selection */
+    }
+  }
+
   function editCut(el) {
     if (!el || el.readOnly || el.disabled) return Promise.resolve();
     const start = el.selectionStart;
     const end = el.selectionEnd;
-    if (start === end) return Promise.resolve();
-    return copyText(el.value.slice(start, end)).then(() => {
+    if (start == null || start === end) return Promise.resolve();
+    const chunk = el.value.slice(start, end);
+    return copyText(chunk).then(() => {
+      placeCaret(el, start, end);
       el.setRangeText("", start, end, "end");
       el.dispatchEvent(new Event("input", { bubbles: true }));
     });
@@ -818,16 +834,41 @@
 
   function editPaste(el) {
     if (!el || el.readOnly || el.disabled) return Promise.resolve();
+    // Snapshot before the clipboard promise. Focusing the menu (or removing
+    // that focused button) drops document focus, and readText then rejects.
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    placeCaret(el, start, end);
     const apply = (text) => {
-      const start = el.selectionStart;
-      const end = el.selectionEnd;
-      el.setRangeText(String(text || ""), start, end, "end");
+      if (!text) return;
+      placeCaret(el, start, end);
+      const len = String(el.value || "").length;
+      const from = Math.max(0, Math.min(start == null ? len : start, len));
+      const to = Math.max(from, Math.min(end == null ? len : end, len));
+      el.setRangeText(String(text), from, to, "end");
       el.dispatchEvent(new Event("input", { bubbles: true }));
     };
+    const nativePaste = () => {
+      placeCaret(el, start, end);
+      let ok = false;
+      try {
+        ok = document.execCommand("paste");
+      } catch {
+        ok = false;
+      }
+      if (!ok) return Promise.reject(new Error("Clipboard paste is not available"));
+      return Promise.resolve();
+    };
     if (navigator.clipboard && navigator.clipboard.readText) {
-      return navigator.clipboard.readText().then(apply);
+      return navigator.clipboard.readText().then((text) => {
+        if (text) {
+          apply(text);
+          return;
+        }
+        return nativePaste();
+      }).catch(() => nativePaste());
     }
-    return Promise.reject(new Error("Clipboard paste is not available"));
+    return nativePaste();
   }
 
   function inputMenuItems(el, extras) {
@@ -910,6 +951,8 @@
     menu.className = "ctx-menu";
     menu.setAttribute("role", "menu");
     const buttons = [];
+    let index = -1;
+    let setActive = () => {};
     list.forEach((item) => {
       if (item.sep) {
         const hr = document.createElement("div");
@@ -920,6 +963,8 @@
       }
       const btn = document.createElement("button");
       btn.type = "button";
+      btn.tabIndex = -1;
+      btn.id = `ctx-item-${buttons.length}`;
       btn.setAttribute("role", "menuitem");
       btn.className = "ctx-item" + (item.danger ? " is-danger" : "");
       btn.disabled = Boolean(item.disabled);
@@ -931,16 +976,44 @@
         kbd.textContent = item.kbd;
         btn.appendChild(kbd);
       }
+      btn.addEventListener("pointerenter", () => {
+        if (!btn.disabled) setActive(buttons.indexOf(btn));
+      });
       btn.addEventListener("click", (ev) => {
         ev.preventDefault();
         if (btn.disabled) return;
+        const run = item.run;
         hideContextMenu();
-        if (typeof item.run === "function") item.run();
+        if (typeof run === "function") run();
       });
       menu.appendChild(btn);
       buttons.push(btn);
     });
     if (!buttons.length) return false;
+    // A mousedown on a menu button would blur the field the menu was opened
+    // from, and Paste then reads the clipboard with no focused document.
+    menu.addEventListener("mousedown", (ev) => {
+      ev.preventDefault();
+    });
+    index = buttons.findIndex((btn) => !btn.disabled);
+    setActive = (next, dir) => {
+      if (!buttons.length) return;
+      const step = dir < 0 ? -1 : 1;
+      let i = ((next % buttons.length) + buttons.length) % buttons.length;
+      let guard = 0;
+      while (buttons[i].disabled && guard < buttons.length) {
+        i = (i + step + buttons.length) % buttons.length;
+        guard += 1;
+      }
+      if (buttons[i].disabled) return;
+      index = i;
+      buttons.forEach((btn, n) => {
+        const on = n === index;
+        btn.classList.toggle("is-active", on);
+        if (on) menu.setAttribute("aria-activedescendant", btn.id);
+      });
+    };
+    if (index >= 0) setActive(index, 1);
     document.body.appendChild(menu);
     const x = event && event.clientX != null ? event.clientX : 8;
     const y = event && event.clientY != null ? event.clientY : 8;
@@ -955,19 +1028,6 @@
     menu.style.left = `${Math.round(left)}px`;
     menu.style.top = `${Math.round(top)}px`;
 
-    let index = buttons.findIndex((btn) => !btn.disabled);
-    const focusAt = (next) => {
-      if (!buttons.length) return;
-      index = (next + buttons.length) % buttons.length;
-      let guard = 0;
-      while (buttons[index].disabled && guard < buttons.length) {
-        index = (index + 1) % buttons.length;
-        guard += 1;
-      }
-      buttons[index].focus();
-    };
-    if (index >= 0) buttons[index].focus();
-
     const onKey = (ev) => {
       if (!ctxMenu) return;
       if (ev.key === "Escape") {
@@ -978,20 +1038,37 @@
       }
       if (ev.key === "ArrowDown") {
         ev.preventDefault();
-        focusAt(index + 1);
+        ev.stopPropagation();
+        setActive(index + 1, 1);
+        return;
       }
       if (ev.key === "ArrowUp") {
         ev.preventDefault();
-        focusAt(index - 1);
+        ev.stopPropagation();
+        setActive(index - 1, -1);
+        return;
       }
       if (ev.key === "Home") {
         ev.preventDefault();
-        focusAt(0);
+        ev.stopPropagation();
+        setActive(0, 1);
+        return;
       }
       if (ev.key === "End") {
         ev.preventDefault();
-        focusAt(buttons.length - 1);
+        ev.stopPropagation();
+        setActive(buttons.length - 1, -1);
+        return;
       }
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const btn = buttons[index];
+        if (btn && !btn.disabled) btn.click();
+        return;
+      }
+      // Any other key belongs to the field that opened the menu.
+      hideContextMenu();
     };
     const onPointer = (ev) => {
       if (ctxMenu && ctxMenu.contains(ev.target)) return;
