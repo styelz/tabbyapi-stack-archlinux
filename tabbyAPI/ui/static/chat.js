@@ -15850,7 +15850,10 @@ function mountChat(root) {
 
     const field = event.target.closest("textarea, input");
     if (field && field.closest(".chat-compose")) {
-      openCtx(event, TabbyUI.inputMenuItems(field, composeExtras()));
+      // Keep the browser's own menu. Its Paste command can read the clipboard.
+      // A custom Paste item cannot: clipboard.readText waits on a permission
+      // prompt that never finishes, and execCommand("paste") is blocked, so
+      // the menu item did nothing while Ctrl+V still worked.
       return;
     }
     if (field && field.id === "chat-search") {
