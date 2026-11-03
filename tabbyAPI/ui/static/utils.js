@@ -671,6 +671,7 @@
     const out = [];
     let i = 0;
     while (i < lines.length) {
+      const at = i;
       const line = lines[i];
       if (!line.trim()) {
         i += 1;
@@ -681,18 +682,21 @@
         i += 1;
         continue;
       }
-      const heading = /^(#{1,3})\s+(.+)$/.exec(line);
+      const heading = /^(#{1,3})\s+(\S.*)$/.exec(line);
       if (heading) {
         const level = heading[1].length;
         out.push(`<h${level}>${formatInline(heading[2], used, inlineImages)}</h${level}>`);
         i += 1;
         continue;
       }
-      const ordered = /^\s*\d+\.\s+/.test(line);
-      const bullet = /^\s*[-*]\s+/.test(line);
+      // The marker must have real text after it. "1. " and "- " used to match
+      // the loose test and then fail the item regex, so i never moved and the
+      // painter pushed empty lists until the tab ran out of memory.
+      const ordered = /^\s*\d+\.\s+\S/.test(line);
+      const bullet = /^\s*[-*]\s+\S/.test(line);
       if (ordered || bullet) {
-        const itemRe = ordered ? /^\s*\d+\.\s+(.+)$/ : /^\s*[-*]\s+(.+)$/;
-        const otherListRe = ordered ? /^\s*[-*]\s+/ : /^\s*\d+\.\s+/;
+        const itemRe = ordered ? /^\s*\d+\.\s+(\S.*)$/ : /^\s*[-*]\s+(\S.*)$/;
+        const otherListRe = ordered ? /^\s*[-*]\s+\S/ : /^\s*\d+\.\s+\S/;
         const tag = ordered ? "ol" : "ul";
         const items = [];
         while (i < lines.length) {
@@ -714,7 +718,7 @@
               break;
             }
             if (itemRe.test(raw) || otherListRe.test(raw)) break;
-            if (/^(#{1,3})\s+/.test(raw)) break;
+            if (/^#{1,3}\s+\S/.test(raw)) break;
             if (isFenceToken(raw)) {
               parts.push(raw.trim());
               i += 1;
@@ -729,22 +733,30 @@
           }
           items.push(`<li>${parts.join("")}</li>`);
         }
-        out.push(`<${tag}>${items.join("")}</${tag}>`);
-        continue;
+        if (items.length) {
+          out.push(`<${tag}>${items.join("")}</${tag}>`);
+          continue;
+        }
       }
       const para = [];
       while (
         i < lines.length &&
         lines[i].trim() &&
         !isFenceToken(lines[i]) &&
-        !/^(#{1,3})\s+/.test(lines[i]) &&
-        !/^\s*[-*]\s+/.test(lines[i]) &&
-        !/^\s*\d+\.\s+/.test(lines[i])
+        !/^#{1,3}\s+\S/.test(lines[i]) &&
+        !/^\s*[-*]\s+\S/.test(lines[i]) &&
+        !/^\s*\d+\.\s+\S/.test(lines[i])
       ) {
         para.push(lines[i]);
         i += 1;
       }
-      out.push(`<p>${para.map((part) => formatInline(part, used, inlineImages)).join("<br>")}</p>`);
+      if (i === at) {
+        para.push(line);
+        i += 1;
+      }
+      if (para.length) {
+        out.push(`<p>${para.map((part) => formatInline(part, used, inlineImages)).join("<br>")}</p>`);
+      }
     }
     return out.join("");
   }

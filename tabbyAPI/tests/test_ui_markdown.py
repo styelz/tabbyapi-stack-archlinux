@@ -287,5 +287,67 @@ class ImplicitCodeFenceTests(unittest.TestCase):
         self.assertIn(">echo</span> hi", out["html"])
 
 
+def _js_function(src: str, name: str) -> str:
+    start = src.index(f"function {name}(")
+    depth = 0
+    for i in range(src.index("{", start), len(src)):
+        if src[i] == "{":
+            depth += 1
+        elif src[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return src[start : i + 1]
+    raise AssertionError(f"unterminated function {name}")
+
+
+@unittest.skipUnless(shutil.which("node"), "node not installed")
+class BareListMarkerTests(unittest.TestCase):
+    """A marker with no text must not spin the list painter."""
+
+    def _paint(self, samples: list[str]) -> list[str]:
+        src = UTILS_JS.read_text(encoding="utf-8")
+        script = "\n".join(
+            [
+                "function formatInline(text) { return String(text); }",
+                _js_function(src, "isFenceToken"),
+                _js_function(src, "renderBlocks"),
+                "const samples = " + json.dumps(samples) + ";",
+                "console.log(JSON.stringify(samples.map((text) => renderBlocks(text, null, false))));",
+            ]
+        )
+        proc = subprocess.run(
+            ["node", "-e", script],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+        if proc.returncode != 0:
+            self.fail(proc.stderr or proc.stdout or "node failed")
+        return json.loads(proc.stdout)
+
+    def test_bare_markers_finish(self):
+        html = self._paint(
+            [
+                "1. \nhello",
+                "- \nhello",
+                "* \nhello",
+                "# \nhello",
+                "1. one\n2. two\n",
+                "- alpha\n- beta\n",
+                "1. one\n   continued\n",
+            ]
+        )
+        self.assertIn("hello", html[0])
+        self.assertNotIn("<ol>", html[0])
+        self.assertNotIn("<ul>", html[1])
+        self.assertNotIn("<ul>", html[2])
+        self.assertNotIn("<h1>", html[3])
+        self.assertIn("hello", html[3])
+        self.assertEqual(html[4], "<ol><li>one</li><li>two</li></ol>")
+        self.assertEqual(html[5], "<ul><li>alpha</li><li>beta</li></ul>")
+        self.assertEqual(html[6], "<ol><li>one<br>continued</li></ol>")
+
+
 if __name__ == "__main__":
     unittest.main()
