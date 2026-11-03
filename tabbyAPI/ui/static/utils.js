@@ -832,43 +832,48 @@
     });
   }
 
-  function editPaste(el) {
+  function editPaste(el, armed) {
     if (!el || el.readOnly || el.disabled) return Promise.resolve();
-    // Snapshot before the clipboard promise. Focusing the menu (or removing
-    // that focused button) drops document focus, and readText then rejects.
-    const start = el.selectionStart;
-    const end = el.selectionEnd;
-    placeCaret(el, start, end);
+    const start = armed && armed.start != null ? armed.start : el.selectionStart;
+    const end = armed && armed.end != null ? armed.end : el.selectionEnd;
     const apply = (text) => {
-      if (!text) return;
+      if (!text) return false;
       placeCaret(el, start, end);
       const len = String(el.value || "").length;
       const from = Math.max(0, Math.min(start == null ? len : start, len));
       const to = Math.max(from, Math.min(end == null ? len : end, len));
       el.setRangeText(String(text), from, to, "end");
       el.dispatchEvent(new Event("input", { bubbles: true }));
+      return true;
     };
-    const nativePaste = () => {
+    const fallback = () => {
       placeCaret(el, start, end);
-      let ok = false;
       try {
-        ok = document.execCommand("paste");
+        return document.execCommand("paste");
       } catch {
-        ok = false;
+        return false;
       }
-      if (!ok) return Promise.reject(new Error("Clipboard paste is not available"));
-      return Promise.resolve();
     };
-    if (navigator.clipboard && navigator.clipboard.readText) {
-      return navigator.clipboard.readText().then((text) => {
-        if (text) {
-          apply(text);
-          return;
-        }
-        return nativePaste();
-      }).catch(() => nativePaste());
+    // Prefer a read started in the pointerdown that chose Paste. Starting it
+    // later, after the menu button is gone, is no longer a user gesture, so
+    // the browser rejects the read and nothing is inserted.
+    let read = armed && armed.read;
+    if (!read && navigator.clipboard && navigator.clipboard.readText) {
+      try {
+        read = navigator.clipboard.readText();
+      } catch (err) {
+        read = Promise.reject(err);
+      }
     }
-    return nativePaste();
+    if (!read) {
+      if (fallback()) return Promise.resolve();
+      return Promise.reject(new Error("Clipboard paste is not available"));
+    }
+    return Promise.resolve(read).then((text) => {
+      if (!apply(text)) fallback();
+    }).catch(() => {
+      fallback();
+    });
   }
 
   function inputMenuItems(el, extras) {
@@ -895,7 +900,16 @@
         label: "Paste",
         disabled: locked,
         kbd: "Ctrl+V",
-        run: () => editPaste(el).catch(() => {}),
+        arm: () => {
+          const job = { start: el.selectionStart, end: el.selectionEnd, read: null };
+          try {
+            if (navigator.clipboard && navigator.clipboard.readText) job.read = navigator.clipboard.readText();
+          } catch (err) {
+            job.read = Promise.reject(err);
+          }
+          return job;
+        },
+        run: (armed) => editPaste(el, armed).catch(() => {}),
       },
       {
         label: "Select all",
@@ -979,13 +993,34 @@
       btn.addEventListener("pointerenter", () => {
         if (!btn.disabled) setActive(buttons.indexOf(btn));
       });
-      btn.addEventListener("click", (ev) => {
-        ev.preventDefault();
-        if (btn.disabled) return;
+      let armed = null;
+      let fired = false;
+      const fire = (ev) => {
+        if (fired || btn.disabled) return;
+        fired = true;
+        if (ev) ev.preventDefault();
         const run = item.run;
+        const payload = armed;
+        const result = typeof run === "function" ? run(payload) : null;
         hideContextMenu();
-        if (typeof run === "function") run();
+        return result;
+      };
+      // pointerdown is the gesture browsers accept for a clipboard read, and
+      // the field still has its caret. preventDefault keeps that caret from
+      // moving onto the menu button before Paste runs.
+      btn.addEventListener("pointerdown", (ev) => {
+        if (ev.button !== 0) return;
+        if (!btn.disabled && typeof item.arm === "function") {
+          try { armed = item.arm(); } catch (err) { armed = Promise.reject(err); }
+        }
+        ev.preventDefault();
       });
+      btn.addEventListener("pointerup", (ev) => {
+        if (ev.button !== 0) return;
+        if (ev.target !== btn && !btn.contains(ev.target)) return;
+        fire(ev);
+      });
+      btn.addEventListener("click", fire);
       menu.appendChild(btn);
       buttons.push(btn);
     });
