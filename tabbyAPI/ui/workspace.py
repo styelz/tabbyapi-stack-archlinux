@@ -421,16 +421,21 @@ def _merge_tree(src: Path, dest: Path) -> None:
         if path.is_dir():
             target.mkdir(parents=True, exist_ok=True)
             continue
-        if not path.is_file() or target.exists():
+        if not path.is_file():
             continue
-        target.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            path.replace(target)
-        except OSError:
+        # A later replacement can land under a nested chat id while the
+        # workspace root still has the previous file. Keep the newer bytes.
+        if target.exists():
             try:
-                target.write_bytes(path.read_bytes())
+                if path.stat().st_mtime_ns <= target.stat().st_mtime_ns:
+                    continue
             except OSError:
                 continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            target.write_bytes(path.read_bytes())
+        except OSError:
+            continue
 
 
 def merge_workspace_dirs(username: str, dest_id: str, source_ids: list[str]) -> None:
@@ -2682,6 +2687,16 @@ def punch_image(
     }
 
 
+_GRAPHIC_WORD = re.compile(r"\b(?:logo|icon|badge|wordmark|emblem|transparent)\b")
+_NEGATED_LOGO = re.compile(r"\b(?:no|without|not)\s+(?:a\s+|any\s+)?logo\b")
+
+
+def _prompt_wants_graphic(prompt: str) -> bool:
+    """True for a logo or icon. "no logo" on a photograph is not one."""
+    text = _NEGATED_LOGO.sub(" ", str(prompt or "").lower())
+    return bool(_GRAPHIC_WORD.search(text))
+
+
 def _generated_item_prompt(job, dest: str) -> str:
     for item in getattr(job, "items", None) or []:
         if str(getattr(item, "output_path", "") or "").strip() == dest:
@@ -2964,11 +2979,8 @@ def copy_job_pngs(username: str, chat_id: str, job) -> list[str]:
             optimized.append(dest)
             continue
         source = resolve_file(username, chat_id, dest)
-        prompt = f"{dest} {_generated_item_prompt(job, dest)}".lower()
-        graphic = any(
-            word in prompt
-            for word in ("logo", "icon", "badge", "wordmark", "emblem", "transparent")
-        )
+        prompt = f"{dest} {_generated_item_prompt(job, dest)}"
+        graphic = _prompt_wants_graphic(prompt)
         transparent = _has_transparency(source)
         output = str(Path(dest).with_suffix(".webp"))
         try:

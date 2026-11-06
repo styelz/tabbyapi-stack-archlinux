@@ -5618,6 +5618,30 @@ function mountChat(root) {
     if (path) openFileTab(path);
   }
 
+  function retargetCodeImageLinks(scope) {
+    const root = scope && scope.querySelectorAll ? scope : log;
+    if (!root || activeMode() !== "code") return;
+    root.querySelectorAll(".md-image-link").forEach((link) => {
+      const hinted = (link.getAttribute("data-file") || "").trim();
+      const href = link.getAttribute("href") || "";
+      const path = resolveWorkspaceImage(hinted, href);
+      if (path) {
+        link.setAttribute("data-file", path);
+        const name = link.querySelector(".md-image-link-name");
+        if (name && name.textContent !== path) name.textContent = path;
+      }
+      const img = link.querySelector(".md-image-link-thumb");
+      const filePath = path || hinted;
+      if (!img || !filePath || img.dataset.fallback) return;
+      img.dataset.fallback = "1";
+      img.addEventListener("error", () => {
+        const chatId = activeWorkspaceId();
+        if (!chatId) return;
+        img.src = `${fileUrl(chatId, filePath)}&v=${Date.now()}`;
+      }, { once: true });
+    });
+  }
+
   function openFileTab(path, opts) {
     const row = filesListing.find((item) => item.path === path);
     if (!row) return;
@@ -7730,9 +7754,12 @@ function mountChat(root) {
 
   function reloadPreviewIfNeeded(path) {
     if (!previewOpen || !browserTabs.length) return;
-    if (path && !previewSuffix(path)) return;
     const suffix = path ? fileSuffix(path) : "";
-    const all = !path || suffix === ".css" || suffix === ".js" || suffix === ".mjs";
+    const image = Boolean(path) && IMAGE_SUFFIXES.has(suffix);
+    if (path && !previewSuffix(path) && !image) return;
+    // A replaced header.webp does not change the HTML, so the open preview
+    // would keep painting the previous picture until a full reload.
+    const all = !path || suffix === ".css" || suffix === ".js" || suffix === ".mjs" || image;
     browserTabs.forEach((tab) => {
       if (all || !tab.path || tab.path === path) reloadBrowserTab(tab);
     });
@@ -8158,6 +8185,7 @@ function mountChat(root) {
       // A 502 during GPU switch used to wipe a good listing. Keep it.
     }
     paintFiles();
+    retargetCodeImageLinks();
     if (chatId && draftsChat !== chatId) loadDrafts(chatId);
     if (window.TabbyLsp && chatId) window.TabbyLsp.setChat(chatId);
     if (previewOpen) ensurePreviewLoaded();
@@ -11548,6 +11576,7 @@ function mountChat(root) {
       bubble.classList.remove("is-stopped");
       ensureBubble();
       bubble.innerHTML = markup;
+      retargetCodeImageLinks(bubble);
       if (!finished) pinMarkdownCode(bubble);
       bubble.hidden = false;
       turn.classList.add("has-answer");
@@ -11648,7 +11677,26 @@ function mountChat(root) {
         seen.add(lower);
         found.push(path);
       }
-      return found;
+      const byStem = new Map();
+      found.forEach((path) => {
+        const stem = path.replace(/\.[^.]+$/, "").toLowerCase();
+        const prev = byStem.get(stem);
+        if (!prev) {
+          byStem.set(stem, path);
+          return;
+        }
+        byStem.set(stem, preferRasterDest(prev, path));
+      });
+      return [...byStem.values()];
+    }
+
+    function preferRasterDest(left, right) {
+      const leftHas = listingHas(left);
+      const rightHas = listingHas(right);
+      if (leftHas !== rightHas) return rightHas ? right : left;
+      if (/\.webp$/i.test(right)) return right;
+      if (/\.webp$/i.test(left)) return left;
+      return left;
     }
 
     function hideImageProgress() {

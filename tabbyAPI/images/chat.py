@@ -1845,6 +1845,27 @@ def job_progress_line(job) -> str:
     return ""
 
 
+def _on_disk_label(dest: str, written: list[str]) -> str:
+    """Prefer the file copy_job_pngs actually wrote (.webp) over the planned .png."""
+    planned = str(dest or "").replace("\\", "/").lstrip("/")
+    if not planned:
+        return ""
+    stem = Path(planned).stem.lower()
+    parent = Path(planned).parent.as_posix()
+    matches: list[str] = []
+    for name in written:
+        path = Path(str(name or "").replace("\\", "/"))
+        if path.stem.lower() != stem:
+            continue
+        if parent not in (".", "") and path.parent.as_posix() != parent:
+            continue
+        matches.append(path.as_posix())
+    for name in matches:
+        if name.lower().endswith(".webp"):
+            return name
+    return matches[0] if matches else planned
+
+
 def _console_ready_text(
     job,
     api_base: Optional[str],
@@ -1865,8 +1886,9 @@ def _console_ready_text(
     else:
         lead = "Here's the picture." if n == 1 else f"Here are the {n} pictures."
     lines = [lead, ""]
+    written = list(extra_files) if extra_files is not None else []
     for url, dest in pairs:
-        label = dest if code and dest else ""
+        label = _on_disk_label(dest, written) if code and dest else ""
         lines.append(f"![{label}]({chat_media_href(url)})")
         lines.append("")
     lines.append(image_job_done_text(job=job, count=max(1, n)))

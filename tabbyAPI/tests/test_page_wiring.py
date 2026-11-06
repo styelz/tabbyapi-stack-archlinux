@@ -74,6 +74,40 @@ class PageWiringTests(unittest.TestCase):
     def _write(self, name, contents):
         workspace.write_text("alice", "c1", name, contents)
 
+    def test_photo_prompt_that_says_no_logo_is_not_a_graphic(self):
+        self.assertFalse(
+            workspace._prompt_wants_graphic(
+                "images/header.png wide cinematic photo, no text, no letters, no logo"
+            )
+        )
+        self.assertFalse(
+            workspace._prompt_wants_graphic("a forest photograph without a logo")
+        )
+        self.assertTrue(
+            workspace._prompt_wants_graphic(
+                "images/logo.png qwen-image: logo, isolated logo mark"
+            )
+        )
+        self.assertTrue(workspace._prompt_wants_graphic("app icon, simple badge"))
+
+    def test_merge_keeps_the_newer_image(self):
+        import os
+        import time
+
+        workspace.workspace_root("alice", "root", create=True, box=False)
+        workspace.copy_bytes("alice", "root", "images/header.webp", b"plain-header")
+        nested = workspace.workspace_root("alice", "nested", create=True, box=False)
+        dest = nested / "images"
+        dest.mkdir(parents=True, exist_ok=True)
+        forest = dest / "header.webp"
+        forest.write_bytes(b"forest-header")
+        later = time.time() + 5
+        os.utime(forest, (later, later))
+        workspace.merge_workspace_dirs("alice", "root", ["nested"])
+        kept = workspace.workspace_root("alice", "root", create=False, box=False)
+        self.assertEqual((kept / "images" / "header.webp").read_bytes(), b"forest-header")
+        self.assertFalse(nested.exists())
+
     def test_prompt_tells_the_model_to_fix_wiring(self):
         src = Path(code_agent_src()).read_text(encoding="utf-8")
         self.assertIn("Page wiring", src)

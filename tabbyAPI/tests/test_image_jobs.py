@@ -936,6 +936,231 @@ class CopyJobWorkspaceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(copied, ["images/logo.png"])
         self.assertTrue(job.workspace_copied)
 
+    def test_copy_job_uses_the_workspace_root_for_a_nested_chat(self):
+        from types import SimpleNamespace
+
+        from images.jobs import copy_job_to_workspace
+        from ui import chats
+
+        chats.save_store(
+            "u",
+            {
+                "chats": [
+                    {
+                        "id": "root",
+                        "mode": "code",
+                        "title": "Workspace",
+                        "messages": [{"role": "user", "content": "page"}],
+                    },
+                    {
+                        "id": "nested",
+                        "mode": "code",
+                        "parentId": "root",
+                        "title": "Thread",
+                        "messages": [{"role": "user", "content": "forest"}],
+                    },
+                ]
+            },
+        )
+        job = SimpleNamespace(
+            owner="u",
+            chat_id="nested",
+            status="done",
+            workspace_files=[],
+            workspace_copied=False,
+        )
+        with mock.patch("ui.workspace.copy_job_pngs", return_value=["images/header.webp"]) as copy:
+            copied = copy_job_to_workspace(job)
+        copy.assert_called_once_with("u", "root", job)
+        self.assertEqual(copied, ["images/header.webp"])
+
+    async def test_restart_does_not_recopy_a_finished_workspace_job(self):
+        from images.jobs import (
+            McpImageItem,
+            McpImageJob,
+            _MCP_JOBS,
+            _MCP_ORDER,
+            _persist_jobs,
+            reset_mcp_image_jobs_for_tests,
+            resume_persisted_jobs,
+        )
+
+        with tempfile.TemporaryDirectory() as raw:
+            with mock.patch("common.gpu_mode.GENERATED_DIR", Path(raw)):
+                await reset_mcp_image_jobs_for_tests()
+                job = McpImageJob(
+                    id="job-copied",
+                    items=[
+                        McpImageItem(
+                            prompt="a forest",
+                            output_path="images/header.png",
+                            urls=["https://gpu.example/v1/images/forest.png"],
+                            status="done",
+                        )
+                    ],
+                    restore=True,
+                    api_base="https://gpu.example/v1",
+                    wait_text="",
+                    wait_s=0,
+                    status="done",
+                    phase="done",
+                    urls=["https://gpu.example/v1/images/forest.png"],
+                    owner="u",
+                    chat_id="root",
+                    workspace_copied=True,
+                    workspace_files=["images/header.webp"],
+                )
+                _MCP_JOBS[job.id] = job
+                _MCP_ORDER.append(job.id)
+                _persist_jobs()
+                await reset_mcp_image_jobs_for_tests()
+                with mock.patch("ui.workspace.copy_job_pngs") as copy:
+                    await resume_persisted_jobs()
+                copy.assert_not_called()
+                await reset_mcp_image_jobs_for_tests()
+
+    async def test_legacy_done_job_is_not_recopied_on_boot(self):
+        import json
+
+        from images.jobs import (
+            JOBS_PERSIST_NAME,
+            McpImageItem,
+            McpImageJob,
+            _MCP_JOBS,
+            _MCP_ORDER,
+            _persist_jobs,
+            get_mcp_image_job,
+            reset_mcp_image_jobs_for_tests,
+            resume_persisted_jobs,
+        )
+
+        with tempfile.TemporaryDirectory() as raw:
+            with mock.patch("common.gpu_mode.GENERATED_DIR", Path(raw)):
+                await reset_mcp_image_jobs_for_tests()
+                job = McpImageJob(
+                    id="job-legacy",
+                    items=[
+                        McpImageItem(
+                            prompt="calm horizon",
+                            output_path="images/header.png",
+                            urls=["https://gpu.example/v1/images/plain.png"],
+                            status="done",
+                        )
+                    ],
+                    restore=True,
+                    api_base="https://gpu.example/v1",
+                    wait_text="",
+                    wait_s=0,
+                    status="done",
+                    phase="done",
+                    urls=["https://gpu.example/v1/images/plain.png"],
+                    owner="u",
+                    chat_id="root",
+                )
+                _MCP_JOBS[job.id] = job
+                _MCP_ORDER.append(job.id)
+                _persist_jobs()
+                path = Path(raw) / JOBS_PERSIST_NAME
+                rows = json.loads(path.read_text(encoding="utf-8"))
+                for row in rows:
+                    row.pop("workspace_copied", None)
+                    row.pop("workspace_files", None)
+                path.write_text(json.dumps(rows), encoding="utf-8")
+                await reset_mcp_image_jobs_for_tests()
+                recovered = get_mcp_image_job("job-legacy")
+                self.assertTrue(recovered.workspace_copied)
+                with mock.patch("ui.workspace.copy_job_pngs") as copy:
+                    await resume_persisted_jobs()
+                copy.assert_not_called()
+                await reset_mcp_image_jobs_for_tests()
+
+    async def test_restart_applies_the_newer_replacement_last(self):
+        from images.jobs import (
+            McpImageItem,
+            McpImageJob,
+            _MCP_JOBS,
+            _MCP_ORDER,
+            _persist_jobs,
+            reset_mcp_image_jobs_for_tests,
+            resume_persisted_jobs,
+        )
+        from ui import chats
+
+        chats.save_store(
+            "u",
+            {
+                "chats": [
+                    {
+                        "id": "root",
+                        "mode": "code",
+                        "title": "Workspace",
+                        "messages": [{"role": "user", "content": "page"}],
+                    }
+                ]
+            },
+        )
+
+        def job(job_id, started, url):
+            return McpImageJob(
+                id=job_id,
+                items=[
+                    McpImageItem(
+                        prompt="header",
+                        output_path="images/header.png",
+                        urls=[url],
+                        status="done",
+                    )
+                ],
+                restore=False,
+                api_base="https://gpu.example/v1",
+                wait_text="",
+                wait_s=0,
+                status="done",
+                phase="done",
+                urls=[url],
+                started_at=started,
+                owner="u",
+                chat_id="root",
+                workspace_copied=False,
+            )
+
+        with tempfile.TemporaryDirectory() as raw:
+            with mock.patch("common.gpu_mode.GENERATED_DIR", Path(raw)):
+                await reset_mcp_image_jobs_for_tests()
+                newer = job("newer", 200, "https://gpu.example/v1/images/forest.png")
+                older = job("older", 100, "https://gpu.example/v1/images/plain.png")
+                for item in (newer, older):
+                    _MCP_JOBS[item.id] = item
+                    _MCP_ORDER.append(item.id)
+                _persist_jobs()
+                await reset_mcp_image_jobs_for_tests()
+                with mock.patch("ui.workspace.copy_job_pngs", return_value=["images/header.webp"]) as copy:
+                    await resume_persisted_jobs()
+                self.assertEqual([call.args[2].id for call in copy.call_args_list], ["older", "newer"])
+                await reset_mcp_image_jobs_for_tests()
+
+    def test_code_reply_names_the_webp_that_landed(self):
+        from images.chat import _console_ready_text
+
+        job = mock.Mock()
+        job.modality = "image"
+        pairs = [("http://127.0.0.1:5000/v1/images/generated-1.png", "images/header.png")]
+        with mock.patch("images.chat.living_download_pairs", return_value=pairs):
+            with mock.patch(
+                "common.gpu_mode.chat_media_href",
+                return_value="/v1/images/generated-1.png",
+            ):
+                with mock.patch(
+                    "common.phrase_switch.image_job_done_text",
+                    return_value="Rendered.",
+                ):
+                    text = _console_ready_text(
+                        job, None, code=True, extra_files=["images/header.webp"]
+                    )
+        self.assertIn("![images/header.webp](/v1/images/generated-1.png)", text)
+        self.assertNotIn("images/header.png", text)
+        self.assertIn("images/header.webp", text)
+
 
 if __name__ == "__main__":
     unittest.main()

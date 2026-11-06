@@ -588,6 +588,8 @@ def _job_to_persist(job: McpImageJob) -> dict:
         "code_turns": int(job.code_turns or 0),
         "owner": str(job.owner or ""),
         "chat_id": str(job.chat_id or ""),
+        "workspace_copied": bool(job.workspace_copied),
+        "workspace_files": list(job.workspace_files or []),
     }
 
 
@@ -622,6 +624,16 @@ def _job_from_persist(data: dict, *, revive: bool = True) -> Optional[McpImageJo
         owner=str(data.get("owner") or ""),
         chat_id=str(data.get("chat_id") or ""),
     )
+    if "workspace_copied" in data:
+        job.workspace_copied = bool(data.get("workspace_copied"))
+        job.workspace_files = [
+            str(name) for name in (data.get("workspace_files") or []) if name
+        ]
+    elif str(data.get("status") or "") == "done":
+        # Jobs saved before this flag already copied when they finished.
+        # Recopying every one on boot puts an older picture back on top of
+        # a later replacement of the same path.
+        job.workspace_copied = True
     if revive:
         return _maybe_revive_restarted_job(job)
     return job
@@ -978,13 +990,13 @@ async def resume_persisted_jobs() -> int:
     _drop_dead_jobs()
     ready = 0
     first: Optional[McpImageJob] = None
+    done: list[McpImageJob] = []
     for job_id in _MCP_ORDER:
         job = _MCP_JOBS.get(job_id)
         if not job:
             continue
         if job.status == "done":
-            copy_job_to_workspace(job)
-            _persist_job_reply(job)
+            done.append(job)
             continue
         if job.status not in ("queued", "running"):
             continue
@@ -994,7 +1006,11 @@ async def resume_persisted_jobs() -> int:
         ready += 1
         if first is None:
             first = job
-    if ready == 0:
+    # Oldest first, so a later replacement of the same path is the one left on disk.
+    for job in sorted(done, key=lambda item: float(getattr(item, "started_at", 0) or 0)):
+        copy_job_to_workspace(job)
+        _persist_job_reply(job)
+    if done or ready == 0:
         _persist_jobs()
     if first is not None and not _worker_is_alive():
         await launch_mcp_image_job(first)
@@ -1572,6 +1588,20 @@ async def wait_until_done(job: McpImageJob) -> McpImageJob:
     return job
 
 
+def _code_workspace_id(owner: str, chat_id: str) -> str:
+    """Folder that owns the project. Nested Code chats share that root."""
+    raw = str(chat_id or "").strip()
+    if not raw:
+        return ""
+    try:
+        from ui.chats import workspace_root_chat_id
+
+        root = str(workspace_root_chat_id(owner, raw) or "").strip()
+    except Exception:
+        root = ""
+    return root or raw
+
+
 def copy_job_to_workspace(job: McpImageJob) -> list[str]:
     """Copy finished PNGs into the Code-mode workspace even if the chat stream dropped."""
     existing = list(getattr(job, "workspace_files", None) or [])
@@ -1585,13 +1615,16 @@ def copy_job_to_workspace(job: McpImageJob) -> list[str]:
         return []
     from ui.chats import is_code_chat
 
-    if not is_code_chat(owner, chat_id):
-        return []
+    target = _code_workspace_id(owner, chat_id)
+    if not is_code_chat(owner, target):
+        if not is_code_chat(owner, chat_id):
+            return []
+        target = chat_id
     job.workspace_copied = True
     try:
         from ui.workspace import copy_job_pngs
 
-        copied = copy_job_pngs(owner, chat_id, job)
+        copied = copy_job_pngs(owner, target, job)
     except Exception as exc:
         job.workspace_copied = False
         xlogger.warning(f"Could not copy job {job.id} into workspace {chat_id}: {exc}")

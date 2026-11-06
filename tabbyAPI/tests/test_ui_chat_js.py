@@ -70,6 +70,15 @@ class ChatJsStopQueueSteerTests(unittest.TestCase):
     def setUp(self):
         self.src = CHAT_JS.read_text(encoding="utf-8")
 
+    def test_code_image_reply_shows_the_picture_and_reloads_preview(self):
+        utils = Path(__file__).resolve().parents[1] / "ui" / "static" / "utils.js"
+        css = CHAT_CSS.read_text(encoding="utf-8")
+        self.assertIn("md-image-link-thumb", utils.read_text(encoding="utf-8"))
+        self.assertIn(".md-image-link-thumb", css)
+        self.assertIn("function retargetCodeImageLinks(", self.src)
+        self.assertIn("IMAGE_SUFFIXES.has(suffix)", self.src)
+        self.assertIn("function preferRasterDest(", self.src)
+
     def test_terminal_retries_when_xterm_is_not_global(self):
         start = self.src.index("function connectTerm(")
         window = self.src[start : start + 900]

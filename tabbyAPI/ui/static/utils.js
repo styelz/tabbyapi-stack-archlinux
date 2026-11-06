@@ -407,8 +407,12 @@
     if (inlineImages === false) {
       const fileHint = workspaceImageHint(label);
       const fileAttr = fileHint ? ` data-file="${escapeHtml(fileHint)}"` : "";
+      const thumb = allowed
+        ? `<img class="md-image-link-thumb" src="${safeHref}" alt="${safeAlt}">`
+        : "";
       return (
         `<a class="md-image-link" href="${safeHref}"${fileAttr}>` +
+        thumb +
         `<span class="md-image-link-kind">Image</span>` +
         `<span class="md-image-link-name">${escapeHtml(label)}</span>` +
         `<span class="md-image-link-open">Open</span></a>`

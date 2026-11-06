@@ -3752,6 +3752,7 @@ button.chip {
 .md-image-link {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 0.5625rem;
   width: min(460px, 100%);
   min-height: 2.125rem;
@@ -3762,6 +3763,16 @@ button.chip {
   background: rgba(var(--accent-rgb), 0.06);
   color: var(--text);
   text-decoration: none;
+}
+.md-image-link-thumb {
+  flex: 1 0 100%;
+  width: min(240px, 100%);
+  max-height: 11.25rem;
+  height: auto;
+  margin: 0;
+  object-fit: contain;
+  border-radius: 0.35rem;
+  background: rgba(0, 0, 0, 0.18);
 }
 .md-image-link:hover {
   border-color: rgba(var(--accent-rgb), 0.45);
