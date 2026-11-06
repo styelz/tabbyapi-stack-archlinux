@@ -1788,9 +1788,10 @@ function mountChat(root) {
     }
     const chatPaneBtn = moreMenu && moreMenu.querySelector('[data-more="chatpane"]');
     if (chatPaneBtn) {
-      const beside = chatBesideFile();
-      chatPaneBtn.hidden = !beside;
-      if (beside) chatPaneBtn.textContent = chatOpen ? "Hide chat" : "Show chat";
+      const split = stageSplit();
+      const can = split.fold || split.previewAsTab;
+      chatPaneBtn.hidden = !can;
+      if (can) chatPaneBtn.textContent = split.showLog ? "Hide chat" : "Show chat";
     }
     const toggleBtn = root.querySelector("#chat-sidebar-toggle");
     if (toggleBtn) {
@@ -1897,24 +1898,30 @@ function mountChat(root) {
     if (filesOpen) refreshFiles();
   }
 
-  /** A file is open in Code, so the transcript can sit beside it or fold away. */
-  function chatBesideFile() {
-    if (activeMode() !== "code") return false;
+  /** What shares the row with the transcript: a file, a docked preview, or both. */
+  function stageSplit() {
     const tab = activeTabRow();
-    if (!tab || (previewOpen && isPreviewTab(tab))) return false;
-    return true;
+    const code = activeMode() === "code";
+    const previewAsTab = previewOpen && isPreviewTab(tab);
+    const showEditor = Boolean(tab) && !previewAsTab;
+    const dockedPreview = previewOpen && !previewAsTab;
+    const fold = code && (showEditor || dockedPreview);
+    const showLog = !previewAsTab && (!fold || chatOpen);
+    return { tab, code, previewAsTab, showEditor, dockedPreview, fold, showLog };
   }
 
   function paintChatLogToggle() {
     if (!chatLogToggle) return;
-    const beside = chatBesideFile();
-    chatLogToggle.hidden = !beside;
-    if (!beside) return;
-    chatLogToggle.classList.toggle("is-flipped", !chatOpen);
-    chatLogToggle.classList.toggle("is-marked", !chatOpen);
-    chatLogToggle.setAttribute("aria-expanded", chatOpen ? "true" : "false");
-    chatLogToggle.setAttribute("aria-label", chatOpen ? "Hide chat" : "Show chat");
-    chatLogToggle.title = chatOpen ? "Hide the chat" : "Show the chat";
+    const split = stageSplit();
+    const can = split.fold || split.previewAsTab;
+    chatLogToggle.hidden = !can;
+    if (!can) return;
+    const open = split.showLog;
+    chatLogToggle.classList.toggle("is-flipped", !open);
+    chatLogToggle.classList.toggle("is-marked", !open);
+    chatLogToggle.setAttribute("aria-expanded", open ? "true" : "false");
+    chatLogToggle.setAttribute("aria-label", open ? "Hide chat" : "Show chat");
+    chatLogToggle.title = open ? "Hide the chat" : "Show the chat";
   }
 
   function setChatOpen(open) {
@@ -1931,8 +1938,15 @@ function mountChat(root) {
     paintToolbar();
   }
 
+  function showChatBeside() {
+    const wasPreviewTab = previewOpen && isPreviewTab(activeTabRow());
+    if (!chatOpen) setChatOpen(true);
+    if (wasPreviewTab) activateTab("");
+  }
+
   function revealChatBesideFile() {
-    if (chatBesideFile() && !chatOpen) setChatOpen(true);
+    const split = stageSplit();
+    if (split.fold && !chatOpen) setChatOpen(true);
   }
 
   function setChatMode(mode) {
@@ -4906,12 +4920,13 @@ function mountChat(root) {
     if (!show) return;
     const frag = document.createDocumentFragment();
     const chatTab = document.createElement("div");
-    const beside = chatBesideFile();
-    const collapsed = beside && !chatOpen;
+    const split = stageSplit();
+    const collapsed = (split.fold && !chatOpen) || split.previewAsTab;
     chatTab.className = "chat-tab" + (activeTab ? "" : " is-active") + (collapsed ? " is-collapsed" : "");
     chatTab.dataset.tab = "";
-    const chatTitle = collapsed ? "Show chat" : beside ? "Show chat on its own" : "Chat";
-    const hideBtn = beside && chatOpen
+    const canFocus = split.fold && chatOpen && Boolean(activeTab);
+    const chatTitle = collapsed ? "Show chat" : canFocus ? "Show chat on its own" : "Chat";
+    const hideBtn = split.fold && chatOpen
       ? '<button type="button" class="chat-tab-close is-keep" data-chat-hide aria-label="Hide chat" title="Hide chat">×</button>'
       : "";
     chatTab.innerHTML =
@@ -5489,17 +5504,15 @@ function mountChat(root) {
   function paintView() {
     const tab = activeTabRow();
     if (activeTab && !tab) activeTab = "";
-    const code = activeMode() === "code";
-    const previewAsTab = previewOpen && isPreviewTab(tab);
-    const showEditor = Boolean(tab) && !previewAsTab;
-    const beside = code && showEditor;
-    const showLog = !previewAsTab && (!showEditor || (beside && chatOpen));
+    const split = stageSplit();
+    const { code, previewAsTab, showEditor, showLog } = split;
     const logWasHidden = Boolean(logWrap && logWrap.hidden);
     shell.classList.toggle("is-chat-focus", !code && showLog);
-    shell.classList.toggle("is-code-context", beside);
+    shell.classList.toggle("is-code-context", code && showEditor);
+    shell.classList.toggle("is-chat-folded", split.fold && !chatOpen);
     if (!logWasHidden && !showLog) logScroll = log.scrollTop;
     if (logWrap) logWrap.hidden = !showLog;
-    if (chatLogBar) chatLogBar.hidden = !(beside && showLog);
+    if (chatLogBar) chatLogBar.hidden = !(split.fold && showLog);
     if (editorCol) editorCol.hidden = !showEditor;
     if (editorPane) editorPane.hidden = !showEditor;
     if (previewPane) {
@@ -15862,12 +15875,13 @@ function mountChat(root) {
 
   function tabMenuItems(path) {
     if (!path) {
-      const beside = chatBesideFile();
+      const split = stageSplit();
+      const can = split.fold || split.previewAsTab;
       return [
-        beside && !chatOpen
-          ? { label: "Show chat", run: () => setChatOpen(true) }
-          : { label: beside ? "Show chat on its own" : "Show chat", run: () => activateTab("") },
-        beside && chatOpen ? { label: "Hide chat", run: () => setChatOpen(false) } : null,
+        can && !split.showLog
+          ? { label: "Show chat", run: () => showChatBeside() }
+          : { label: split.fold && activeTab ? "Show chat on its own" : "Show chat", run: () => activateTab("") },
+        split.fold && chatOpen ? { label: "Hide chat", run: () => setChatOpen(false) } : null,
         openTabs.length ? { label: "Close all files", run: () => closeAllTabs() } : null,
       ];
     }
@@ -16187,8 +16201,8 @@ function mountChat(root) {
         tab ? { label: "Download", run: () => saveUrl(fileUrl(activeWorkspaceId(), tab.path), tab.path.split("/").pop() || "file") } : null,
         { sep: true },
         { label: "Close file", disabled: !tab, run: () => closeTab(activeTab) },
-        chatBesideFile()
-          ? { label: chatOpen ? "Hide chat" : "Show chat", run: () => setChatOpen(!chatOpen) }
+        stageSplit().fold
+          ? { label: chatOpen ? "Hide chat" : "Show chat", run: () => (chatOpen ? setChatOpen(false) : showChatBeside()) }
           : null,
       ]);
       return;
@@ -16206,6 +16220,9 @@ function mountChat(root) {
           : { label: "Open as tab", run: () => activateTab(PREVIEW_TAB) },
         { label: "Reload", run: () => reloadPreviewIfNeeded() },
         { label: "Close preview", run: () => hidePreview() },
+        stageSplit().showLog
+          ? { label: "Hide chat", run: () => setChatOpen(false) }
+          : { label: "Show chat", run: () => showChatBeside() },
       ]);
       return;
     }
@@ -16217,7 +16234,7 @@ function mountChat(root) {
         { label: "Copy entire chat", run: () => copyText(conversationMarkdown()) },
         { label: "Paste into compose", run: () => pasteCompose() },
         { label: activeMode() === "code" ? "New workspace" : "New chat", kbd: "Ctrl+Shift+O", run: () => startNewChat() },
-        chatBesideFile() ? { label: "Hide chat", run: () => setChatOpen(false) } : null,
+        stageSplit().fold ? { label: "Hide chat", run: () => setChatOpen(false) } : null,
         { label: "Keyboard shortcuts", run: () => showShortcuts() },
       ]);
     }
@@ -16451,7 +16468,10 @@ function mountChat(root) {
     if (act === "sidebar") {
       setSidebarHidden(!shell.classList.contains("is-sidebar-hidden"));
     }
-    if (act === "chatpane") setChatOpen(!chatOpen);
+    if (act === "chatpane") {
+      if (stageSplit().showLog) setChatOpen(false);
+      else showChatBeside();
+    }
     if (act === "delete") deleteChat(store.activeId);
   });
   root.querySelector("#chat-mode").addEventListener("click", (event) => {
@@ -16653,8 +16673,8 @@ function mountChat(root) {
         setChatOpen(false);
         return;
       }
-      if (!item.dataset.tab && !chatOpen && chatBesideFile()) {
-        setChatOpen(true);
+      if (!item.dataset.tab && !stageSplit().showLog && (stageSplit().fold || stageSplit().previewAsTab)) {
+        showChatBeside();
         return;
       }
       if (event.target.closest("[data-tab-close]")) {
@@ -16868,7 +16888,10 @@ function mountChat(root) {
     filesToggleBtn.addEventListener("click", () => setFilesOpen(!filesOpen));
   }
   if (chatLogToggle) {
-    chatLogToggle.addEventListener("click", () => setChatOpen(!chatOpen));
+    chatLogToggle.addEventListener("click", () => {
+      if (stageSplit().showLog) setChatOpen(false);
+      else showChatBeside();
+    });
   }
   if (chatLogHide) {
     chatLogHide.addEventListener("click", () => setChatOpen(false));

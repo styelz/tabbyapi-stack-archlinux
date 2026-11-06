@@ -2834,6 +2834,16 @@ button.chip {
   min-width: 0;
   max-width: none;
 }
+/* Chat folded away and nothing else is in the row: the preview takes the width
+   the transcript was holding, including the 10rem the dock normally reserves. */
+.chat-shell.is-chat-folded .chat-stage-main > .chat-preview:not(.is-tab) {
+  flex: 1 1 auto;
+  max-width: none;
+}
+.chat-shell.is-chat-folded .chat-stage-main > .chat-editor-col:not([hidden]) ~ .chat-preview:not(.is-tab) {
+  flex: 0 0 var(--chat-preview-w, 42%);
+  max-width: calc(100% - 10rem);
+}
 .chat-preview.is-tab > .chat-resize {
   display: none;
 }
