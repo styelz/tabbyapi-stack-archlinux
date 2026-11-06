@@ -596,10 +596,76 @@ class StartupLlamaRestoreTests(unittest.IsolatedAsyncioTestCase):
                 "images.jobs._start_llama_profile",
                 new=mock.AsyncMock(),
             ) as start,
+            mock.patch("common.gpu_mode.llama_up", return_value=True),
         ):
             skipped = await main_mod._restore_gpu_owner()
         self.assertTrue(skipped)
         start.assert_awaited_once_with("qwen38guff")
+
+    async def test_restore_falls_through_when_llama_does_not_start(self):
+        import main as main_mod
+
+        with (
+            mock.patch(
+                "common.gpu_mode.should_skip_startup_load", return_value=True
+            ),
+            mock.patch(
+                "common.gpu_mode.read_mode",
+                return_value={"mode": "llama", "profile": "qwen38guff"},
+            ),
+            mock.patch("select_model.last_llama_profile", return_value="qwen38guff"),
+            mock.patch(
+                "images.jobs._start_llama_profile",
+                new=mock.AsyncMock(side_effect=RuntimeError("llama.cpp did not start")),
+            ),
+        ):
+            skipped = await main_mod._restore_gpu_owner()
+        self.assertFalse(skipped)
+
+    async def test_reclaim_loads_when_the_gpu_is_idle(self):
+        import main as main_mod
+
+        load = mock.AsyncMock()
+        with (
+            mock.patch("common.phrase_switch.switch_lock_held", return_value=False),
+            mock.patch("common.phrase_switch.switch_in_progress", return_value=False),
+            mock.patch("common.model.load_lock.locked", return_value=False),
+            mock.patch("common.gpu_mode.comfy_unit_active", return_value=False),
+            mock.patch("images.jobs.active_mcp_image_job", return_value=None),
+            mock.patch(
+                "common.gpu_mode.chat_backend_ready",
+                side_effect=[False, False, True],
+            ),
+            mock.patch("common.gpu_mode.release_stale_comfy_mode", return_value=False),
+            mock.patch(
+                "common.gpu_mode.read_mode",
+                return_value={"mode": "llm", "profile": "qwen"},
+            ),
+            mock.patch.object(main_mod, "_startup_model_name", return_value="Qwen3.5-9B"),
+            mock.patch(
+                "select_model.retarget_startup_model",
+                return_value=("Qwen3.5-9B", False),
+            ),
+            mock.patch.object(main_mod, "_load_startup_model", new=load),
+        ):
+            state = await main_mod._reclaim_idle_gpu()
+        self.assertEqual(state, "ready")
+        load.assert_awaited()
+
+    async def test_reclaim_waits_while_comfy_is_booting(self):
+        import main as main_mod
+
+        load = mock.AsyncMock()
+        with (
+            mock.patch("common.phrase_switch.switch_lock_held", return_value=False),
+            mock.patch("common.phrase_switch.switch_in_progress", return_value=False),
+            mock.patch("common.model.load_lock.locked", return_value=False),
+            mock.patch("common.gpu_mode.comfy_unit_active", return_value=True),
+            mock.patch.object(main_mod, "_load_startup_model", new=load),
+        ):
+            state = await main_mod._reclaim_idle_gpu()
+        self.assertEqual(state, "wait")
+        load.assert_not_awaited()
 
     async def test_restore_skips_comfy_without_llama(self):
         import main as main_mod

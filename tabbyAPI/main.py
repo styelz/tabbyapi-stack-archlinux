@@ -75,8 +75,8 @@ async def _restore_gpu_owner() -> bool:
     """Skip EXL load when Comfy or llama.cpp owns the GPU.
 
     llama.cpp is not enabled at boot (GPU is exclusive). After a reboot the
-    last GGUF must be started here, or the API stays empty and GET /v1/model
-    503s until someone switches by hand.
+    last GGUF is started here. If it does not come up, the caller loads the
+    last EXL model instead of serving with an empty GPU.
     """
 
     from common.gpu_mode import read_mode, should_skip_startup_load
@@ -86,18 +86,19 @@ async def _restore_gpu_owner() -> bool:
     mode = (read_mode().get("mode") or "").lower()
     if mode != "llama":
         logger.info(
-            "GPU mode is comfy; not loading the LLM. "
+            "ComfyUI is running; not loading the LLM. "
             "Send switch to qwen when you want the model back."
         )
         return True
+    from common.gpu_mode import llama_up
     from select_model import last_llama_profile
 
     name = str(read_mode().get("profile") or last_llama_profile() or "").strip()
     if not name:
         logger.warning(
-            "GPU mode is llama but no GGUF profile is saved; starting with no LLM"
+            "GPU mode is llama but no GGUF profile is saved; loading the last EXL model"
         )
-        return True
+        return False
     logger.info(f"GPU mode is llama; starting llama-server ({name})")
     try:
         from images.jobs import _start_llama_profile
@@ -105,7 +106,131 @@ async def _restore_gpu_owner() -> bool:
         await _start_llama_profile(name)
     except (Exception, SystemExit) as exc:
         logger.error(f"llama-server did not start ({name}): {exc}")
+        return False
+    if not llama_up():
+        logger.error(f"llama-server did not become ready ({name})")
+        return False
     return True
+
+
+def _startup_model_name() -> Optional[str]:
+    """config.yml model, or the last EXL profile when that field is empty."""
+    name = str(config.model.model_name or "").strip()
+    if name:
+        return name
+    from select_model import apply_profile, last_exl_profile, last_profile
+
+    profile = last_exl_profile() or last_profile()
+    if not profile:
+        logger.error("No chat model is configured and no profile is saved")
+        return None
+    logger.warning(f"config.yml has no model_name; applying profile {profile}")
+    try:
+        apply_profile(profile)
+    except SystemExit as exc:
+        logger.error(f"Could not apply profile {profile}: {exc}")
+        return None
+    config.load()
+    name = str(config.model.model_name or "").strip()
+    return name or None
+
+
+async def _reclaim_idle_gpu() -> str:
+    """Load the last chat model when the GPU has no live owner.
+
+    Returns ready, wait, or failed. A mode file that still says comfy after
+    ComfyUI has exited is corrected here so chat does not stay empty.
+    """
+    from common import model as tabby_model
+    from common.gpu_mode import (
+        chat_backend_ready,
+        comfy_unit_active,
+        llama_up,
+        read_mode,
+        release_stale_comfy_mode,
+        write_mode,
+    )
+    from common.phrase_switch import switch_in_progress, switch_lock_held
+
+    if switch_lock_held() or switch_in_progress() or tabby_model.load_lock.locked():
+        return "wait"
+    if comfy_unit_active():
+        return "wait"
+    try:
+        from images.jobs import active_mcp_image_job
+
+        job = active_mcp_image_job()
+    except Exception:
+        job = None
+    if job is not None and getattr(job, "status", None) in ("queued", "running"):
+        return "wait"
+    if chat_backend_ready():
+        return "ready"
+    if release_stale_comfy_mode():
+        logger.warning("ComfyUI is not running. Loading the last chat model.")
+    mode = (read_mode().get("mode") or "").lower()
+    if mode == "llama" and not llama_up():
+        if await _restore_gpu_owner() and llama_up():
+            return "ready"
+        logger.warning("llama.cpp is not up. Loading the last EXL model.")
+        from select_model import last_exl_profile
+
+        profile = last_exl_profile()
+        if profile:
+            write_mode("llm", profile=profile)
+        else:
+            write_mode("llm")
+    if chat_backend_ready():
+        return "ready"
+    model_name = _startup_model_name()
+    if not model_name:
+        return "failed"
+    from select_model import retarget_startup_model
+
+    new_name, changed = retarget_startup_model(model_name)
+    if changed:
+        logger.warning(
+            f"Recover model {model_name} is not on disk; "
+            f"switching to {new_name or '(none)'}"
+        )
+        config.load()
+        model_name = config.model.model_name if new_name else None
+    elif not new_name:
+        logger.error(f"Recover model {model_name} is not on disk")
+        model_name = None
+    else:
+        model_name = new_name
+    if not model_name:
+        return "failed"
+    logger.warning(f"Chat model is not loaded. Loading {model_name}")
+    try:
+        await _load_startup_model(tabby_model, model_name)
+    except Exception as exc:
+        logger.error(f"Chat model recover failed ({model_name}): {exc}")
+        return "failed"
+    if chat_backend_ready():
+        return "ready"
+    logger.error(f"Chat model recover finished without a loaded model ({model_name})")
+    return "failed"
+
+
+async def _reclaim_loop() -> None:
+    """Keep retrying an empty GPU. Back off when a load keeps failing."""
+    failures = 0
+    while True:
+        state = "failed"
+        try:
+            state = await _reclaim_idle_gpu()
+        except Exception as exc:
+            logger.error(f"Chat model recover failed: {exc}")
+            state = "failed"
+        if state == "failed":
+            failures += 1
+            delay = min(20 * failures, 120)
+        else:
+            failures = 0
+            delay = 20
+        await asyncio.sleep(delay)
 
 
 async def _load_startup_model(model, model_name: str) -> None:
@@ -194,9 +319,14 @@ async def entrypoint_async():
     from common.live_decode import clear as clear_live_decode
 
     clear_live_decode()
-    model_name = config.model.model_name
+    from common.gpu_mode import release_stale_comfy_mode
+
+    if release_stale_comfy_mode():
+        logger.warning("ComfyUI is not running. Loading the last chat model.")
     if await _restore_gpu_owner():
         model_name = None
+    else:
+        model_name = _startup_model_name()
     if model_name:
         from select_model import retarget_startup_model
 
@@ -217,7 +347,10 @@ async def entrypoint_async():
         else:
             model_name = new_name
     if model_name:
-        await _load_startup_model(model, model_name)
+        try:
+            await _load_startup_model(model, model_name)
+        except Exception as exc:
+            logger.error(f"Startup model load did not finish ({model_name}): {exc}")
 
     # If an initial embedding model name is specified, create a separate container
     # and load the model
@@ -253,7 +386,15 @@ async def entrypoint_async():
     if resumed:
         logger.info(f"Resumed {resumed} interrupted image job(s)")
 
-    await start_api(host, port)
+    reclaim_task = asyncio.create_task(_reclaim_loop())
+    try:
+        await start_api(host, port)
+    finally:
+        reclaim_task.cancel()
+        try:
+            await reclaim_task
+        except asyncio.CancelledError:
+            pass
 
     # Uvicorn has finished serving; unload any loaded models so pending
     # jobs are cancelled and the generator is closed cleanly

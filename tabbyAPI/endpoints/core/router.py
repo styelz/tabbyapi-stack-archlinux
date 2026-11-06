@@ -18,7 +18,7 @@ from common.networking import (
 from common.tabby_config import config
 from common.templating import PromptTemplate, get_all_templates
 from common.utils import unwrap
-from common.health import HealthManager
+from common.health import HealthManager, UnhealthyEvent
 from endpoints.OAI.utils.chat_completion import format_messages_with_template
 from endpoints.core.types.auth import AuthPermissionResponse
 from endpoints.core.types.download import DownloadRequest, DownloadResponse
@@ -68,13 +68,28 @@ router = APIRouter()
 # Healthcheck endpoint
 @router.get("/health")
 async def healthcheck(response: Response) -> HealthCheckResponse:
-    """Get the current service health status"""
+    """Get the current service health status.
+
+    Healthy means a chat backend is actually up. The port answering with an
+    empty GPU used to end an update's wait, and chat then sat with no model.
+    """
     healthy, issues = await HealthManager.is_service_healthy()
 
     if not healthy:
         response.status_code = 503
+        return HealthCheckResponse(status="unhealthy", issues=issues)
 
-    return HealthCheckResponse(status="healthy" if healthy else "unhealthy", issues=issues)
+    from common.gpu_mode import health_waiting_reason
+
+    waiting = health_waiting_reason()
+    if waiting:
+        response.status_code = 503
+        return HealthCheckResponse(
+            status="starting",
+            issues=[UnhealthyEvent(description=waiting)],
+        )
+
+    return HealthCheckResponse(status="healthy", issues=issues)
 
 
 @router.get("/.well-known/serviceinfo")

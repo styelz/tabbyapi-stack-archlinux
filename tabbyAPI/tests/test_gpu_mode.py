@@ -77,14 +77,84 @@ class GpuModeTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as raw:
             status = Path(raw) / "gpu_mode.json"
-            with mock.patch.object(gm, "STATUS_PATH", status):
+            with (
+                mock.patch.object(gm, "STATUS_PATH", status),
+                mock.patch.object(gm, "comfy_up", return_value=False),
+                mock.patch.object(gm, "comfy_unit_active", return_value=False),
+            ):
                 self.assertFalse(should_skip_startup_load())
                 status.write_text('{"mode": "comfy"}\n', encoding="utf-8")
-                self.assertTrue(should_skip_startup_load())
+                self.assertFalse(should_skip_startup_load())
                 status.write_text('{"mode": "llama", "profile": "biggguf"}\n', encoding="utf-8")
                 self.assertTrue(should_skip_startup_load())
                 status.write_text('{"mode": "llm", "profile": "qwen"}\n', encoding="utf-8")
                 self.assertFalse(should_skip_startup_load())
+            status.write_text('{"mode": "comfy"}\n', encoding="utf-8")
+            with (
+                mock.patch.object(gm, "STATUS_PATH", status),
+                mock.patch.object(gm, "comfy_up", return_value=True),
+                mock.patch.object(gm, "comfy_unit_active", return_value=False),
+            ):
+                self.assertTrue(should_skip_startup_load())
+            with (
+                mock.patch.object(gm, "STATUS_PATH", status),
+                mock.patch.object(gm, "comfy_up", return_value=False),
+                mock.patch.object(gm, "comfy_unit_active", return_value=True),
+            ):
+                self.assertTrue(should_skip_startup_load())
+
+    def test_stale_comfy_mode_releases_the_gpu_file(self):
+        from common import gpu_mode as gm
+
+        with tempfile.TemporaryDirectory() as raw:
+            status = Path(raw) / "gpu_mode.json"
+            status.write_text('{"mode": "comfy", "profile": "flux"}\n', encoding="utf-8")
+            with (
+                mock.patch.object(gm, "STATUS_PATH", status),
+                mock.patch.object(gm, "comfy_up", return_value=False),
+                mock.patch.object(gm, "comfy_unit_active", return_value=False),
+                mock.patch("select_model.last_exl_profile", return_value="qwen"),
+                mock.patch("select_model.last_profile", return_value="qwen"),
+            ):
+                self.assertTrue(gm.release_stale_comfy_mode())
+            data = json.loads(status.read_text(encoding="utf-8"))
+            self.assertEqual(data["mode"], "llm")
+            self.assertEqual(data["profile"], "qwen")
+            with (
+                mock.patch.object(gm, "STATUS_PATH", status),
+                mock.patch.object(gm, "comfy_up", return_value=True),
+                mock.patch.object(gm, "comfy_unit_active", return_value=False),
+            ):
+                status.write_text('{"mode": "comfy"}\n', encoding="utf-8")
+                self.assertFalse(gm.release_stale_comfy_mode())
+                self.assertEqual(
+                    json.loads(status.read_text(encoding="utf-8"))["mode"],
+                    "comfy",
+                )
+
+    def test_health_waits_until_a_backend_is_up(self):
+        from common import gpu_mode as gm
+
+        with (
+            mock.patch.object(gm, "tabby_model_loaded", return_value=False),
+            mock.patch.object(gm, "read_mode", return_value={"mode": "llm"}),
+        ):
+            self.assertEqual(gm.health_waiting_reason(), "Chat model is not loaded")
+        with mock.patch.object(gm, "tabby_model_loaded", return_value=True):
+            self.assertIsNone(gm.health_waiting_reason())
+        with (
+            mock.patch.object(gm, "tabby_model_loaded", return_value=False),
+            mock.patch.object(gm, "read_mode", return_value={"mode": "comfy"}),
+            mock.patch.object(gm, "comfy_up", return_value=False),
+            mock.patch.object(gm, "comfy_unit_active", return_value=True),
+        ):
+            self.assertEqual(gm.health_waiting_reason(), "ComfyUI is still starting")
+        with (
+            mock.patch.object(gm, "tabby_model_loaded", return_value=False),
+            mock.patch.object(gm, "read_mode", return_value={"mode": "comfy"}),
+            mock.patch.object(gm, "comfy_up", return_value=True),
+        ):
+            self.assertIsNone(gm.health_waiting_reason())
 
     def test_aliases_map_to_comfy(self):
         for alias in ("comfy", "flux", "image", "comfyui"):

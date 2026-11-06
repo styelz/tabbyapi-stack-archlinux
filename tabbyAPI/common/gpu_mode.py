@@ -335,10 +335,73 @@ def read_mode() -> dict:
     return data
 
 
-def should_skip_startup_load() -> bool:
-    """True when Comfy or llama-server owns the GPU. Restarting Tabby must not load an LLM."""
+def tabby_model_loaded() -> bool:
+    """True when the in-process EXL container finished loading."""
+    try:
+        from common import model as tabby_model
 
-    return (read_mode().get("mode") or "").lower() in ("comfy", "llama")
+        container = getattr(tabby_model, "container", None)
+        return bool(container is not None and getattr(container, "loaded", False))
+    except Exception:
+        return False
+
+
+def chat_backend_ready() -> bool:
+    """True when chat has a live backend. A mode file alone is not enough."""
+    if tabby_model_loaded():
+        return True
+    mode = (read_mode().get("mode") or "").lower()
+    if mode == "comfy":
+        return comfy_up()
+    if mode == "llama":
+        return llama_up()
+    return False
+
+
+def health_waiting_reason() -> Optional[str]:
+    """Why /health must stay starting. None once a backend can answer."""
+    if chat_backend_ready():
+        return None
+    mode = (read_mode().get("mode") or "").lower()
+    if mode == "comfy" and comfy_unit_active():
+        return "ComfyUI is still starting"
+    return "Chat model is not loaded"
+
+
+def should_skip_startup_load() -> bool:
+    """True only when Comfy or llama-server actually owns the GPU.
+
+    A mode file left at comfy after ComfyUI has stopped must not skip the
+    LLM. That used to come up healthy with nothing loaded and stay there.
+    """
+
+    mode = (read_mode().get("mode") or "").lower()
+    if mode == "llama":
+        return True
+    if mode == "comfy":
+        return comfy_up() or comfy_unit_active()
+    return False
+
+
+def release_stale_comfy_mode() -> bool:
+    """Point the mode file back at the last EXL when Comfy is gone.
+
+    Returns True when the file was corrected. A booting or live Comfy is left
+    alone so a restart does not load an LLM on top of Flux.
+    """
+
+    if (read_mode().get("mode") or "").lower() != "comfy":
+        return False
+    if comfy_up() or comfy_unit_active():
+        return False
+    from select_model import last_exl_profile, last_profile
+
+    profile = last_exl_profile() or last_profile()
+    if profile:
+        write_mode("llm", profile=profile)
+    else:
+        write_mode("llm")
+    return True
 
 
 def write_mode(mode: str, **extra) -> dict:
