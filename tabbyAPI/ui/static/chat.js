@@ -65,10 +65,12 @@ function mountChat(root) {
               <button type="button" data-more="handoff">Continue in new chat</button>
               <button type="button" data-more="keys">Keyboard shortcuts</button>
               <button type="button" data-more="sidebar">Hide sidebar</button>
+              <button type="button" data-more="chatpane" hidden>Hide chat</button>
               <button type="button" data-more="thread" hidden>New chat in this workspace</button>
               <button type="button" data-more="delete">Delete this chat</button>
             </div>
           </div>
+          <button class="rail-toggle" type="button" id="chat-log-toggle" hidden aria-expanded="true" aria-controls="chat-log-wrap" aria-label="Hide chat" title="Hide chat">${CHEVRON_SVG}</button>
           <button class="rail-toggle" type="button" id="chat-files-toggle" hidden aria-expanded="true" aria-controls="chat-files" aria-label="Hide files" title="Hide files">${CHEVRON_SVG}</button>
         </div>
           <div class="chat-view">
@@ -76,6 +78,11 @@ function mountChat(root) {
           <div class="chat-tabs" id="chat-tabs" role="tablist" aria-label="Open files" hidden></div>
           <div class="chat-stage-main" id="chat-stage-main">
           <div class="chat-log-wrap" id="chat-log-wrap">
+            <div class="chat-log-bar" id="chat-log-bar" hidden>
+              <span>Chat</span>
+              <span class="spacer"></span>
+              <button type="button" class="btn ghost chat-icon" id="chat-log-hide" aria-label="Hide chat" title="Hide chat">×</button>
+            </div>
             <div class="chat-find" id="chat-find" hidden>
               <input id="chat-find-input" type="search" placeholder="Find in chat" autocomplete="off" />
               <span class="chat-find-count" id="chat-find-count"></span>
@@ -480,6 +487,9 @@ function mountChat(root) {
   const filesSiteBtn = root.querySelector("#chat-files-site");
   const filesToggleBtn = root.querySelector("#chat-files-toggle");
   const filesCloseBtn = root.querySelector("#chat-files-close");
+  const chatLogToggle = root.querySelector("#chat-log-toggle");
+  const chatLogBar = root.querySelector("#chat-log-bar");
+  const chatLogHide = root.querySelector("#chat-log-hide");
   const findBar = root.querySelector("#chat-find");
   const findInput = root.querySelector("#chat-find-input");
   const findCountEl = root.querySelector("#chat-find-count");
@@ -764,12 +774,17 @@ function mountChat(root) {
   // Below 900px the pane is a bottom sheet over the chat, so it starts closed
   // there no matter what the desktop preference says.
   let filesOpen = narrowChat.matches ? false : readFilesOpen();
+  let chatOpen = readChatOpen();
   let historyOpen = readHistoryOpen();
   let changesOpen = readChangesOpen();
   let gitOpen = readGitOpen();
 
   function readFilesOpen() {
     return uiLayout().filesOpen !== false;
+  }
+
+  function readChatOpen() {
+    return uiLayout().chatOpen !== false;
   }
 
   function readHistoryOpen() {
@@ -1771,6 +1786,12 @@ function mountChat(root) {
     if (sideBtn) {
       sideBtn.textContent = shell.classList.contains("is-sidebar-hidden") ? "Show sidebar" : "Hide sidebar";
     }
+    const chatPaneBtn = moreMenu && moreMenu.querySelector('[data-more="chatpane"]');
+    if (chatPaneBtn) {
+      const beside = chatBesideFile();
+      chatPaneBtn.hidden = !beside;
+      if (beside) chatPaneBtn.textContent = chatOpen ? "Hide chat" : "Show chat";
+    }
     const toggleBtn = root.querySelector("#chat-sidebar-toggle");
     if (toggleBtn) {
       const hidden = isNarrowChat()
@@ -1874,6 +1895,44 @@ function mountChat(root) {
     paintMode();
     reclampPaneWidths();
     if (filesOpen) refreshFiles();
+  }
+
+  /** A file is open in Code, so the transcript can sit beside it or fold away. */
+  function chatBesideFile() {
+    if (activeMode() !== "code") return false;
+    const tab = activeTabRow();
+    if (!tab || (previewOpen && isPreviewTab(tab))) return false;
+    return true;
+  }
+
+  function paintChatLogToggle() {
+    if (!chatLogToggle) return;
+    const beside = chatBesideFile();
+    chatLogToggle.hidden = !beside;
+    if (!beside) return;
+    chatLogToggle.classList.toggle("is-flipped", !chatOpen);
+    chatLogToggle.classList.toggle("is-marked", !chatOpen);
+    chatLogToggle.setAttribute("aria-expanded", chatOpen ? "true" : "false");
+    chatLogToggle.setAttribute("aria-label", chatOpen ? "Hide chat" : "Show chat");
+    chatLogToggle.title = chatOpen ? "Hide the chat" : "Show the chat";
+  }
+
+  function setChatOpen(open) {
+    const next = !!open;
+    if (chatOpen === next) {
+      paintChatLogToggle();
+      paintView();
+      return;
+    }
+    chatOpen = next;
+    persistLayout();
+    paintTabs();
+    paintView();
+    paintToolbar();
+  }
+
+  function revealChatBesideFile() {
+    if (chatBesideFile() && !chatOpen) setChatOpen(true);
   }
 
   function setChatMode(mode) {
@@ -4847,9 +4906,16 @@ function mountChat(root) {
     if (!show) return;
     const frag = document.createDocumentFragment();
     const chatTab = document.createElement("div");
-    chatTab.className = "chat-tab" + (activeTab ? "" : " is-active");
+    const beside = chatBesideFile();
+    const collapsed = beside && !chatOpen;
+    chatTab.className = "chat-tab" + (activeTab ? "" : " is-active") + (collapsed ? " is-collapsed" : "");
     chatTab.dataset.tab = "";
-    chatTab.innerHTML = '<button type="button" class="chat-tab-open">Chat</button>';
+    const chatTitle = collapsed ? "Show chat" : beside ? "Show chat on its own" : "Chat";
+    const hideBtn = beside && chatOpen
+      ? '<button type="button" class="chat-tab-close is-keep" data-chat-hide aria-label="Hide chat" title="Hide chat">×</button>'
+      : "";
+    chatTab.innerHTML =
+      `<button type="button" class="chat-tab-open" title="${chatTitle}">Chat</button>` + hideBtn;
     frag.appendChild(chatTab);
     const paintOne = (tab) => {
       const name = TabbyUI.escapeHtml(tabLabel(tab));
@@ -5426,12 +5492,14 @@ function mountChat(root) {
     const code = activeMode() === "code";
     const previewAsTab = previewOpen && isPreviewTab(tab);
     const showEditor = Boolean(tab) && !previewAsTab;
-    const showLog = !previewAsTab && (!showEditor || code);
+    const beside = code && showEditor;
+    const showLog = !previewAsTab && (!showEditor || (beside && chatOpen));
     const logWasHidden = Boolean(logWrap && logWrap.hidden);
     shell.classList.toggle("is-chat-focus", !code && showLog);
-    shell.classList.toggle("is-code-context", code && showEditor);
+    shell.classList.toggle("is-code-context", beside);
     if (!logWasHidden && !showLog) logScroll = log.scrollTop;
     if (logWrap) logWrap.hidden = !showLog;
+    if (chatLogBar) chatLogBar.hidden = !(beside && showLog);
     if (editorCol) editorCol.hidden = !showEditor;
     if (editorPane) editorPane.hidden = !showEditor;
     if (previewPane) {
@@ -5439,7 +5507,10 @@ function mountChat(root) {
       previewPane.classList.toggle("is-tab", previewAsTab);
     }
     paintPreviewDock();
+    paintChatLogToggle();
+    const logChanged = logWasHidden === showLog;
     if (showEditor) {
+      if (logWasHidden && showLog) restoreLogScroll();
       ensureTabLoaded(tab);
       renderEditorPane();
       if (splitOpen) {
@@ -5451,18 +5522,27 @@ function mountChat(root) {
         if (editorCol) editorCol.classList.add("has-split");
         mountSplitEditor();
       }
+      if (logChanged) scheduleEditorLayout();
       return;
     }
     if (editorPane) editorPane.dataset.key = "";
     if (window.TabbyMonaco) window.TabbyMonaco.dispose();
     // display:none drops the scroll offset, so put the log back where it was.
-    if (logWasHidden && showLog) {
-      if (followLog) stickLog();
-      else {
-        log.scrollTop = logScroll;
-        paintJump();
-      }
+    if (logWasHidden && showLog) restoreLogScroll();
+  }
+
+  function restoreLogScroll() {
+    if (followLog) stickLog();
+    else {
+      log.scrollTop = logScroll;
+      paintJump();
     }
+  }
+
+  function scheduleEditorLayout() {
+    requestAnimationFrame(() => {
+      if (window.TabbyMonaco) window.TabbyMonaco.layout();
+    });
   }
 
   function paintTabsAndFiles() {
@@ -8231,6 +8311,7 @@ function mountChat(root) {
       historyOpen,
       changesOpen,
       gitOpen,
+      chatOpen,
     };
     if (!narrowChat.matches) layout.filesOpen = filesOpen;
     else layout.filesOpen = uiLayout().filesOpen !== false;
@@ -12408,6 +12489,7 @@ function mountChat(root) {
   }
 
   function openFind(seed) {
+    revealChatBesideFile();
     if (findBar) findBar.hidden = false;
     if (findInput) {
       if (seed != null) findInput.value = seed;
@@ -14437,6 +14519,7 @@ function mountChat(root) {
     if (historyRun) lastHistoryRun = historyRun;
     if (sendAgent === "plan") beginLivePlanChecklist(chatId);
     const viewing = store.activeId === chatId;
+    if (viewing) revealChatBesideFile();
     abortController = new AbortController();
     const outboundText = expandSlash(text);
     if (isBuildPromptText(outboundText) && !planChecklistBuilding) {
@@ -15779,8 +15862,12 @@ function mountChat(root) {
 
   function tabMenuItems(path) {
     if (!path) {
+      const beside = chatBesideFile();
       return [
-        { label: "Show chat", run: () => activateTab("") },
+        beside && !chatOpen
+          ? { label: "Show chat", run: () => setChatOpen(true) }
+          : { label: beside ? "Show chat on its own" : "Show chat", run: () => activateTab("") },
+        beside && chatOpen ? { label: "Hide chat", run: () => setChatOpen(false) } : null,
         openTabs.length ? { label: "Close all files", run: () => closeAllTabs() } : null,
       ];
     }
@@ -16100,6 +16187,9 @@ function mountChat(root) {
         tab ? { label: "Download", run: () => saveUrl(fileUrl(activeWorkspaceId(), tab.path), tab.path.split("/").pop() || "file") } : null,
         { sep: true },
         { label: "Close file", disabled: !tab, run: () => closeTab(activeTab) },
+        chatBesideFile()
+          ? { label: chatOpen ? "Hide chat" : "Show chat", run: () => setChatOpen(!chatOpen) }
+          : null,
       ]);
       return;
     }
@@ -16127,6 +16217,7 @@ function mountChat(root) {
         { label: "Copy entire chat", run: () => copyText(conversationMarkdown()) },
         { label: "Paste into compose", run: () => pasteCompose() },
         { label: activeMode() === "code" ? "New workspace" : "New chat", kbd: "Ctrl+Shift+O", run: () => startNewChat() },
+        chatBesideFile() ? { label: "Hide chat", run: () => setChatOpen(false) } : null,
         { label: "Keyboard shortcuts", run: () => showShortcuts() },
       ]);
     }
@@ -16360,6 +16451,7 @@ function mountChat(root) {
     if (act === "sidebar") {
       setSidebarHidden(!shell.classList.contains("is-sidebar-hidden"));
     }
+    if (act === "chatpane") setChatOpen(!chatOpen);
     if (act === "delete") deleteChat(store.activeId);
   });
   root.querySelector("#chat-mode").addEventListener("click", (event) => {
@@ -16557,6 +16649,14 @@ function mountChat(root) {
     tabsBar.addEventListener("click", (event) => {
       const item = event.target.closest("[data-tab]");
       if (!item) return;
+      if (event.target.closest("[data-chat-hide]")) {
+        setChatOpen(false);
+        return;
+      }
+      if (!item.dataset.tab && !chatOpen && chatBesideFile()) {
+        setChatOpen(true);
+        return;
+      }
       if (event.target.closest("[data-tab-close]")) {
         closeTab(item.dataset.tab);
         return;
@@ -16766,6 +16866,12 @@ function mountChat(root) {
   if (editorFindCloseBtn) editorFindCloseBtn.addEventListener("click", () => closeEditorFind());
   if (filesToggleBtn) {
     filesToggleBtn.addEventListener("click", () => setFilesOpen(!filesOpen));
+  }
+  if (chatLogToggle) {
+    chatLogToggle.addEventListener("click", () => setChatOpen(!chatOpen));
+  }
+  if (chatLogHide) {
+    chatLogHide.addEventListener("click", () => setChatOpen(false));
   }
   if (filesCloseBtn) {
     filesCloseBtn.addEventListener("click", () => setFilesOpen(false));

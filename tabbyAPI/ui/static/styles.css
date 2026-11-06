@@ -2640,6 +2640,24 @@ button.chip {
   padding: 0.625rem;
   font-size: 0.78125rem;
 }
+.chat-log-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex: 0 0 auto;
+  min-height: 1.625rem;
+  margin-bottom: 0.25rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.chat-log-bar[hidden] { display: none; }
+.chat-log-bar .chat-icon { color: var(--muted); }
+.chat-tab.is-collapsed {
+  border-style: dashed;
+  background: transparent;
+}
+.chat-tab-close.is-keep { opacity: 1; }
 .chat-stage-main > .chat-log-wrap,
 .chat-stage-main > .chat-editor-col {
   flex: 1 1 0;

@@ -61,6 +61,7 @@ EMPTY_LAYOUT = {
     "historyOpen": True,
     "changesOpen": True,
     "gitOpen": False,
+    "chatOpen": True,
 }
 
 EMPTY_PREFS = {
@@ -203,6 +204,7 @@ def _normalize_layout(raw: Any) -> dict[str, Any]:
         "historyOpen": _bool(src.get("historyOpen"), True),
         "changesOpen": _bool(src.get("changesOpen"), True),
         "gitOpen": _bool(src.get("gitOpen"), False),
+        "chatOpen": _bool(src.get("chatOpen"), True),
     }
 
 

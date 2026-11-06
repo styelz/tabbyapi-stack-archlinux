@@ -22,6 +22,7 @@ class PrefsNormalizeTests(unittest.TestCase):
         self.assertEqual(out["samplers"]["temperature"], None)
         self.assertEqual(out["layout"]["filesOpen"], True)
         self.assertEqual(out["layout"]["gitOpen"], False)
+        self.assertEqual(out["layout"]["chatOpen"], True)
         self.assertEqual(out["layout"]["filesFr"], [2.0, 1.0, 1.0, 1.0])
         self.assertEqual(out["wsOpen"], {})
         self.assertEqual(out["extraFolders"], [])
@@ -93,7 +94,7 @@ class PrefsStoreTests(unittest.TestCase):
             {
                 "theme": "glacier",
                 "mode": "light",
-                "layout": {"filesOpen": False, "gitOpen": True},
+                "layout": {"filesOpen": False, "gitOpen": True, "chatOpen": False},
                 "extraFolders": ["Client"],
             },
         )
@@ -102,6 +103,7 @@ class PrefsStoreTests(unittest.TestCase):
         self.assertEqual(loaded["mode"], "light")
         self.assertFalse(loaded["layout"]["filesOpen"])
         self.assertTrue(loaded["layout"]["gitOpen"])
+        self.assertFalse(loaded["layout"]["chatOpen"])
         self.assertEqual(loaded["extraFolders"], ["Client"])
 
 
