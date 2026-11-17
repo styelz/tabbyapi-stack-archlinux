@@ -15,6 +15,30 @@ log() { printf '\n==> %s\n' "$*"; }
 disk() { df -h "$WORK" "$OUT" 2>/dev/null || true; }
 need() { command -v "$1" >/dev/null || { echo "missing command: $1" >&2; exit 1; }; }
 
+# Insert the early Plymouth hook immediately after udev. udevd has to be
+# running so physical GPUs receive seat metadata before Plymouth picks a
+# renderer. simpledrm is built into the kernel, so there is no module to add.
+# Releng dropped the kms hook; when a profile still lists it, the splash hook
+# stays in front.
+order_early_plymouth_hook() {
+  local hooks=$1
+  sed -i -E \
+    -e 's/[[:space:]]+tsos_wait//g' \
+    -e 's/[[:space:]]+plymouth//g' \
+    -e 's/\budev\b/udev tsos_wait/' \
+    "$hooks"
+  grep -qE '\budev tsos_wait\b' "$hooks" || {
+    echo "could not place the early Plymouth hook immediately after udev" >&2
+    exit 1
+  }
+  if grep -qE '\bkms\b' "$hooks"; then
+    grep -qE '\budev tsos_wait\b.*\bkms\b' "$hooks" || {
+      echo "could not order udev and early Plymouth before kms" >&2
+      exit 1
+    }
+  fi
+}
+
 [[ ${EUID} -eq 0 ]] || { echo "run this builder as root" >&2; exit 1; }
 [[ -f "$ROOT/tsos-installer.sh" && -f "$ROOT/tabbyAPI/pyproject.toml" ]] || {
   echo "run iso/build.sh from a tabbyapi-stack checkout" >&2
@@ -183,20 +207,9 @@ archiso_hooks="$PROFILE/airootfs/etc/mkinitcpio.conf.d/archiso.conf"
   echo "missing archiso mkinitcpio hooks: $archiso_hooks" >&2
   exit 1
 }
-# simpledrm is built into the Arch kernel, so there is no module file to add to
-# MODULES. tsos_wait's build hook imports Plymouth's packaged files and theme
-# without its late, unconditional runtime daemon start. udevd must start first
-# so physical GPUs receive their seat metadata before Plymouth picks a renderer;
-# tsos_wait then triggers display devices without waiting for all hardware.
-sed -i -E \
-  -e 's/[[:space:]]+tsos_wait//g' \
-  -e 's/[[:space:]]+plymouth//g' \
-  -e 's/\budev\b/udev tsos_wait/' \
-  "$archiso_hooks"
-grep -qE '\budev tsos_wait\b.*\bkms\b' "$archiso_hooks" || {
-  echo "could not order udev and early Plymouth before kms" >&2
-  exit 1
-}
+# tsos_wait's build hook imports Plymouth's packaged files and theme without
+# its late, unconditional runtime daemon start.
+order_early_plymouth_hook "$archiso_hooks"
 # The bootloader hands off a black framebuffer while the kernel decompresses
 # the initramfs; no userspace splash can run during that interval. Arch releng
 # defaults to maximum XZ compression, which takes several visible seconds even

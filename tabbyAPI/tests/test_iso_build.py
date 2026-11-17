@@ -1,4 +1,5 @@
 import importlib.util
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -29,6 +30,7 @@ class IsoBuildSmallTests(unittest.TestCase):
         self.assertIn("plymouth.use-simpledrm=1", src)
         self.assertIn("UseSimpledrm=true", src)
         self.assertIn("udev tsos_wait", src)
+        self.assertIn("order_early_plymouth_hook", src)
         self.assertIn('COMPRESSION="zstd"', src)
         self.assertIn("COMPRESSION_OPTIONS=(-19 -T0)", src)
         self.assertIn("tsos-boot-splash", src)
@@ -55,6 +57,58 @@ class IsoBuildSmallTests(unittest.TestCase):
         self.assertIn("--exclude '**/ui_chats/'", src)
         self.assertIn("--exclude '**/ui_workspaces/'", src)
         self.assertIn("--exclude '**/ui_prefs/'", src)
+
+    def test_early_plymouth_hook_follows_udev_without_kms(self):
+        """archiso 92 dropped the kms hook; the ISO build must still continue."""
+        src = BUILD.read_text(encoding="utf-8")
+        start = src.index("order_early_plymouth_hook() {")
+        depth = 0
+        end = start
+        for i, ch in enumerate(src[start:], start):
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    end = i + 1
+                    break
+        fn = src[start:end]
+        cases = {
+            "releng": (
+                "HOOKS=(base udev microcode modconf memdisk archiso block filesystems keyboard)\n",
+                0,
+                "HOOKS=(base udev tsos_wait microcode modconf memdisk archiso block filesystems keyboard)\n",
+            ),
+            "with-kms": (
+                "HOOKS=(base udev microcode modconf kms memdisk archiso block filesystems keyboard)\n",
+                0,
+                "HOOKS=(base udev tsos_wait microcode modconf kms memdisk archiso block filesystems keyboard)\n",
+            ),
+            "no-udev": (
+                "HOOKS=(base systemd microcode modconf block filesystems keyboard)\n",
+                1,
+                "HOOKS=(base systemd microcode modconf block filesystems keyboard)\n",
+            ),
+        }
+        for name, (before, rc, after) in cases.items():
+            with self.subTest(name=name):
+                with tempfile.TemporaryDirectory() as tmp:
+                    path = Path(tmp) / "archiso.conf"
+                    path.write_text(before, encoding="utf-8")
+                    proc = subprocess.run(
+                        [
+                            "bash",
+                            "-c",
+                            fn + '\norder_early_plymouth_hook "$1"',
+                            "bash",
+                            str(path),
+                        ],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    self.assertEqual(proc.returncode, rc, proc.stderr)
+                    self.assertEqual(path.read_text(encoding="utf-8"), after)
 
     def test_mk_splash_writes_logo_and_spinner(self):
         spec = importlib.util.spec_from_file_location("mk_splash", MK_SPLASH)
